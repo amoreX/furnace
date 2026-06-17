@@ -24,6 +24,46 @@ This project starts intentionally small. The first useful version should not try
 
 Those can come later. The first milestone is a small harness that can reliably run one agent loop against a real repository.
 
+## Quickstart
+
+Create a local `.env` file with an OpenRouter key:
+
+```bash
+cp .env.example .env
+```
+
+Then run:
+
+```bash
+npm install
+npm run dev
+```
+
+You can also send a single prompt without the input screen:
+
+```bash
+npm run dev -- -p "Reply with exactly: ok"
+```
+
+Build and run the compiled CLI:
+
+```bash
+npm run build
+node dist/cli.js --help
+```
+
+## Current State
+
+The current implementation is Phase 0 plus a tiny live model path:
+
+- TypeScript project setup.
+- `furnace` CLI entrypoint.
+- Base system prompt in `src/prompts/base-system.md`.
+- OpenRouter streaming chat completion call.
+- Simple terminal input/status area.
+- `.env.example` and `.gitignore` for local secret handling.
+- Smoke tests for package wiring and ignored secrets.
+
 ## Architecture
 
 Furnace is designed around a reusable runtime. The terminal UI is only one surface on top of it.
@@ -136,4 +176,3 @@ Furnace borrows lessons from existing coding agents:
 - Claude Code shows the product shape: terminal, IDE, SDK, hooks, skills, automation, and background agents all sharing one engine.
 
 Furnace should learn from these projects without becoming a clone of any single one.
-# furnace

@@ -7,7 +7,7 @@ session management :
 	- vault typeshi per session
 
 functionality :
-	- tools 
+	- tools [CURRENT]
 	- skills
 	- memory long term of sorts
 

@@ -70,3 +70,10 @@ Interactive commands currently supported:
 - OpenCode: client/server-style architecture with TUI as one client.
 - Codex CLI: Rust implementation with strong sandboxing and a reusable core.
 - Claude Code: product model with one engine across terminal, IDE, SDK, hooks, skills, and background agents.
+
+When researching Pi or OpenCode behavior, use the local reference clones rather than relying on memory:
+
+- Pi: `/Users/nihal/code/test-repos/pi`
+- OpenCode: `/Users/nihal/code/test-repos/opencode`
+
+Before writing comparison notes, run `git pull --ff-only` in each reference repo so the research reflects the latest checked-out source. Record the inspected commit hashes in reports.

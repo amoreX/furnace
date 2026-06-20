@@ -21,7 +21,7 @@ test("model messages include transient runtime context", () => {
     [
       {
         id: "entry-1",
-        parentId: null,
+        parentEntryId: null,
         sessionId: "session-1",
         type: "message",
         role: "user",
@@ -38,4 +38,58 @@ test("model messages include transient runtime context", () => {
   assert.equal(messages[1].role, "system")
   assert.match(messages[1].content, /Current year: 2026/)
   assert.deepEqual(messages[2], { role: "user", content: "latest FIFA news" })
+})
+
+test("model messages replay persisted tool calls and results", () => {
+  const messages = entriesToModelMessages("base system", [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "read notes" },
+      model: null,
+      createdAt: 0,
+    },
+    {
+      id: "entry-2",
+      parentEntryId: "entry-1",
+      sessionId: "session-1",
+      type: "tool_call",
+      role: "assistant",
+      data: { arguments: "{\"path\":\"notes.txt\"}", name: "read", toolCallId: "call_1" },
+      createdAt: 1,
+    },
+    {
+      id: "entry-3",
+      parentEntryId: "entry-2",
+      sessionId: "session-1",
+      type: "tool_result",
+      role: "tool",
+      data: { content: "1|hello", name: "read", toolCallId: "call_1" },
+      createdAt: 2,
+    },
+    {
+      id: "entry-4",
+      parentEntryId: "entry-3",
+      sessionId: "session-1",
+      type: "message",
+      role: "assistant",
+      data: { content: "notes say hello" },
+      createdAt: 3,
+    },
+  ])
+
+  assert.deepEqual(messages, [
+    { role: "system", content: "base system" },
+    { role: "user", content: "read notes" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{\"path\":\"notes.txt\"}" } }],
+    },
+    { role: "tool", name: "read", tool_call_id: "call_1", content: "1|hello" },
+    { role: "assistant", content: "notes say hello" },
+  ])
 })

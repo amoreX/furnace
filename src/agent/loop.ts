@@ -6,6 +6,7 @@ export type RunAgentTurnInput = {
   config: FurnaceConfig
   cwd: string
   messages: OpenRouterMessage[]
+  sessionId?: string
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
   onToolResult?: (call: { arguments: string; id: string; name: string }, content: string) => void
 }
@@ -45,7 +46,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
         },
-        { cwd: input.cwd },
+        { cwd: input.cwd, sessionId: input.sessionId },
       )
       input.onToolResult?.(call, result.content)
       messages.push({

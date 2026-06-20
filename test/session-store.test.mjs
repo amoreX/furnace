@@ -13,18 +13,21 @@ test("session store appends entries as a Pi-style active leaf chain", async () =
     const session = store.createSession({ cwd: dir, title: "Test session" })
 
     const first = store.appendMessage(session.id, "user", "hello")
-    const second = store.appendMessage(session.id, "assistant", "hi")
-    const third = store.appendMessage(session.id, "user", "remember that?")
+    const second = store.appendToolCall(session.id, { arguments: "{\"path\":\"notes.txt\"}", name: "read", toolCallId: "call_1" })
+    const third = store.appendToolResult(session.id, { content: "1|hello", name: "read", toolCallId: "call_1" })
+    const fourth = store.appendMessage(session.id, "assistant", "hi")
     const path = store.getActivePath(session.id)
 
     assert.equal(first.parentEntryId, null)
     assert.equal(second.parentEntryId, first.id)
     assert.equal(third.parentEntryId, second.id)
+    assert.equal(fourth.parentEntryId, third.id)
     assert.deepEqual(
       path.map((entry) => entry.id),
-      [first.id, second.id, third.id],
+      [first.id, second.id, third.id, fourth.id],
     )
-    assert.equal(store.getSession(session.id).activeLeafId, third.id)
+    assert.equal(path.map((entry) => entry.type).join(","), "message,tool_call,tool_result,message")
+    assert.equal(store.getSession(session.id).activeLeafId, fourth.id)
 
     store.close()
   } finally {

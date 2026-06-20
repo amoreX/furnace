@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
 import Database from "better-sqlite3"
-import type { EntryRecord, EntryRole, EntryType, MessageEntryData, SessionRecord } from "./types.js"
+import type { EntryRecord, EntryRole, EntryType, MessageEntryData, SessionRecord, ToolCallEntryData, ToolResultEntryData } from "./types.js"
 
 type SessionRow = {
   id: string
@@ -128,6 +128,14 @@ export class SessionStore {
 
   appendMessage(sessionId: string, role: "user" | "assistant", content: string, model?: string): EntryRecord<MessageEntryData> {
     return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, model })
+  }
+
+  appendToolCall(sessionId: string, input: ToolCallEntryData): EntryRecord<ToolCallEntryData> {
+    return this.appendEntry<ToolCallEntryData>(sessionId, "tool_call", "assistant", input)
+  }
+
+  appendToolResult(sessionId: string, input: ToolResultEntryData): EntryRecord<ToolResultEntryData> {
+    return this.appendEntry<ToolResultEntryData>(sessionId, "tool_result", "tool", input)
   }
 
   appendEntry<TData>(sessionId: string, type: EntryType, role: EntryRole, data: TData): EntryRecord<TData> {

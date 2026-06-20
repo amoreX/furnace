@@ -34,6 +34,17 @@ Current implementation:
 - The tool-aware agent loop lives in `src/agent/loop.ts`.
 - OpenRouter tool-call types live in `src/openrouter.ts`.
 
+## Harness Influence Notes
+
+When Furnace adopts an idea from another coding harness, document the source and the local adaptation.
+
+Current influences:
+
+- Pi: parent-linked session entries, `active_leaf_id`, future branching/forking semantics, and keeping the agent runtime independent of the terminal UI.
+- Pi-style apply patch: Furnace exposes one model-facing `edit` tool but implements it as a structured apply-patch envelope.
+- OpenCode: web search/fetch direction, MCP-style web provider calls, and bounded tool-output previews saved under `.furnace/tool-output/`.
+- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, and the future direction for SQLite FTS session search.
+
 ## Runtime Context Injection
 
 Every model turn receives a transient runtime-context system message with the current date/time, ISO timestamp, current year, and workspace path.
@@ -47,3 +58,39 @@ Current implementation:
 - `src/session/context.ts` builds the runtime context in `buildRuntimeContext()`.
 - `entriesToModelMessages()` injects the runtime-context system message after the base system prompt.
 - `src/cli.ts` passes the current workspace when building per-turn model messages.
+
+## Tool Call Persistence
+
+Tool calls and results are persisted as first-class session entries instead of being only transient UI state.
+
+Reasoning:
+
+The UI can show tool activity during a turn, but resume/debug/search need durable facts: which tool ran, what arguments it received, what output it returned, and where that happened in the conversation. Hermes Agent does this well, so Furnace adopted the same principle while keeping the Pi-style entry tree.
+
+Current implementation:
+
+- `src/session/types.ts` defines `tool_call` and `tool_result` entry data.
+- `src/session/store.ts` appends tool entries through `appendToolCall()` and `appendToolResult()`.
+- `src/cli.ts` persists tool entries from `onToolStart` and `onToolResult`.
+- `src/session/context.ts` replays tool entries back into OpenRouter-compatible model messages.
+
+## File Read Tracking
+
+File reads are tracked by active session, workspace, absolute path, file size, mtime, and requested line range.
+
+Reasoning:
+
+Hermes Agent tracks file reads to reduce redundant unchanged output and warn before stale edits. Furnace implements the same safety signal in a lightweight in-memory tracker. This helps avoid read loops and flags cases where another process or user changed a file after the agent last saw it.
+
+Current behavior:
+
+- Re-reading the same unchanged path/range returns a short unchanged notice.
+- Reading a different range still returns content.
+- `write` and `edit` warn if a target previously read in the same session changed before the modification.
+- The modification is still applied today because Furnace does not have approval/permission gates yet.
+
+Current implementation:
+
+- Tracking lives in `src/tools/registry.ts` alongside the file tool handlers.
+- `src/cli.ts` and `src/agent/loop.ts` pass the active session id into tool execution. Direct tool calls without a session id fall back to workspace-scoped tracking for tests and simple harness usage.
+- Regression coverage lives in `test/tools.test.mjs`.

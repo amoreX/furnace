@@ -12,6 +12,8 @@ Implemented:
 - Pi-style parent links between entries.
 - `active_leaf_id` tracking per session.
 - Root-to-active-leaf transcript reconstruction.
+- Persisted tool-call and tool-result entries.
+- Replay of persisted tool calls/results back into model context.
 - Fresh sessions by default.
 - `--continue` for the latest non-empty session.
 - `/new` for a fresh chat.
@@ -26,6 +28,8 @@ Not implemented yet:
 - Forking into a new session from an old entry.
 - Compaction entries.
 - `firstKeptEntryId` handling.
+- SQLite FTS session search.
+- `session_search` tool for old-session recall.
 - Session memory or durable preference ledgers.
 
 ## Data Model
@@ -57,12 +61,41 @@ Important fields:
 - `id`: stable entry id, currently generated with the `ent_` prefix.
 - `session_id`: owning session.
 - `parent_entry_id`: previous entry on this branch.
-- `type`: entry category, such as `message`, `compaction`, `branch_summary`, `model_change`, or `custom`.
+- `type`: entry category, such as `message`, `tool_call`, `tool_result`, `compaction`, `branch_summary`, `model_change`, or `custom`.
 - `role`: message role, such as `user`, `assistant`, `system`, `tool`, or `null`.
 - `created_at`: entry timestamp.
 - `data`: JSON payload for the entry.
 
-For normal chat today, entries are appended as `type = "message"` with `role = "user"` or `role = "assistant"`.
+For normal chat text, entries are appended as `type = "message"` with `role = "user"` or `role = "assistant"`. Tool activity is persisted as separate `tool_call` and `tool_result` entries so resume/debug/search can inspect what actually happened during a turn.
+
+### Tool Entry Payloads
+
+Tool calls use `type = "tool_call"` and `role = "assistant"`.
+
+Payload:
+
+```ts
+type ToolCallEntryData = {
+  arguments: string
+  content?: string | null
+  name: string
+  toolCallId: string
+}
+```
+
+Tool results use `type = "tool_result"` and `role = "tool"`.
+
+Payload:
+
+```ts
+type ToolResultEntryData = {
+  content: string
+  name: string
+  toolCallId: string
+}
+```
+
+This mirrors OpenRouter/OpenAI tool-call threading: an assistant message contains `tool_calls`, then a later `role: "tool"` message references the matching `tool_call_id`.
 
 ## Active Leaf Flow
 
@@ -85,6 +118,16 @@ session.active_leaf_id = E.id
 
 This makes the current implementation behave like a normal chat array while preserving the ability to branch later.
 
+For a tool-using turn, the same active-leaf rule applies:
+
+```text
+A(user) -> B(tool_call) -> C(tool_result) -> D(assistant)
+                                                ^
+                                                active_leaf_id
+```
+
+The TUI still renders this as a normal conversation timeline, while the database keeps the real call/result sequence.
+
 ## Prompt Reconstruction
 
 The model does not receive every row in the database. It receives only the active path for the selected session.
@@ -95,16 +138,27 @@ The model does not receive every row in the database. It receives only the activ
 2. Start from `active_leaf_id`.
 3. Walk backward through `parent_entry_id`.
 4. Reverse the collected entries.
-5. Convert message entries into transcript/model messages.
+5. Convert message and tool entries into model messages.
 
 So the model context is:
 
 ```text
 system prompt
-root-to-active-leaf user/assistant messages
+runtime context
+root-to-active-leaf user/assistant/tool-call/tool-result messages
 ```
 
 The conversion code lives in `src/session/context.ts`.
+
+Human-visible transcripts still filter to user/assistant chat text for history display. Model reconstruction keeps tool entries so resumed sessions remember previous tool behavior.
+
+## Harness Provenance
+
+The session shape combines ideas from multiple harnesses:
+
+- Pi influenced the parent-linked entry tree and `active_leaf_id` model. Furnace keeps this because it gives us a clean path to same-session branching, forks, and compaction.
+- Hermes Agent influenced persisting real tool calls/results instead of only final assistant text. Furnace adopted that because resume, search, and debugging are much stronger when tool names, arguments, and outputs are durable.
+- Hermes Agent also influenced the future session-search direction: FTS over messages plus tool metadata, with a model-callable `session_search` tool.
 
 ## `/new`
 
@@ -121,6 +175,17 @@ This prevents `/new` or repeated launches from filling `/history` with empty `Ne
 In interactive mode, the list is rendered with Pi TUI's `SelectList`, so the user can move with arrow keys and press Enter to switch sessions.
 
 In piped mode, history is printed as numbered text for scripts.
+
+## Future Session Search
+
+Session search is a major future feature. The intended direction is:
+
+- Add SQLite FTS tables over message content, tool names, and tool-call/tool-result payloads.
+- Keep FTS rows updated when entries are appended.
+- Add a `session_search` tool that can search old sessions and return surrounding context around a match.
+- Let the interactive UI scroll around matches inside old conversations.
+
+This is based on Hermes Agent's stronger old-session recall. Furnace has only `/history` browsing today.
 
 ## Titles
 
@@ -179,3 +244,4 @@ That preserves recent raw context while allowing older turns to be summarized.
 - `src/session/title.ts`: title generation.
 - `src/cli.ts`: `/new`, `/history`, `--continue`, and session lifecycle wiring.
 - `test/session-store.test.mjs`: current session-store regression tests.
+- `test/session-context.test.mjs`: model-message reconstruction tests, including tool-call replay.

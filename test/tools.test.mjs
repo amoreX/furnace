@@ -14,6 +14,10 @@ async function withWorkspace(fn) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 test("tool registry exposes the core primitives", () => {
   assert.deepEqual(
     toolDefinitions.map((tool) => tool.function.name),
@@ -47,6 +51,95 @@ test("read refuses secret-like env files", async () => {
     await writeFile(join(cwd, ".env"), "OPENROUTER_API_KEY=nope\n", "utf8")
     const result = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: ".env" }) }, { cwd })
     assert.match(result.content, /Refusing to read secret-like file/)
+  })
+})
+
+test("read returns an unchanged notice for duplicate unchanged ranges", async () => {
+  await withWorkspace(async (cwd) => {
+    await writeFile(join(cwd, "notes.txt"), "alpha\nbeta\n", "utf8")
+
+    const first = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) }, { cwd })
+    assert.match(first.content, /1\|alpha/)
+
+    const second = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) }, { cwd })
+    assert.match(second.content, /File unchanged since last read: notes\.txt/)
+    assert.match(second.content, /lines 1-1/)
+
+    const differentRange = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt", offset: 2, limit: 1 }) }, { cwd })
+    assert.match(differentRange.content, /2\|beta/)
+  })
+})
+
+test("file read tracking is isolated by session id", async () => {
+  await withWorkspace(async (cwd) => {
+    await writeFile(join(cwd, "notes.txt"), "alpha\nbeta\n", "utf8")
+
+    const sessionOneFirst = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) }, { cwd, sessionId: "session-one" })
+    assert.match(sessionOneFirst.content, /1\|alpha/)
+
+    const sessionOneSecond = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) }, { cwd, sessionId: "session-one" })
+    assert.match(sessionOneSecond.content, /File unchanged since last read: notes\.txt/)
+
+    const sessionTwoFirst = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) }, { cwd, sessionId: "session-two" })
+    assert.match(sessionTwoFirst.content, /1\|alpha/)
+    assert.doesNotMatch(sessionTwoFirst.content, /File unchanged since last read/)
+
+    await sleep(20)
+    await writeFile(join(cwd, "notes.txt"), "alpha\nexternal\n", "utf8")
+
+    const unreadSessionWrite = await executeToolCall(
+      { name: "write", arguments: JSON.stringify({ path: "notes.txt", content: "unread session overwrite\n", overwrite: true }) },
+      { cwd, sessionId: "session-without-read" },
+    )
+    assert.doesNotMatch(unreadSessionWrite.content, /Warning: notes\.txt changed since Furnace last read it/)
+
+    const sessionTwoWrite = await executeToolCall(
+      { name: "write", arguments: JSON.stringify({ path: "notes.txt", content: "session two overwrite\n", overwrite: true }) },
+      { cwd, sessionId: "session-two" },
+    )
+    assert.match(sessionTwoWrite.content, /Warning: notes\.txt changed since Furnace last read it before this write/)
+
+    const sessionOneWrite = await executeToolCall(
+      { name: "write", arguments: JSON.stringify({ path: "notes.txt", content: "session one overwrite\n", overwrite: true }) },
+      { cwd, sessionId: "session-one" },
+    )
+    assert.match(sessionOneWrite.content, /Warning: notes\.txt changed since Furnace last read it before this write/)
+  })
+})
+
+test("write and edit warn when a previously read file changed externally", async () => {
+  await withWorkspace(async (cwd) => {
+    await writeFile(join(cwd, "notes.txt"), "alpha\nbeta\n", "utf8")
+    await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt" }) }, { cwd })
+
+    await sleep(20)
+    await writeFile(join(cwd, "notes.txt"), "alpha\nexternal\n", "utf8")
+
+    const write = await executeToolCall({ name: "write", arguments: JSON.stringify({ path: "notes.txt", content: "agent overwrite\n", overwrite: true }) }, { cwd })
+    assert.match(write.content, /Warning: notes\.txt changed since Furnace last read it before this write/)
+    assert.match(write.content, /Wrote notes\.txt/)
+
+    await executeToolCall({ name: "read", arguments: JSON.stringify({ path: "notes.txt" }) }, { cwd })
+    await sleep(20)
+    await writeFile(join(cwd, "notes.txt"), "agent overwrite\nexternal again\n", "utf8")
+
+    const edit = await executeToolCall(
+      {
+        name: "edit",
+        arguments: JSON.stringify({
+          patch: `*** Begin Patch
+*** Update File: notes.txt
+@@
+-agent overwrite
++patched overwrite
+ external again
+*** End Patch`,
+        }),
+      },
+      { cwd },
+    )
+    assert.match(edit.content, /Warning: notes\.txt changed since Furnace last read it before this write/)
+    assert.match(edit.content, /Updated notes\.txt \(1 hunks\)/)
   })
 })
 

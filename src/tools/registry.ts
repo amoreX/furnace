@@ -14,6 +14,7 @@ export type ToolServices = {
 
 export type ToolContext = {
   cwd: string
+  sessionId?: string
   services?: ToolServices
 }
 
@@ -43,6 +44,20 @@ type RegisteredTool = {
   execute: ToolHandler
 }
 
+type FileSnapshot = {
+  mtimeMs: number
+  size: number
+}
+
+type FileReadReceipt = FileSnapshot & {
+  displayPath: string
+}
+
+type FileReadTracker = {
+  latestByFile: Map<string, FileSnapshot>
+  returnedRanges: Map<string, FileReadReceipt>
+}
+
 const maxToolOutputBytes = 50 * 1024
 const maxToolOutputLines = 2_000
 const maxReadChars = 200_000
@@ -54,6 +69,7 @@ const maxWebFetchTimeoutMs = 120_000
 const noisyDirectoryNames = new Set(["node_modules", ".git", ".furnace"])
 const exaUrl = process.env.EXA_API_KEY ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}` : "https://mcp.exa.ai/mcp"
 const parallelUrl = "https://search.parallel.ai/mcp"
+const fileReadTrackers = new Map<string, FileReadTracker>()
 
 export const registeredTools: RegisteredTool[] = [
   {
@@ -226,12 +242,22 @@ async function readTool(args: unknown, context: ToolContext): Promise<string> {
   const path = requiredString(args, "path")
   const file = resolveToolPath(context.cwd, path)
   assertReadablePath(context.cwd, file)
-  const contents = await readFile(file, "utf8")
-  const lines = contents.split(/\r?\n/)
+  const fileInfo = await stat(file)
+  const snapshot = fileSnapshot(fileInfo)
   const offset = optionalNumber(args, "offset")
   const limit = optionalNumber(args, "limit")
+  const rangeKey = readRangeKey(context, file, offset, limit)
+  const previousReceipt = getFileReadTracker(context).returnedRanges.get(rangeKey)
+  if (previousReceipt && sameSnapshot(previousReceipt, snapshot)) {
+    const range = readRangeLabel(offset, limit)
+    return `File unchanged since last read: ${previousReceipt.displayPath}${range ? ` (${range})` : ""}.\nUse the previously returned content unless you need a different line range.`
+  }
+
+  const contents = await readFile(file, "utf8")
+  const lines = contents.split(/\r?\n/)
   const start = Math.max(0, (offset || 1) - 1)
   const selected = typeof limit === "number" ? lines.slice(start, start + Math.max(0, limit)) : lines.slice(start)
+  recordFileRead(context, file, snapshot, rangeKey)
   return truncate(selected.map((line, index) => `${start + index + 1}|${line}`).join("\n"), maxReadChars)
 }
 
@@ -307,16 +333,21 @@ async function writeTool(args: unknown, context: ToolContext): Promise<string> {
   const content = requiredString(args, "content")
   const overwrite = optionalBoolean(args, "overwrite") || false
   const file = resolveToolPath(context.cwd, path)
+  const warning = overwrite ? await staleWriteWarning(context, file) : undefined
   if (!overwrite && (await exists(file))) throw new Error(`File already exists: ${displayPath(context.cwd, file)}`)
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, content, "utf8")
-  return `Wrote ${displayPath(context.cwd, file)} (${content.length} bytes).`
+  await recordFileWrite(context, file)
+  return [warning, `Wrote ${displayPath(context.cwd, file)} (${content.length} bytes).`].filter(Boolean).join("\n")
 }
 
 async function editTool(args: unknown, context: ToolContext): Promise<string> {
   const patch = requiredString(args, "patch")
+  const targets = patchTargets(context.cwd, patch)
+  const warnings = await staleWriteWarnings(context, targets.filter((target) => target.kind !== "add").map((target) => target.file))
   const result = await applyPatchEnvelope(context.cwd, patch)
-  return result.join("\n")
+  await Promise.all(targets.map((target) => recordFileWrite(context, target.file)))
+  return [...warnings, ...result].join("\n")
 }
 
 async function bashTool(args: unknown, context: ToolContext): Promise<string> {
@@ -700,6 +731,96 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+function getFileReadTracker(context: ToolContext): FileReadTracker {
+  const key = fileReadTrackerKey(context)
+  const existing = fileReadTrackers.get(key)
+  if (existing) return existing
+  const tracker: FileReadTracker = {
+    latestByFile: new Map(),
+    returnedRanges: new Map(),
+  }
+  fileReadTrackers.set(key, tracker)
+  return tracker
+}
+
+function fileReadTrackerKey(context: ToolContext): string {
+  return [resolve(context.cwd), context.sessionId || "workspace"].join("\0")
+}
+
+function fileSnapshot(info: Awaited<ReturnType<typeof stat>>): FileSnapshot {
+  return {
+    mtimeMs: Number(info.mtimeMs),
+    size: Number(info.size),
+  }
+}
+
+function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
+  return left.mtimeMs === right.mtimeMs && left.size === right.size
+}
+
+function readRangeKey(context: ToolContext, file: string, offset: number | undefined, limit: number | undefined): string {
+  return [fileReadTrackerKey(context), resolve(file), offset ?? "", limit ?? ""].join("\0")
+}
+
+function readRangeLabel(offset: number | undefined, limit: number | undefined): string {
+  if (typeof offset !== "number" && typeof limit !== "number") return ""
+  if (typeof limit !== "number") return `from line ${offset || 1}`
+  return `lines ${offset || 1}-${(offset || 1) + Math.max(0, limit) - 1}`
+}
+
+function recordFileRead(context: ToolContext, file: string, snapshot: FileSnapshot, rangeKey: string): void {
+  const tracker = getFileReadTracker(context)
+  const normalizedFile = resolve(file)
+  tracker.latestByFile.set(normalizedFile, snapshot)
+  tracker.returnedRanges.set(rangeKey, {
+    ...snapshot,
+    displayPath: displayPath(context.cwd, normalizedFile),
+  })
+}
+
+async function staleWriteWarnings(context: ToolContext, files: string[]): Promise<string[]> {
+  const uniqueFiles = [...new Set(files.map((file) => resolve(file)))]
+  const warnings = await Promise.all(uniqueFiles.map((file) => staleWriteWarning(context, file)))
+  return warnings.filter((warning): warning is string => Boolean(warning))
+}
+
+async function staleWriteWarning(context: ToolContext, file: string): Promise<string | undefined> {
+  const tracker = getFileReadTracker(context)
+  const normalizedFile = resolve(file)
+  const previous = tracker.latestByFile.get(normalizedFile)
+  if (!previous) return undefined
+  try {
+    const current = fileSnapshot(await stat(normalizedFile))
+    if (sameSnapshot(previous, current)) return undefined
+    return `Warning: ${displayPath(context.cwd, normalizedFile)} changed since Furnace last read it before this write. The requested modification was still applied; re-read/review if that change was not expected.`
+  } catch {
+    return `Warning: ${displayPath(context.cwd, normalizedFile)} changed since Furnace last read it and was no longer readable before this write.`
+  }
+}
+
+async function recordFileWrite(context: ToolContext, file: string): Promise<void> {
+  const tracker = getFileReadTracker(context)
+  const normalizedFile = resolve(file)
+  for (const key of tracker.returnedRanges.keys()) {
+    if (key.includes(`\0${normalizedFile}\0`)) tracker.returnedRanges.delete(key)
+  }
+  try {
+    tracker.latestByFile.set(normalizedFile, fileSnapshot(await stat(normalizedFile)))
+  } catch {
+    tracker.latestByFile.delete(normalizedFile)
+  }
+}
+
+function patchTargets(cwd: string, patch: string): Array<{ file: string; kind: "add" | "delete" | "update" }> {
+  const targets: Array<{ file: string; kind: "add" | "delete" | "update" }> = []
+  for (const line of patch.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("*** Add File: ")) targets.push({ file: resolveToolPath(cwd, line.slice("*** Add File: ".length).trim()), kind: "add" })
+    else if (line.startsWith("*** Update File: ")) targets.push({ file: resolveToolPath(cwd, line.slice("*** Update File: ".length).trim()), kind: "update" })
+    else if (line.startsWith("*** Delete File: ")) targets.push({ file: resolveToolPath(cwd, line.slice("*** Delete File: ".length).trim()), kind: "delete" })
+  }
+  return targets
 }
 
 function objectSchema(properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> {

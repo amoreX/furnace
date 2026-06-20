@@ -270,12 +270,23 @@ async function runSingleTurn(input: {
     config: input.config,
     cwd: input.cwd,
     messages,
+    sessionId: input.sessionId,
     onToolStart: (call) => {
+      input.store.appendToolCall(input.sessionId, {
+        arguments: call.arguments,
+        name: call.name,
+        toolCallId: call.id,
+      })
       toolActivities.push({ args: call.arguments, id: call.id, name: call.name, status: "running" })
       input.terminal?.setToolActivities([...toolActivities])
       input.terminal?.setThinking(true, `running ${call.name}`)
     },
     onToolResult: (call, content) => {
+      input.store.appendToolResult(input.sessionId, {
+        content,
+        name: call.name,
+        toolCallId: call.id,
+      })
       const index = toolActivities.findIndex((activity) => activity.id === call.id)
       const status = content.startsWith(`Tool ${call.name} failed:`) ? "failed" : "done"
       const activity = { args: call.arguments, id: call.id, name: call.name, result: content, status } satisfies ToolActivity

@@ -1,5 +1,5 @@
 import type { OpenRouterMessage } from "../openrouter.js"
-import type { EntryRecord, MessageEntryData, TranscriptMessage } from "./types.js"
+import type { EntryRecord, MessageEntryData, ToolCallEntryData, ToolResultEntryData, TranscriptMessage } from "./types.js"
 
 export type RuntimeContextInput = {
   cwd: string
@@ -20,11 +20,46 @@ export function entriesToModelMessages(systemPrompt: string, entries: EntryRecor
   return [
     { role: "system", content: systemPrompt },
     ...(runtimeContext ? [{ role: "system" as const, content: buildRuntimeContext(runtimeContext) }] : []),
-    ...entriesToTranscript(entries).map((message) => ({
-      role: message.role,
-      content: message.content,
-    })),
+    ...entries.flatMap(entryToModelMessage),
   ]
+}
+
+function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
+  if (entry.type === "message" && (entry.role === "user" || entry.role === "assistant")) {
+    const data = entry.data as MessageEntryData
+    return [{ role: entry.role, content: data.content }]
+  }
+  if (entry.type === "tool_call") {
+    const data = entry.data as ToolCallEntryData
+    return [
+      {
+        role: "assistant",
+        content: data.content ?? null,
+        tool_calls: [
+          {
+            id: data.toolCallId,
+            type: "function",
+            function: {
+              name: data.name,
+              arguments: data.arguments,
+            },
+          },
+        ],
+      },
+    ]
+  }
+  if (entry.type === "tool_result") {
+    const data = entry.data as ToolResultEntryData
+    return [
+      {
+        role: "tool",
+        name: data.name,
+        tool_call_id: data.toolCallId,
+        content: data.content,
+      },
+    ]
+  }
+  return []
 }
 
 export function buildRuntimeContext(input: RuntimeContextInput): string {

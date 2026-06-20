@@ -1,24 +1,28 @@
 ToDo
 
 session management :
-	- compaction
+	- compaction [HEADROOM FORK BRO]
 	- forking 
 	- duplicating / forking entire branch
 	- vault typeshi per session
+	- session search / SQLite FTS over messages, tool names, and tool calls
+	- session_search tool to search old sessions and scroll around matches
 
 functionality :
-	- tools [CURRENT]
-	- skills
+	- tools [CURRENT].   <- NOW NOW NOW 
+	- skills [NEXT]	<- NEXT NEXT NEXT 
 	- memory long term of sorts
 
 - Plan mode
 - Ask question tool
-- Approval tool
+- Approval tool <- NEXT NEXT NEXT NEXT 
 - Stresstesting to be bug free 
 - Auto doc structure (from harness engineering)
+- Background Tasks support [Delegation]
 
 Gimmicks : 
 	- /goal
+	- /lofi
 	- browser capability ? 
 	- test app itself capability ?
 

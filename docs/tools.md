@@ -4,6 +4,14 @@ Furnace tools are model-callable filesystem and shell primitives. The current wo
 
 Current implementation lives in `src/tools/registry.ts`.
 
+## Harness Provenance
+
+Several tool-system choices were informed by other coding harnesses:
+
+- Pi influenced the small primitive-tool shape and the decision to expose one edit primitive. Furnace presents it as `edit`, but the implementation behaves like an apply-patch envelope.
+- OpenCode influenced the web tooling shape and bounded tool-output behavior. Furnace's `websearch`, `webfetch`, and `.furnace/tool-output/` previews follow that direction.
+- Hermes Agent influenced file read deduplication, stale-write warnings, and richer tool history for debugging/resume. Furnace implements a smaller version of those ideas in the local TypeScript tool runtime and session store.
+
 ## Runtime Shape
 
 Each tool is registered as:
@@ -44,7 +52,7 @@ type ToolExecution = {
 }
 ```
 
-`arguments` is a JSON string emitted by the model. The runtime parses it, executes the matching handler, truncates oversized output, then returns a `tool` message to the model.
+`arguments` is a JSON string emitted by the model. The runtime parses it, executes the matching handler, truncates oversized output, persists the call/result into the active session, then returns a `tool` message to the model.
 
 ## Agent Loop
 
@@ -55,10 +63,12 @@ Flow:
 1. Send the current transcript plus `toolDefinitions` to OpenRouter.
 2. If the assistant returns final text, end the turn.
 3. If the assistant returns tool calls, append the assistant tool-call message to the in-memory transcript.
-4. Execute each tool sequentially.
-5. Append each result as a `role: "tool"` message with the matching `tool_call_id`.
-6. Ask the model again.
-7. Stop after 8 tool iterations to avoid runaway loops.
+4. Persist each tool call as a `tool_call` session entry.
+5. Execute each tool sequentially.
+6. Persist each result as a `tool_result` session entry.
+7. Append each result as a `role: "tool"` message with the matching `tool_call_id`.
+8. Ask the model again.
+9. Stop after 8 tool iterations to avoid runaway loops.
 
 The TUI receives `onToolStart` and `onToolResult` callbacks so calls render inline in the conversation timeline:
 
@@ -72,6 +82,12 @@ ok read path: "src/cli.ts" -> 1|#!/usr/bin/env node
 
 assistant
 ...
+```
+
+The persisted session path keeps the same sequence:
+
+```text
+message(user) -> tool_call(assistant) -> tool_result(tool) -> message(assistant)
 ```
 
 ## Path And Search Defaults
@@ -129,6 +145,8 @@ Current safety behavior:
 - `bash` has a default 30 second timeout and a max 120 second timeout.
 - `websearch` rejects raw provider responses larger than 256 KB.
 - `webfetch` rejects raw response bodies larger than 5 MB.
+- `read` tracks file size and mtime for each returned path/range within the active session. Re-reading the same unchanged range in that session returns an unchanged notice instead of repeating the file contents.
+- `write` and `edit` warn when a file changed after Furnace last read it in the active session. The write/edit is still applied today because approval/permission gates are not implemented yet.
 
 `bash` is intentionally an escape hatch. The model prompt tells the agent to prefer structured tools before shell commands.
 
@@ -178,6 +196,13 @@ Output format:
 1|#!/usr/bin/env node
 2|
 3|import { Command } from "commander"
+```
+
+Repeated unchanged read output:
+
+```text
+File unchanged since last read: src/cli.ts (lines 1-40).
+Use the previously returned content unless you need a different line range.
 ```
 
 ### `ls`
@@ -396,6 +421,13 @@ Output format:
 Wrote notes/example.md (10 bytes).
 ```
 
+If Furnace previously read the file and it changed before this overwrite, the result starts with a warning:
+
+```text
+Warning: notes/example.md changed since Furnace last read it before this write. The requested modification was still applied; re-read/review if that change was not expected.
+Wrote notes/example.md (10 bytes).
+```
+
 ### `edit`
 
 Apply a Furnace apply-patch envelope. This is the single edit primitive; there is no separate `apply_patch` tool.
@@ -437,6 +469,8 @@ Output format:
 ```text
 Updated src/example.ts (1 hunks)
 ```
+
+`edit` performs the same stale-file check as `write` for updated or deleted files. Added files are not stale-checked because there is no previous file content to compare.
 
 ### `bash`
 

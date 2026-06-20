@@ -14,7 +14,7 @@ export type SessionRecord = {
   archivedAt: number | null
 }
 
-export type EntryType = "message" | "compaction" | "branch_summary" | "model_change" | "custom"
+export type EntryType = "message" | "tool_call" | "tool_result" | "compaction" | "branch_summary" | "model_change" | "custom"
 
 export type EntryRole = "user" | "assistant" | "system" | "tool" | null
 
@@ -31,6 +31,19 @@ export type EntryRecord<TData = unknown> = {
 export type MessageEntryData = {
   content: string
   model?: string
+}
+
+export type ToolCallEntryData = {
+  arguments: string
+  content?: string | null
+  name: string
+  toolCallId: string
+}
+
+export type ToolResultEntryData = {
+  content: string
+  name: string
+  toolCallId: string
 }
 
 export type TranscriptMessage = {

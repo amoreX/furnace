@@ -9,8 +9,8 @@ Current implementation lives in `src/tools/registry.ts`.
 Several tool-system choices were informed by other coding harnesses:
 
 - Pi influenced the small primitive-tool shape and the decision to expose one edit primitive. Furnace presents it as `edit`, but the implementation behaves like an apply-patch envelope.
-- OpenCode influenced the web tooling shape and bounded tool-output behavior. Furnace's `websearch`, `webfetch`, and `.furnace/tool-output/` previews follow that direction.
-- Hermes Agent influenced file read deduplication, stale-write warnings, and richer tool history for debugging/resume. Furnace implements a smaller version of those ideas in the local TypeScript tool runtime and session store.
+- OpenCode influenced the web tooling shape, bounded tool-output behavior, and allow/ask/deny permission model. Furnace's `websearch`, `webfetch`, `.furnace/tool-output/` previews, and first approval layer follow that direction.
+- Hermes Agent influenced file read deduplication, stale-write warnings, session-scoped broad approval, and richer tool history for debugging/resume. Furnace implements a smaller version of those ideas in the local TypeScript tool runtime and session store.
 
 ## Runtime Shape
 
@@ -135,7 +135,7 @@ Current safety behavior:
 - Relative paths resolve from the current workspace.
 - Explicit absolute paths and parent paths are allowed when they are relevant to the user's request.
 - Reads of `.env` and `.env.*` are denied, except `.env.example`.
-- Writes are not hard-blocked for special paths yet. The prompt instructs the agent not to modify repo metadata like `.git/` or secret-like files like `.env` unless the user explicitly asks for that exact operation. A real permission gate should enforce this later.
+- Interactive sessions ask before `write`, `edit`, and `bash` tool calls. Denying a request blocks only that specific tool call.
 - `write` refuses to overwrite existing files unless `overwrite: true`.
 - Tool output is bounded to 2,000 lines and 50 KB before returning to the model.
 - When tool output exceeds those limits, the full text is saved under `.furnace/tool-output/` and the model receives a head/tail preview plus the saved path.
@@ -146,7 +146,16 @@ Current safety behavior:
 - `websearch` rejects raw provider responses larger than 256 KB.
 - `webfetch` rejects raw response bodies larger than 5 MB.
 - `read` tracks file size and mtime for each returned path/range within the active session. In real sessions this is stored in SQLite, so re-reading the same unchanged range after resume/restart returns an unchanged notice instead of repeating the file contents.
-- `write` and `edit` warn when a file changed after Furnace last read it in the active session, including after resume/restart. The write/edit is still applied today because approval/permission gates are not implemented yet.
+- `write` and `edit` warn when a file changed after Furnace last read it in the active session, including after resume/restart. Approval still happens before execution; stale warnings appear in the result after an approved modification.
+
+Approval prompt choices:
+
+- `Allow once`: approve only the current tool call.
+- `Allow <tool> for conversation`: approve future calls of the same tool in the current conversation.
+- `Allow all tools for conversation`: approve all future tool calls in the current conversation only.
+- `Deny`: deny only the current tool call.
+
+Use `/reset-perms` to clear permission grants for the current conversation.
 
 `bash` is intentionally an escape hatch. The model prompt tells the agent to prefer structured tools before shell commands.
 

@@ -1,5 +1,6 @@
 import type { FurnaceConfig } from "../config.js"
 import { completeOpenRouterToolResponse, type OpenRouterMessage, type OpenRouterToolChoice } from "../openrouter.js"
+import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import { executeToolCall, toolDefinitions, type ToolFileReadStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
@@ -7,7 +8,9 @@ export type RunAgentTurnInput = {
   cwd: string
   fileReadStore?: ToolFileReadStore
   messages: OpenRouterMessage[]
+  onPermissionRequest?: PermissionPrompt
   sessionId?: string
+  permissions?: SessionPermissionStore
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
   onToolResult?: (call: { arguments: string; id: string; name: string }, content: string) => void
 }
@@ -42,6 +45,25 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         name: toolCall.function.name,
       }
       input.onToolStart?.(call)
+      const permissionRequest = createToolPermissionRequest({
+        args: call.arguments,
+        callId: call.id,
+        cwd: input.cwd,
+        sessionId: input.sessionId,
+        toolName: call.name,
+      })
+      const permissionDecision = await input.permissions?.authorize(permissionRequest, input.onPermissionRequest)
+      if (permissionDecision === "deny") {
+        const content = `Tool ${call.name} denied: user denied permission for this specific tool call.`
+        input.onToolResult?.(call, content)
+        messages.push({
+          role: "tool",
+          name: call.name,
+          tool_call_id: toolCall.id,
+          content,
+        })
+        continue
+      }
       const result = await executeToolCall(
         {
           name: toolCall.function.name,

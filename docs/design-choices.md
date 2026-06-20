@@ -42,8 +42,8 @@ Current influences:
 
 - Pi: parent-linked session entries, `active_leaf_id`, future branching/forking semantics, and keeping the agent runtime independent of the terminal UI.
 - Pi-style apply patch: Furnace exposes one model-facing `edit` tool but implements it as a structured apply-patch envelope.
-- OpenCode: web search/fetch direction, MCP-style web provider calls, and bounded tool-output previews saved under `.furnace/tool-output/`.
-- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, and the future direction for SQLite FTS session search.
+- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, and the allow/ask/deny permission rule model.
+- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, and the future direction for SQLite FTS session search.
 
 ## Runtime Context Injection
 
@@ -87,7 +87,7 @@ Current behavior:
 - Re-reading the same unchanged path/range returns a short unchanged notice.
 - Reading a different range still returns content.
 - `write` and `edit` warn if a target previously read in the same session changed before the modification.
-- The modification is still applied today because Furnace does not have approval/permission gates yet.
+- Approval gates still run before the tool executes; stale warnings are advisory once the user has approved the requested modification.
 
 Current implementation:
 
@@ -95,3 +95,28 @@ Current implementation:
 - Persisted state lives in `file_read_files` and `file_read_ranges` tables in `.furnace/furnace.sqlite`.
 - `src/cli.ts` and `src/agent/loop.ts` pass the active session id and `SessionStore` into tool execution. Direct tool calls without a session store fall back to workspace-scoped in-memory tracking for tests and simple harness usage.
 - Regression coverage lives in `test/tools.test.mjs`.
+
+## Tool Approvals
+
+Furnace evaluates each model-requested tool call before execution through an allow/ask/deny permission layer.
+
+Reasoning:
+
+OpenCode has the cleanest general-purpose shape for tool permissions: policy evaluates to `allow`, `ask`, or `deny`, and the UI resolves asks with scoped choices. Hermes Agent adds a useful distinction between approving one dangerous operation and allowing broader session behavior. Furnace combines those ideas but keeps denial scoped to the specific pending request, so rejecting one tool call does not reject every other pending or future request.
+
+Current behavior:
+
+- `allow`: execute the tool without prompting.
+- `ask`: pause the turn and show an approval prompt.
+- `deny`: block only that specific tool call and return a denied tool result to the model.
+- The interactive prompt offers `Allow once`, `Allow <tool> for conversation`, `Allow all tools for conversation`, and `Deny`.
+- Conversation-scoped grants are keyed by the Furnace session id. Switching to another conversation does not share those grants.
+- `/reset-perms` clears grants for the current conversation only.
+- `Allow all tools for conversation` applies only to the current conversation and is not persisted globally.
+
+Current implementation:
+
+- `src/permissions.ts` owns permission rules, default actions, and session-scoped approvals.
+- `src/agent/loop.ts` checks permission before calling `executeToolCall()`.
+- `src/ui/ink-terminal.tsx` renders the themed approval prompt and resolves the pending request.
+- `src/cli.ts` keeps one `SessionPermissionStore` for the interactive run and routes `/reset-perms` to the active conversation id.

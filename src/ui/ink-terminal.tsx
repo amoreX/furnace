@@ -1,6 +1,7 @@
 import { Box, Text, render, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 
+import type { PermissionDecision, PermissionRequest } from "../permissions.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import { AppShell } from "./components/app-shell.js"
@@ -12,6 +13,7 @@ import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
+  requestApproval(request: PermissionRequest): Promise<PermissionDecision>
   run(): Promise<void>
   stop(): void
   setBusy(busy: boolean): void
@@ -75,7 +77,12 @@ type UiScreen =
     }
   | { kind: "theme"; choices: ThemeChoice[]; currentTheme: string; onCancel: () => void; onSelect: (theme: string, done: boolean) => void }
 
+type ApprovalPromptState = PermissionRequest & {
+  resolve: (decision: PermissionDecision) => void
+}
+
 type UiState = {
+  approval?: ApprovalPromptState
   busy: boolean
   cwd: string
   model: string
@@ -97,6 +104,7 @@ class UiStore {
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
     this.state = {
+      approval: undefined,
       busy: false,
       cwd: options.cwd,
       model: options.model,
@@ -136,6 +144,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   return {
     clearToolActivities() {
       store.update({ toolActivities: [] })
+    },
+    requestApproval(request) {
+      return new Promise<PermissionDecision>((resolve) => {
+        store.update({ approval: { ...request, resolve } })
+      })
     },
     run() {
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
@@ -229,28 +242,96 @@ function FurnaceApp({
         ) : state.screen.kind === "theme" ? (
           <ThemeScreen screen={state.screen} store={store} />
         ) : (
-          <ChatScreen thinking={state.thinking} thinkingMessage={state.thinkingMessage} toolActivities={state.toolActivities} transcript={state.transcript} />
+          <>
+            <ChatScreen
+              approvalActive={Boolean(state.approval)}
+              thinking={state.thinking}
+              thinkingMessage={state.thinkingMessage}
+              toolActivities={state.toolActivities}
+              transcript={state.transcript}
+            />
+            {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
+          </>
         )}
       </AppShell.Content>
-      <PromptInput busy={state.busy} disabled={state.screen.kind !== "chat"} onSubmit={onSubmit} placeholder={state.busy ? "Furnace is working..." : "Ask Furnace or type /theme"} />
-      <AppShell.Hints items={hintItems(state.screen.kind)} />
+      <PromptInput busy={state.busy} disabled={state.screen.kind !== "chat" || Boolean(state.approval)} onSubmit={onSubmit} placeholder={state.approval ? "Resolve the permission prompt..." : state.busy ? "Furnace is working..." : "Ask Furnace or type /theme"} />
+      <AppShell.Hints items={state.approval ? approvalHintItems() : hintItems(state.screen.kind)} />
     </AppShell>
   )
+}
+
+function approvalHintItems(): string[] {
+  return ["up/down navigate", "enter select", "esc deny"]
+}
+
+function ApprovalPrompt({ request, store }: { request: ApprovalPromptState; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const choices = React.useMemo(() => approvalChoiceItems(request.toolName), [request.toolName])
+  const resolve = React.useCallback(
+    (decision: PermissionDecision) => {
+      request.resolve(decision)
+      store.update((state) => ({ ...state, approval: undefined }))
+    },
+    [request, store],
+  )
+
+  return (
+    <Box borderStyle="round" borderColor={theme.colors.warning} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.warning} bold>Permission required</Text>
+        <Text color={theme.colors.mutedForeground}>{request.permission}</Text>
+      </Box>
+      <Text color={theme.colors.foreground}>{request.description}</Text>
+      <Text color={theme.colors.mutedForeground}>{truncateEnd(formatApprovalArgs(request.args), 120)}</Text>
+      <SelectList
+        active
+        items={choices}
+        maxRows={4}
+        onCancel={() => resolve("deny")}
+        onSelect={(item) => resolve(item.value)}
+      />
+    </Box>
+  )
+}
+
+export function approvalChoiceItems(toolName: string): SelectListItem<PermissionDecision>[] {
+  return [
+    { label: "Allow once", value: "allow_once", description: "only this call" },
+    { label: `Allow ${toolName} for conversation`, value: "allow_tool_session", description: "future calls of this tool" },
+    { label: "Allow all tools for conversation", value: "allow_all_session", description: "current conversation only" },
+    { label: "Deny", value: "deny", description: "only this call" },
+  ]
+}
+
+function formatApprovalArgs(args: string): string {
+  try {
+    const parsed = args.trim() ? JSON.parse(args) : {}
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>
+      const primary = ["command", "path", "patch", "query", "url", "pattern"].find((key) => typeof record[key] === "string")
+      if (primary) return `${primary}: ${String(record[primary]).replace(/\s+/g, " ").trim()}`
+    }
+  } catch {
+    // Fall through to raw argument preview.
+  }
+  return args.replace(/\s+/g, " ").trim() || "no arguments"
 }
 
 function hintItems(kind: UiScreen["kind"]): string[] {
   if (kind === "model") return ["type to filter", "enter select", "tab edit", "esc cancel"]
   if (kind === "theme") return ["up/down navigate", "enter preview", "esc cancel"]
   if (kind === "history") return ["up/down navigate", "enter open", "esc cancel"]
-  return ["/new", "/history", "/model", "/theme", "/exit"]
+  return ["/new", "/history", "/model", "/theme", "/reset-perms", "/exit"]
 }
 
 function ChatScreen({
+  approvalActive,
   thinking,
   thinkingMessage,
   toolActivities,
   transcript,
 }: {
+  approvalActive?: boolean
   thinking: boolean
   thinkingMessage: string
   toolActivities: ToolActivity[]
@@ -259,7 +340,7 @@ function ChatScreen({
   const theme = useTheme()
   const { columns, rows } = useWindowSize()
   const [scrollOffset, setScrollOffset] = React.useState(0)
-  const viewportRows = chatViewportRows(rows)
+  const viewportRows = chatViewportRows(rows, approvalActive ? 8 : 0)
   const activityKey = React.useMemo(
     () => toolActivities.map((activity) => `${activity.id}:${activity.status}`).join("|"),
     [toolActivities],
@@ -286,6 +367,7 @@ function ChatScreen({
   }, [activityKey, thinking, thinkingMessage, toolActivities.length])
 
   useInput((input, key) => {
+    if (approvalActive) return
     if (key.pageUp || (key.ctrl && input === "u")) {
       setScrollOffset((current) => Math.min(maxScrollOffset, current + pageScrollRows))
       return
@@ -323,10 +405,10 @@ function ChatScreen({
   )
 }
 
-export function chatViewportRows(windowRows: number): number {
+export function chatViewportRows(windowRows: number, reservedRows = 0): number {
   // Header, prompt, and hints use fixed bordered rows; keep one spare row so
   // Ink never clips the final assistant spinner behind the input box.
-  return Math.max(3, windowRows - 11)
+  return Math.max(3, windowRows - 11 - reservedRows)
 }
 
 type TranscriptLineData = {

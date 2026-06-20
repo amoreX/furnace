@@ -5,6 +5,7 @@ import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { loadConfig } from "./config.js"
 import { listOpenRouterModels, type OpenRouterMessage } from "./openrouter.js"
+import { SessionPermissionStore } from "./permissions.js"
 import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
@@ -73,6 +74,7 @@ async function runInteractive(input: {
 }): Promise<void> {
   if (input.shouldClear) process.stdout.write("\x1b[2J\x1b[H")
   let sessionId = input.sessionId
+  const permissions = new SessionPermissionStore()
   const initialSession = input.store.getSession(sessionId)
   const terminal = createFurnaceTerminal({
     cwd: input.cwd,
@@ -104,6 +106,14 @@ async function runInteractive(input: {
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
       refreshInteractive(terminal, input.store, sessionId)
+      return
+    }
+    if (command.name === "/reset-perms") {
+      const removed = permissions.clearSession(sessionId)
+      terminal.setTranscript([
+        ...entriesToTranscript(input.store.getActivePath(sessionId)),
+        { role: "assistant", content: removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation." },
+      ])
       return
     }
     if (isHistoryCommand(command.name)) {
@@ -177,7 +187,7 @@ async function runInteractive(input: {
 
     terminal.setBusy(true)
     try {
-      await runSingleTurn({ config: input.config, cwd: input.cwd, prompt, sessionId, store: input.store, terminal })
+      await runSingleTurn({ config: input.config, cwd: input.cwd, permissions, prompt, sessionId, store: input.store, terminal })
     } finally {
       terminal.setBusy(false)
     }
@@ -200,6 +210,7 @@ async function runPiped(input: {
 }): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin })
   let sessionId = input.sessionId
+  const permissions = new SessionPermissionStore()
 
   for await (const line of rl) {
     const prompt = line.trim()
@@ -209,6 +220,11 @@ async function runPiped(input: {
     if (command.name === "/new") {
       const session = input.store.getSession(sessionId)
       sessionId = session.activeLeafId ? input.store.createSession({ cwd: process.cwd(), title: "New Chat" }).id : session.id
+      continue
+    }
+    if (command.name === "/reset-perms") {
+      const removed = permissions.clearSession(sessionId)
+      process.stdout.write(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.\n` : "No permission grants to reset for this conversation.\n")
       continue
     }
     if (isHistoryCommand(command.name)) {
@@ -237,13 +253,14 @@ async function runPiped(input: {
       process.stdout.write(`${choice.name}\n`)
       continue
     }
-    await runSingleTurn({ config: input.config, cwd: process.cwd(), prompt, sessionId, store: input.store })
+    await runSingleTurn({ config: input.config, cwd: process.cwd(), permissions, prompt, sessionId, store: input.store })
   }
 }
 
 async function runSingleTurn(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   cwd: string
+  permissions?: SessionPermissionStore
   prompt: string
   sessionId: string
   store: SessionStore
@@ -266,11 +283,21 @@ async function runSingleTurn(input: {
   else renderAssistantStart(transcript)
 
   const toolActivities: ToolActivity[] = []
+  const terminal = input.terminal
   const result = await runAgentTurn({
     config: input.config,
     cwd: input.cwd,
     fileReadStore: input.store,
     messages,
+    onPermissionRequest: terminal
+      ? async (request) => {
+          terminal.setThinking(true, `waiting for ${request.toolName} approval`)
+          const decision = await terminal.requestApproval(request)
+          terminal.setThinking(true, "thinking")
+          return decision
+        }
+      : undefined,
+    permissions: input.permissions || new SessionPermissionStore(),
     sessionId: input.sessionId,
     onToolStart: (call) => {
       input.store.appendToolCall(input.sessionId, {
@@ -289,7 +316,7 @@ async function runSingleTurn(input: {
         toolCallId: call.id,
       })
       const index = toolActivities.findIndex((activity) => activity.id === call.id)
-      const status = content.startsWith(`Tool ${call.name} failed:`) ? "failed" : "done"
+      const status = content.startsWith(`Tool ${call.name} failed:`) || content.startsWith(`Tool ${call.name} denied:`) ? "failed" : "done"
       const activity = { args: call.arguments, id: call.id, name: call.name, result: content, status } satisfies ToolActivity
       if (index >= 0) toolActivities[index] = activity
       else toolActivities.push(activity)

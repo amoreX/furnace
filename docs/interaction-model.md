@@ -1,6 +1,6 @@
 # Interaction Model
 
-This document explains how Furnace handles user interaction while an agent turn is running: clarification questions, queued prompts, and tool permissions.
+This document explains how Furnace handles user interaction while an agent turn is running: clarification questions, queued prompts, lofi mode, and tool permissions.
 
 ## Harness Provenance
 
@@ -112,3 +112,30 @@ Conversation scope:
 Denied calls:
 
 If the user denies a permission prompt, Furnace does not execute that tool. It returns a denied tool result to the model, and denial does not persist unless a future rule explicitly says so.
+
+## Lofi Mode
+
+`/lofi` toggles a lightweight ambience mode for the interactive TUI.
+
+Behavior:
+
+- The TUI renders a tiny terminal-native chibi animation in the corner above the input.
+- The chibi animation is original text UI, not a downloaded or vendored image asset.
+- Furnace starts a free online radio stream using the best available local player.
+- Running `/lofi` again turns the chibi off and stops the player when Furnace owns the player process.
+
+Playback fallback order:
+
+1. `mpv`
+2. `ffplay`
+3. macOS `afplay` through `curl`
+4. `open` in the default browser/player
+
+If Furnace has to use the browser fallback, `/lofi` can hide the UI but cannot close the external browser tab. The user should close that tab/player manually.
+
+Configuration:
+
+- `FURNACE_LOFI_URL` can override the default radio stream.
+- The built-in default is a stable public SomaFM MP3 stream.
+
+`/lofi` is an immediate slash command. It is handled by the TUI and is not queued as a model prompt while Furnace is busy.

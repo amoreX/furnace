@@ -4,6 +4,7 @@ import { Command } from "commander"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { loadConfig } from "./config.js"
+import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage } from "./openrouter.js"
 import { SessionPermissionStore } from "./permissions.js"
 import { saveModelPreferences, saveThemePreference } from "./preferences.js"
@@ -75,6 +76,7 @@ async function runInteractive(input: {
   if (input.shouldClear) process.stdout.write("\x1b[2J\x1b[H")
   let sessionId = input.sessionId
   const permissions = new SessionPermissionStore()
+  const lofi = new LofiPlayer()
   const queuedPrompts: QueuedPrompt[] = []
   let queueCounter = 0
   let running = false
@@ -107,14 +109,25 @@ async function runInteractive(input: {
   })
 
   refreshInteractive(terminal, input.store, sessionId)
-  await terminal.run()
+  try {
+    await terminal.run()
+  } finally {
+    lofi.stop()
+  }
 
   async function handleInteractiveSubmit(prompt: string): Promise<void> {
     const command = parseSlashCommand(prompt)
 
     if (command.name === "/exit" || command.name === "/quit") {
       activeAbortController?.abort()
+      lofi.stop()
       terminal.stop()
+      return
+    }
+    if (command.name === "/lofi") {
+      const result = lofi.toggle()
+      terminal.setLofi(result.enabled)
+      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: result.message }])
       return
     }
     if (running) {
@@ -334,6 +347,10 @@ async function runPiped(input: {
       input.config.theme = choice.name
       await saveThemePreference(process.cwd(), choice.name)
       process.stdout.write(`${choice.name}\n`)
+      continue
+    }
+    if (command.name === "/lofi") {
+      process.stdout.write("Lofi mode is only available in the interactive TUI.\n")
       continue
     }
     await runSingleTurn({ config: input.config, cwd: process.cwd(), permissions, prompt, sessionId, store: input.store })

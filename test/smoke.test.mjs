@@ -193,3 +193,12 @@ test("queued prompt previews truncate and track selected item", async () => {
     ["four", true],
   ])
 })
+
+test("lofi mode exposes a terminal chibi animation and stream default", async () => {
+  const { lofiChibiFrame } = await import("../dist/ui/components/prompt-input.js")
+  const { defaultLofiStreamUrl } = await import("../dist/lofi.js")
+
+  assert.notEqual(lofiChibiFrame(0), lofiChibiFrame(1))
+  assert.match(lofiChibiFrame(0), /♪/)
+  assert.match(defaultLofiStreamUrl, /^https:\/\//)
+})

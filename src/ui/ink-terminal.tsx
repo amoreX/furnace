@@ -6,7 +6,7 @@ import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
 import { AppShell } from "./components/app-shell.js"
-import { PromptInput } from "./components/prompt-input.js"
+import { lofiChibiFrame, PromptInput } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
@@ -21,6 +21,7 @@ export type FurnaceTerminal = {
   waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
   setInputDraft(value: string): void
+  setLofi(enabled: boolean): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   showHistory(choices: HistoryChoice[], currentSessionId: string | null, onSelect: (sessionId: string) => void, onCancel: () => void): void
@@ -107,6 +108,7 @@ type UiState = {
   cwd: string
   focus: UiFocus
   inputDraft: string
+  lofiEnabled: boolean
   model: string
   modelSettings: ModelSettings
   question?: QuestionPromptState
@@ -144,6 +146,7 @@ class UiStore {
       cwd: options.cwd,
       focus: "input",
       inputDraft: "",
+      lofiEnabled: false,
       model: options.model,
       modelSettings: options.modelSettings,
       question: undefined,
@@ -236,6 +239,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
+    },
+    setLofi(enabled) {
+      store.update({ lofiEnabled: enabled })
     },
     setThinking(thinking, message = "thinking") {
       store.update({ thinking, thinkingMessage: message })
@@ -335,6 +341,7 @@ function FurnaceApp({
           </>
         )}
       </AppShell.Content>
+      {state.lofiEnabled ? <LofiCorner /> : null}
       <PromptInput
         active={state.focus === "input"}
         busy={state.busy}
@@ -349,6 +356,22 @@ function FurnaceApp({
     </AppShell>
   )
 
+}
+
+function LofiCorner(): React.ReactNode {
+  const theme = useTheme()
+  const [tick, setTick] = React.useState(0)
+
+  React.useEffect(() => {
+    const interval = setInterval(() => setTick((current) => current + 1), 550)
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <Box justifyContent="flex-end" paddingRight={2}>
+      <Text color={theme.colors.primary}>{lofiChibiFrame(tick)}</Text>
+    </Box>
+  )
 }
 
 function approvalHintItems(): string[] {
@@ -745,7 +768,7 @@ function hintItems(kind: UiScreen["kind"]): string[] {
   if (kind === "model") return ["type to filter", "enter select", "tab edit", "esc cancel"]
   if (kind === "theme") return ["up/down navigate", "enter preview", "esc cancel"]
   if (kind === "history") return ["up/down navigate", "enter open", "esc cancel"]
-  return ["/new", "/history", "/model", "/theme", "/reset-perms", "/exit"]
+  return ["/new", "/history", "/model", "/theme", "/lofi", "/reset-perms", "/exit"]
 }
 
 function ChatScreen({

@@ -132,3 +132,7 @@ export function PromptInput({
     </Box>
   )
 }
+
+export function lofiChibiFrame(tick: number): string {
+  return tick % 2 === 0 ? "♪ (˶ᵔ ᵕ ᵔ˶)╯╲" : "♪ (˶ᵔ ᵕ ᵔ˶)╮╱"
+}

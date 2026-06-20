@@ -81,6 +81,8 @@ async function runInteractive(input: {
   let queueCounter = 0
   let running = false
   let activeAbortController: AbortController | undefined
+  let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
+  let transientStatusToken = 0
   const initialSession = input.store.getSession(sessionId)
   const terminal = createFurnaceTerminal({
     cwd: input.cwd,
@@ -112,6 +114,7 @@ async function runInteractive(input: {
   try {
     await terminal.run()
   } finally {
+    clearTransientStatus()
     lofi.stop()
   }
 
@@ -127,7 +130,7 @@ async function runInteractive(input: {
     if (command.name === "/lofi") {
       const result = lofi.toggle()
       terminal.setLofi(result.enabled)
-      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: result.message }])
+      showTransientStatus(result.message)
       return
     }
     if (running) {
@@ -135,6 +138,7 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/new") {
+      clearTransientStatus()
       const session = input.store.getSession(sessionId)
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
@@ -143,10 +147,7 @@ async function runInteractive(input: {
     }
     if (command.name === "/reset-perms") {
       const removed = permissions.clearSession(sessionId)
-      terminal.setTranscript([
-        ...entriesToTranscript(input.store.getActivePath(sessionId)),
-        { role: "assistant", content: removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation." },
-      ])
+      showTransientStatus(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation.")
       return
     }
     if (isHistoryCommand(command.name)) {
@@ -198,7 +199,7 @@ async function runInteractive(input: {
         input.config.theme = choice.name
         terminal.setTheme(choice.name)
         await saveThemePreference(input.cwd, choice.name)
-        terminal.setTranscript([{ role: "assistant", content: `Theme set to ${choice.name}.` }])
+        showTransientStatus(`Theme set to ${choice.name}.`)
         return
       }
 
@@ -218,7 +219,27 @@ async function runInteractive(input: {
       return
     }
 
+    clearTransientStatus()
     await runPromptQueue(prompt)
+  }
+
+  function showTransientStatus(content: string, ttlMs = 3000): void {
+    clearTransientStatus()
+    const token = ++transientStatusToken
+    terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content }])
+    transientStatusTimer = setTimeout(() => {
+      if (token !== transientStatusToken) return
+      transientStatusTimer = undefined
+      terminal.setTranscript(entriesToTranscript(input.store.getActivePath(sessionId)))
+    }, ttlMs)
+    transientStatusTimer.unref?.()
+  }
+
+  function clearTransientStatus(): void {
+    transientStatusToken += 1
+    if (!transientStatusTimer) return
+    clearTimeout(transientStatusTimer)
+    transientStatusTimer = undefined
   }
 
   function enqueuePrompt(text: string): void {

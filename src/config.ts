@@ -16,6 +16,7 @@ export type FurnaceConfig = {
   openRouterApiKey: string
   siteUrl: string
   systemPrompt: string
+  theme: string
   titleModel: string
   titleSystemPrompt: string
 }
@@ -37,6 +38,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     openRouterApiKey,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
     systemPrompt: await readFile(promptPath, "utf8"),
+    theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "flexoki",
     titleModel: process.env.OPENROUTER_TITLE_MODEL?.trim() || "openai/gpt-4o-mini",
     titleSystemPrompt: await readFile(titlePromptPath, "utf8"),
   }

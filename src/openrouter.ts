@@ -77,27 +77,34 @@ export async function* streamOpenRouterResponse(
   const decoder = new TextDecoder()
   let buffer = ""
 
-  for await (const chunk of response.body) {
-    buffer += decoder.decode(chunk, { stream: true })
+  const reader = response.body.getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
 
-    const lines = buffer.split("\n")
-    buffer = lines.pop() || ""
+      const lines = buffer.split("\n")
+      buffer = lines.pop() || ""
 
-    for (const rawLine of lines) {
-      const line = rawLine.trim()
+      for (const rawLine of lines) {
+        const line = rawLine.trim()
 
-      if (!line || line.startsWith(":")) continue
-      if (!line.startsWith("data:")) continue
+        if (!line || line.startsWith(":")) continue
+        if (!line.startsWith("data:")) continue
 
-      const data = line.slice("data:".length).trim()
-      if (data === "[DONE]") return
+        const data = line.slice("data:".length).trim()
+        if (data === "[DONE]") return
 
-      const parsed = parseChunk(data)
-      if (parsed.error?.message) throw new Error(parsed.error.message)
+        const parsed = parseChunk(data)
+        if (parsed.error?.message) throw new Error(parsed.error.message)
 
-      const content = parsed.choices?.[0]?.delta?.content
-      if (content) yield content
+        const content = parsed.choices?.[0]?.delta?.content
+        if (content) yield content
+      }
     }
+  } finally {
+    reader.releaseLock()
   }
 }
 

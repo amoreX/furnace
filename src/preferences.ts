@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 export type FurnacePreferences = {
   model?: string
   modelSettings?: ModelSettings
+  theme?: string
 }
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh"
@@ -33,6 +34,10 @@ export async function saveModelPreferences(cwd: string, update: FurnacePreferenc
   Object.assign(preferences, update)
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(preferences, null, 2)}\n`, "utf8")
+}
+
+export async function saveThemePreference(cwd: string, theme: string): Promise<void> {
+  await saveModelPreferences(cwd, { theme })
 }
 
 function preferencesPath(cwd: string): string {

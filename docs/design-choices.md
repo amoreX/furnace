@@ -21,5 +21,5 @@ Near-midnight sessions can technically be "yesterday" while still feeling recent
 
 Current implementation:
 
-- Interactive history formatting lives in `src/ui/pi-terminal.ts`.
+- Interactive history formatting lives in `src/ui/ink-terminal.tsx`.
 - Piped `/history` formatting lives in `src/cli.ts`.

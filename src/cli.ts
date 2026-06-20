@@ -4,11 +4,12 @@ import { Command } from "commander"
 import readline from "node:readline"
 import { loadConfig } from "./config.js"
 import { listOpenRouterModels, streamOpenRouterResponse, type OpenRouterMessage } from "./openrouter.js"
-import { saveModelPreferences } from "./preferences.js"
+import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
-import { createFurnacePiTerminal, type FurnacePiTerminal } from "./ui/pi-terminal.js"
+import { createFurnaceTerminal, type FurnaceTerminal } from "./ui/ink-terminal.js"
+import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
   renderAssistantToken,
@@ -72,10 +73,11 @@ async function runInteractive(input: {
   if (input.shouldClear) process.stdout.write("\x1b[2J\x1b[H")
   let sessionId = input.sessionId
   const initialSession = input.store.getSession(sessionId)
-  const terminal = createFurnacePiTerminal({
+  const terminal = createFurnaceTerminal({
     cwd: input.cwd,
     model: input.config.model,
     modelSettings: input.config.modelSettings,
+    themeName: input.config.theme,
     title: initialSession.title,
     onSubmit: (prompt) => {
       void handleInteractiveSubmit(prompt).catch((error) => {
@@ -90,20 +92,20 @@ async function runInteractive(input: {
   await terminal.run()
 
   async function handleInteractiveSubmit(prompt: string): Promise<void> {
-    const command = normalizeSlashCommand(prompt)
+    const command = parseSlashCommand(prompt)
 
-    if (command === "/exit" || command === "/quit") {
+    if (command.name === "/exit" || command.name === "/quit") {
       terminal.stop()
       return
     }
-    if (command === "/new") {
+    if (command.name === "/new") {
       const session = input.store.getSession(sessionId)
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
       refreshInteractive(terminal, input.store, sessionId)
       return
     }
-    if (isHistoryCommand(command)) {
+    if (isHistoryCommand(command.name)) {
       const historyChoices = input.store.listSessions(input.cwd)
       if (historyChoices.length === 0) {
         terminal.setTitle("History")
@@ -121,7 +123,7 @@ async function runInteractive(input: {
       )
       return
     }
-    if (command === "/model") {
+    if (command.name === "/model") {
       terminal.setTitle("Model")
       terminal.setTranscript([{ role: "assistant", content: "Loading OpenRouter models..." }])
       const models = await listOpenRouterModels(input.config)
@@ -142,6 +144,35 @@ async function runInteractive(input: {
       )
       return
     }
+    if (command.name === "/theme") {
+      if (command.argument) {
+        const choice = findTheme(command.argument)
+        if (!choice) {
+          terminal.setTranscript([{ role: "assistant", content: `Unknown theme: ${command.argument}\nAvailable themes: ${themeChoices.map((theme) => theme.name).join(", ")}` }])
+          return
+        }
+        input.config.theme = choice.name
+        terminal.setTheme(choice.name)
+        await saveThemePreference(input.cwd, choice.name)
+        terminal.setTranscript([{ role: "assistant", content: `Theme set to ${choice.name}.` }])
+        return
+      }
+
+      terminal.showThemePicker(
+        themeChoices,
+        resolveTheme(input.config.theme).name,
+        (theme, done) => {
+          input.config.theme = theme
+          terminal.setTheme(theme)
+          void saveThemePreference(input.cwd, theme).catch((error) => {
+            terminal.setTranscript([{ role: "assistant", content: `Failed to save theme preference: ${formatError(error)}` }])
+          })
+          if (done) refreshInteractive(terminal, input.store, sessionId)
+        },
+        () => refreshInteractive(terminal, input.store, sessionId),
+      )
+      return
+    }
 
     terminal.setBusy(true)
     try {
@@ -152,7 +183,7 @@ async function runInteractive(input: {
   }
 }
 
-function refreshInteractive(terminal: FurnacePiTerminal, store: SessionStore, sessionId: string): void {
+function refreshInteractive(terminal: FurnaceTerminal, store: SessionStore, sessionId: string): void {
   const session = store.getSession(sessionId)
   const activePath = store.getActivePath(sessionId)
   const transcript = entriesToTranscript(activePath)
@@ -171,21 +202,37 @@ async function runPiped(input: {
   for await (const line of rl) {
     const prompt = line.trim()
     if (!prompt) continue
-    const command = normalizeSlashCommand(prompt)
-    if (command === "/exit" || command === "/quit") break
-    if (command === "/new") {
+    const command = parseSlashCommand(prompt)
+    if (command.name === "/exit" || command.name === "/quit") break
+    if (command.name === "/new") {
       const session = input.store.getSession(sessionId)
       sessionId = session.activeLeafId ? input.store.createSession({ cwd: process.cwd(), title: "New Chat" }).id : session.id
       continue
     }
-    if (isHistoryCommand(command)) {
+    if (isHistoryCommand(command.name)) {
       for (const [index, session] of input.store.listSessions(process.cwd()).entries()) {
         process.stdout.write(`${index + 1}. ${session.title} (${formatRelativeTime(session.updatedAt)})\n`)
       }
       continue
     }
-    if (command === "/model") {
+    if (command.name === "/model") {
       process.stdout.write(`${input.config.model}\n`)
+      continue
+    }
+    if (command.name === "/theme") {
+      if (!command.argument) {
+        process.stdout.write(`${resolveTheme(input.config.theme).name}\n`)
+        for (const choice of themeChoices) process.stdout.write(`${choice.name} - ${choice.description}\n`)
+        continue
+      }
+      const choice = findTheme(command.argument)
+      if (!choice) {
+        process.stdout.write(`Unknown theme: ${command.argument}\nAvailable themes: ${themeChoices.map((theme) => theme.name).join(", ")}\n`)
+        continue
+      }
+      input.config.theme = choice.name
+      await saveThemePreference(process.cwd(), choice.name)
+      process.stdout.write(`${choice.name}\n`)
       continue
     }
     await runSingleTurn({ config: input.config, prompt, sessionId, store: input.store })
@@ -197,7 +244,7 @@ async function runSingleTurn(input: {
   prompt: string
   sessionId: string
   store: SessionStore
-  terminal?: FurnacePiTerminal
+  terminal?: FurnaceTerminal
 }): Promise<void> {
   input.store.appendMessage(input.sessionId, "user", input.prompt)
   if (input.terminal) {
@@ -251,8 +298,15 @@ async function maybeTitleSession(
   }
 }
 
-function normalizeSlashCommand(prompt: string): string {
-  return prompt.startsWith("/") ? `/${prompt.slice(1).replace(/\s+/g, "").toLowerCase()}` : prompt
+type ParsedPrompt = {
+  argument: string
+  name: string
+}
+
+function parseSlashCommand(prompt: string): ParsedPrompt {
+  if (!prompt.startsWith("/")) return { argument: "", name: prompt }
+  const [name = "", ...rest] = prompt.slice(1).trim().split(/\s+/)
+  return { argument: rest.join(" ").trim(), name: `/${name.toLowerCase()}` }
 }
 
 function isHistoryCommand(command: string): boolean {

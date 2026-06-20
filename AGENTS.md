@@ -26,7 +26,7 @@ This repository is building an agentic coding harness from scratch. Treat the pr
 - Runtime: Node.js 22.19+.
 - CLI parser: Commander.
 - Schemas: Zod or TypeBox.
-- TUI: `@earendil-works/pi-tui` for retained-mode terminal rendering, editor input, loader, and history selection.
+- TUI: Ink React with local TermCN-style components for retained terminal rendering, editor input, loader, themes, and history selection.
 - Storage: local SQLite in `.furnace/furnace.sqlite` using `better-sqlite3`.
 - Providers: OpenRouter chat completions first, with Anthropic/OpenAI adapters later.
 
@@ -34,7 +34,7 @@ This repository is building an agentic coding harness from scratch. Treat the pr
 
 - `src/cli.ts` wires the CLI, OpenRouter streaming, session store, and interactive loop.
 - `src/openrouter.ts` contains the current streaming and completion calls.
-- `src/ui/pi-terminal.ts` owns the interactive terminal UI.
+- `src/ui/ink-terminal.tsx` owns the interactive terminal UI.
 - `src/ui/terminal.ts` is still used for simple print/piped rendering.
 - `src/session/store.ts` is the SQLite session store.
 - `src/session/context.ts` converts active session entries into transcript/model messages.

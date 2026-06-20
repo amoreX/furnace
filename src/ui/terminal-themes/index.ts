@@ -1,0 +1,268 @@
+import type { Theme } from "../components/theme-provider.js"
+import { flexokiTheme } from "./flexoki.js"
+
+export type ThemeChoice = {
+  description: string
+  name: string
+  theme: Theme
+}
+
+const spacing = {
+  0: 0,
+  1: 1,
+  2: 2,
+  3: 3,
+  4: 4,
+  6: 6,
+  8: 8,
+}
+
+const typography = {
+  base: "",
+  bold: true,
+  lg: "bold",
+  sm: "dim",
+  xl: "bold",
+} as const
+
+export const defaultTheme: Theme = {
+  border: { color: "#4B5563", focusColor: "#8B5CF6", style: "round" },
+  colors: {
+    accent: "#8B5CF6",
+    accentForeground: "#FFFFFF",
+    background: "#000000",
+    border: "#4B5563",
+    error: "#EF4444",
+    errorForeground: "#FFFFFF",
+    focusRing: "#8B5CF6",
+    foreground: "#FFFFFF",
+    info: "#3B82F6",
+    infoForeground: "#FFFFFF",
+    muted: "#374151",
+    mutedForeground: "#9CA3AF",
+    primary: "#7C3AED",
+    primaryForeground: "#FFFFFF",
+    secondary: "#6B7280",
+    secondaryForeground: "#FFFFFF",
+    selection: "#7C3AED",
+    selectionForeground: "#FFFFFF",
+    success: "#10B981",
+    successForeground: "#FFFFFF",
+    warning: "#F59E0B",
+    warningForeground: "#000000",
+  },
+  name: "default",
+  spacing,
+  typography,
+}
+
+export const draculaTheme: Theme = {
+  border: { color: "#6272A4", focusColor: "#BD93F9", style: "round" },
+  colors: {
+    accent: "#FF79C6",
+    accentForeground: "#282A36",
+    background: "#282A36",
+    border: "#6272A4",
+    error: "#FF5555",
+    errorForeground: "#F8F8F2",
+    focusRing: "#BD93F9",
+    foreground: "#F8F8F2",
+    info: "#8BE9FD",
+    infoForeground: "#282A36",
+    muted: "#44475A",
+    mutedForeground: "#6272A4",
+    primary: "#BD93F9",
+    primaryForeground: "#282A36",
+    secondary: "#6272A4",
+    secondaryForeground: "#F8F8F2",
+    selection: "#44475A",
+    selectionForeground: "#F8F8F2",
+    success: "#50FA7B",
+    successForeground: "#282A36",
+    warning: "#F1FA8C",
+    warningForeground: "#282A36",
+  },
+  name: "dracula",
+  spacing,
+  typography,
+}
+
+export const catppuccinTheme: Theme = {
+  border: { color: "#45475A", focusColor: "#CBA6F7", style: "round" },
+  colors: {
+    accent: "#F38BA8",
+    accentForeground: "#1E1E2E",
+    background: "#1E1E2E",
+    border: "#45475A",
+    error: "#F38BA8",
+    errorForeground: "#1E1E2E",
+    focusRing: "#CBA6F7",
+    foreground: "#CDD6F4",
+    info: "#89B4FA",
+    infoForeground: "#1E1E2E",
+    muted: "#313244",
+    mutedForeground: "#6C7086",
+    primary: "#CBA6F7",
+    primaryForeground: "#1E1E2E",
+    secondary: "#89B4FA",
+    secondaryForeground: "#1E1E2E",
+    selection: "#313244",
+    selectionForeground: "#CDD6F4",
+    success: "#A6E3A1",
+    successForeground: "#1E1E2E",
+    warning: "#F9E2AF",
+    warningForeground: "#1E1E2E",
+  },
+  name: "catppuccin",
+  spacing,
+  typography,
+}
+
+export const tokyoNightTheme: Theme = {
+  border: { color: "#3B4261", focusColor: "#7AA2F7", style: "round" },
+  colors: {
+    accent: "#BB9AF7",
+    accentForeground: "#1A1B26",
+    background: "#24283B",
+    border: "#3B4261",
+    error: "#F7768E",
+    errorForeground: "#1A1B26",
+    focusRing: "#7AA2F7",
+    foreground: "#C0CAF5",
+    info: "#7DCFFF",
+    infoForeground: "#1A1B26",
+    muted: "#1F2335",
+    mutedForeground: "#565F89",
+    primary: "#7AA2F7",
+    primaryForeground: "#1A1B26",
+    secondary: "#BB9AF7",
+    secondaryForeground: "#1A1B26",
+    selection: "#364A82",
+    selectionForeground: "#C0CAF5",
+    success: "#9ECE6A",
+    successForeground: "#1A1B26",
+    warning: "#E0AF68",
+    warningForeground: "#1A1B26",
+  },
+  name: "tokyo-night",
+  spacing,
+  typography,
+}
+
+export const nordTheme: Theme = {
+  border: { color: "#4C566A", focusColor: "#88C0D0", style: "round" },
+  colors: {
+    accent: "#81A1C1",
+    accentForeground: "#2E3440",
+    background: "#2E3440",
+    border: "#4C566A",
+    error: "#BF616A",
+    errorForeground: "#ECEFF4",
+    focusRing: "#88C0D0",
+    foreground: "#ECEFF4",
+    info: "#5E81AC",
+    infoForeground: "#ECEFF4",
+    muted: "#3B4252",
+    mutedForeground: "#4C566A",
+    primary: "#88C0D0",
+    primaryForeground: "#2E3440",
+    secondary: "#4C566A",
+    secondaryForeground: "#ECEFF4",
+    selection: "#3B4252",
+    selectionForeground: "#ECEFF4",
+    success: "#A3BE8C",
+    successForeground: "#2E3440",
+    warning: "#EBCB8B",
+    warningForeground: "#2E3440",
+  },
+  name: "nord",
+  spacing,
+  typography,
+}
+
+export const rosepineTheme: Theme = {
+  border: { color: "#6e6a86", focusColor: "#31748f", style: "round" },
+  colors: {
+    accent: "#ebbcba",
+    accentForeground: "#191724",
+    background: "#191724",
+    border: "#6e6a86",
+    error: "#eb6f92",
+    errorForeground: "#191724",
+    focusRing: "#31748f",
+    foreground: "#e0def4",
+    info: "#9ccfd8",
+    infoForeground: "#191724",
+    muted: "#100f18",
+    mutedForeground: "#6e6a86",
+    primary: "#9ccfd8",
+    primaryForeground: "#191724",
+    secondary: "#262330",
+    secondaryForeground: "#e0def4",
+    selection: "#9ccfd8",
+    selectionForeground: "#191724",
+    success: "#31748f",
+    successForeground: "#191724",
+    warning: "#f6c177",
+    warningForeground: "#191724",
+  },
+  name: "rosepine",
+  spacing,
+  typography,
+}
+
+export const gruvboxTheme: Theme = {
+  border: { color: "#928374", focusColor: "#fb4934", style: "round" },
+  colors: {
+    accent: "#fb4934",
+    accentForeground: "#282828",
+    background: "#282828",
+    border: "#928374",
+    error: "#fb4934",
+    errorForeground: "#282828",
+    focusRing: "#fb4934",
+    foreground: "#ebdbb2",
+    info: "#d3869b",
+    infoForeground: "#282828",
+    muted: "#1d2021",
+    mutedForeground: "#928374",
+    primary: "#83a598",
+    primaryForeground: "#282828",
+    secondary: "#32302f",
+    secondaryForeground: "#ebdbb2",
+    selection: "#83a598",
+    selectionForeground: "#282828",
+    success: "#b8bb26",
+    successForeground: "#282828",
+    warning: "#fabd2f",
+    warningForeground: "#282828",
+  },
+  name: "gruvbox",
+  spacing,
+  typography,
+}
+
+export const themeChoices: ThemeChoice[] = [
+  { name: "flexoki", description: "warm low-contrast palette", theme: flexokiTheme },
+  { name: "default", description: "default TermCN palette", theme: defaultTheme },
+  { name: "dracula", description: "purple-heavy dark palette", theme: draculaTheme },
+  { name: "catppuccin", description: "mocha terminal palette", theme: catppuccinTheme },
+  { name: "tokyo-night", description: "cool blue night palette", theme: tokyoNightTheme },
+  { name: "nord", description: "cool arctic palette", theme: nordTheme },
+  { name: "rosepine", description: "warm rose dark palette", theme: rosepineTheme },
+  { name: "gruvbox", description: "retro earth-tone palette", theme: gruvboxTheme },
+]
+
+export function resolveTheme(name: string | undefined): ThemeChoice {
+  const normalized = normalizeThemeName(name || "")
+  return themeChoices.find((choice) => choice.name === normalized) || themeChoices[0]!
+}
+
+export function findTheme(name: string): ThemeChoice | undefined {
+  const normalized = normalizeThemeName(name)
+  return themeChoices.find((choice) => choice.name === normalized)
+}
+
+function normalizeThemeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "-")
+}

@@ -2,13 +2,14 @@
 
 import { Command } from "commander"
 import readline from "node:readline"
+import { runAgentTurn } from "./agent/loop.js"
 import { loadConfig } from "./config.js"
-import { listOpenRouterModels, streamOpenRouterResponse, type OpenRouterMessage } from "./openrouter.js"
+import { listOpenRouterModels, type OpenRouterMessage } from "./openrouter.js"
 import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
-import { createFurnaceTerminal, type FurnaceTerminal } from "./ui/ink-terminal.js"
+import { createFurnaceTerminal, type FurnaceTerminal, type ToolActivity } from "./ui/ink-terminal.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -41,7 +42,7 @@ program
 
       try {
         if (prompt.trim()) {
-          await runSingleTurn({ config, prompt, sessionId: session.id, store })
+          await runSingleTurn({ config, cwd, prompt, sessionId: session.id, store })
           return
         }
 
@@ -176,7 +177,7 @@ async function runInteractive(input: {
 
     terminal.setBusy(true)
     try {
-      await runSingleTurn({ config: input.config, prompt, sessionId, store: input.store, terminal })
+      await runSingleTurn({ config: input.config, cwd: input.cwd, prompt, sessionId, store: input.store, terminal })
     } finally {
       terminal.setBusy(false)
     }
@@ -188,6 +189,7 @@ function refreshInteractive(terminal: FurnaceTerminal, store: SessionStore, sess
   const activePath = store.getActivePath(sessionId)
   const transcript = entriesToTranscript(activePath)
   terminal.setTitle(session.title)
+  terminal.clearToolActivities()
   terminal.setTranscript(transcript)
 }
 
@@ -235,12 +237,13 @@ async function runPiped(input: {
       process.stdout.write(`${choice.name}\n`)
       continue
     }
-    await runSingleTurn({ config: input.config, prompt, sessionId, store: input.store })
+    await runSingleTurn({ config: input.config, cwd: process.cwd(), prompt, sessionId, store: input.store })
   }
 }
 
 async function runSingleTurn(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
+  cwd: string
   prompt: string
   sessionId: string
   store: SessionStore
@@ -248,6 +251,7 @@ async function runSingleTurn(input: {
 }): Promise<void> {
   input.store.appendMessage(input.sessionId, "user", input.prompt)
   if (input.terminal) {
+    input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     input.terminal.setThinking(true, "thinking")
   }
@@ -256,21 +260,32 @@ async function runSingleTurn(input: {
 
   const activePath = input.store.getActivePath(input.sessionId)
   const transcript = entriesToTranscript(activePath)
-  const messages: OpenRouterMessage[] = entriesToModelMessages(input.config.systemPrompt, activePath)
-  let assistantText = ""
+  const messages: OpenRouterMessage[] = entriesToModelMessages(input.config.systemPrompt, activePath, { cwd: input.cwd })
 
   if (input.terminal) input.terminal.setTranscript(transcript)
   else renderAssistantStart(transcript)
 
-  for await (const token of streamOpenRouterResponse(input.config, messages)) {
-    assistantText += token
-    if (input.terminal) {
-      input.terminal.setThinking(false)
-      input.terminal.setTranscript([...transcript, { role: "assistant", content: assistantText }])
-    } else {
-      renderAssistantToken(token)
-    }
-  }
+  const toolActivities: ToolActivity[] = []
+  const result = await runAgentTurn({
+    config: input.config,
+    cwd: input.cwd,
+    messages,
+    onToolStart: (call) => {
+      toolActivities.push({ args: call.arguments, id: call.id, name: call.name, status: "running" })
+      input.terminal?.setToolActivities([...toolActivities])
+      input.terminal?.setThinking(true, `running ${call.name}`)
+    },
+    onToolResult: (call, content) => {
+      const index = toolActivities.findIndex((activity) => activity.id === call.id)
+      const status = content.startsWith(`Tool ${call.name} failed:`) ? "failed" : "done"
+      const activity = { args: call.arguments, id: call.id, name: call.name, result: content, status } satisfies ToolActivity
+      if (index >= 0) toolActivities[index] = activity
+      else toolActivities.push(activity)
+      input.terminal?.setToolActivities([...toolActivities])
+      input.terminal?.setThinking(true, "thinking")
+    },
+  })
+  const assistantText = result.content
 
   input.store.appendMessage(input.sessionId, "assistant", assistantText, input.config.model)
   if (input.terminal) {

@@ -23,3 +23,27 @@ Current implementation:
 
 - Interactive history formatting lives in `src/ui/ink-terminal.tsx`.
 - Piped `/history` formatting lives in `src/cli.ts`.
+
+## Tool Registry Documentation
+
+`docs/tools.md` is the canonical human-readable reference for the built-in tool structure, schemas, execution flow, and safety behavior.
+
+Current implementation:
+
+- Tool definitions and handlers live in `src/tools/registry.ts`.
+- The tool-aware agent loop lives in `src/agent/loop.ts`.
+- OpenRouter tool-call types live in `src/openrouter.ts`.
+
+## Runtime Context Injection
+
+Every model turn receives a transient runtime-context system message with the current date/time, ISO timestamp, current year, and workspace path.
+
+Reasoning:
+
+Models can answer stale facts from memory unless they know what "latest", "current", "recent", "today", or "now" means for this run. Sending fresh runtime context with each message lets the agent form correct web searches and date-sensitive answers without storing volatile timestamps in the session transcript.
+
+Current implementation:
+
+- `src/session/context.ts` builds the runtime context in `buildRuntimeContext()`.
+- `entriesToModelMessages()` injects the runtime-context system message after the base system prompt.
+- `src/cli.ts` passes the current workspace when building per-turn model messages.

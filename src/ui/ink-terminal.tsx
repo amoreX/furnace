@@ -11,6 +11,7 @@ import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider
 import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
 
 export type FurnaceTerminal = {
+  clearToolActivities(): void
   run(): Promise<void>
   stop(): void
   setBusy(busy: boolean): void
@@ -27,6 +28,7 @@ export type FurnaceTerminal = {
   setModel(model: string, settings: ModelSettings): void
   setTheme(theme: string): void
   setTitle(title: string): void
+  setToolActivities(activities: ToolActivity[]): void
   setTranscript(transcript: TranscriptMessage[]): void
 }
 
@@ -41,6 +43,14 @@ export type ModelChoice = {
   name: string
   contextLength: number | null
   supportedParameters: string[]
+}
+
+export type ToolActivity = {
+  args: string
+  id: string
+  name: string
+  result?: string
+  status: "running" | "done" | "failed"
 }
 
 type CreateFurnaceTerminalOptions = {
@@ -76,6 +86,7 @@ type UiState = {
   thinking: boolean
   thinkingMessage: string
   title: string
+  toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
 }
 
@@ -96,6 +107,7 @@ class UiStore {
       thinking: false,
       thinkingMessage: "thinking",
       title: options.title,
+      toolActivities: [],
       transcript: [],
     }
   }
@@ -122,6 +134,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   return {
+    clearToolActivities() {
+      store.update({ toolActivities: [] })
+    },
     run() {
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
         alternateScreen: true,
@@ -165,6 +180,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setTitle(title) {
       store.update({ title })
+    },
+    setToolActivities(activities) {
+      store.update({ toolActivities: activities })
     },
     setTranscript(transcript) {
       store.update({ screen: { kind: "chat" }, transcript })
@@ -211,7 +229,7 @@ function FurnaceApp({
         ) : state.screen.kind === "theme" ? (
           <ThemeScreen screen={state.screen} store={store} />
         ) : (
-          <ChatScreen thinking={state.thinking} thinkingMessage={state.thinkingMessage} transcript={state.transcript} />
+          <ChatScreen thinking={state.thinking} thinkingMessage={state.thinkingMessage} toolActivities={state.toolActivities} transcript={state.transcript} />
         )}
       </AppShell.Content>
       <PromptInput busy={state.busy} disabled={state.screen.kind !== "chat"} onSubmit={onSubmit} placeholder={state.busy ? "Furnace is working..." : "Ask Furnace or type /theme"} />
@@ -227,12 +245,29 @@ function hintItems(kind: UiScreen["kind"]): string[] {
   return ["/new", "/history", "/model", "/theme", "/exit"]
 }
 
-function ChatScreen({ thinking, thinkingMessage, transcript }: { thinking: boolean; thinkingMessage: string; transcript: TranscriptMessage[] }): React.ReactNode {
+function ChatScreen({
+  thinking,
+  thinkingMessage,
+  toolActivities,
+  transcript,
+}: {
+  thinking: boolean
+  thinkingMessage: string
+  toolActivities: ToolActivity[]
+  transcript: TranscriptMessage[]
+}): React.ReactNode {
   const theme = useTheme()
   const { columns, rows } = useWindowSize()
   const [scrollOffset, setScrollOffset] = React.useState(0)
-  const viewportRows = Math.max(4, rows - 10)
-  const transcriptLines = React.useMemo(() => buildTranscriptLines(transcript, Math.max(20, columns - 4), thinking, thinkingMessage), [columns, thinking, thinkingMessage, transcript])
+  const viewportRows = chatViewportRows(rows)
+  const activityKey = React.useMemo(
+    () => toolActivities.map((activity) => `${activity.id}:${activity.status}`).join("|"),
+    [toolActivities],
+  )
+  const transcriptLines = React.useMemo(
+    () => buildTranscriptLines(transcript, Math.max(20, columns - 4), toolActivities, thinking, thinkingMessage),
+    [columns, thinking, thinkingMessage, toolActivities, transcript],
+  )
   const maxScrollOffset = Math.max(0, transcriptLines.length - viewportRows)
   const pageScrollRows = Math.max(1, viewportRows - 2)
   const end = Math.max(0, transcriptLines.length - Math.min(scrollOffset, maxScrollOffset))
@@ -245,6 +280,10 @@ function ChatScreen({ thinking, thinkingMessage, transcript }: { thinking: boole
   React.useEffect(() => {
     setScrollOffset(0)
   }, [transcript.length])
+
+  React.useEffect(() => {
+    if (thinking || toolActivities.length > 0) setScrollOffset(0)
+  }, [activityKey, thinking, thinkingMessage, toolActivities.length])
 
   useInput((input, key) => {
     if (key.pageUp || (key.ctrl && input === "u")) {
@@ -284,11 +323,19 @@ function ChatScreen({ thinking, thinkingMessage, transcript }: { thinking: boole
   )
 }
 
+export function chatViewportRows(windowRows: number): number {
+  // Header, prompt, and hints use fixed bordered rows; keep one spare row so
+  // Ink never clips the final assistant spinner behind the input box.
+  return Math.max(3, windowRows - 11)
+}
+
 type TranscriptLineData = {
-  kind: "blank" | "content" | "spinner" | "role"
+  kind: "blank" | "content" | "spinner" | "role" | "tool"
   messageIndex?: number
   role?: TranscriptMessage["role"]
+  status?: ToolActivity["status"]
   text: string
+  toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary"
 }
 
 function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
@@ -296,23 +343,410 @@ function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode
   if (line.kind === "blank") return <Text> </Text>
   if (line.kind === "spinner") return <Spinner label={line.text} />
   if (line.kind === "role") return <Text color={line.role === "user" ? theme.colors.primary : theme.colors.border} bold>{line.text}</Text>
+  if (line.kind === "tool") {
+    if (line.toolTone === "addition") return <Text color={theme.colors.success}>{line.text}</Text>
+    if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{line.text}</Text>
+    if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{line.text}</Text>
+    const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.primary
+    return <Text color={color} bold={line.toolTone === "summary"}>{line.text}</Text>
+  }
+  if (line.role === "assistant") return <MarkdownLine text={line.text || " "} />
   return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
 }
 
-function buildTranscriptLines(transcript: TranscriptMessage[], width: number, thinking: boolean, thinkingMessage: string): TranscriptLineData[] {
-  const lines: TranscriptLineData[] = []
-  for (const [messageIndex, message] of transcript.entries()) {
-    lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "user" : "assistant" })
-    for (const wrappedLine of wrapText(message.content || " ", width)) {
-      lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
-    }
-    lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
+function MarkdownLine({ text }: { text: string }): React.ReactNode {
+  const theme = useTheme()
+  const heading = text.match(/^(#{1,6})\s+(.+)$/)
+  if (heading) {
+    return (
+      <Text color={theme.colors.primary} bold>
+        {heading[2]}
+      </Text>
+    )
   }
+
+  const quote = text.match(/^>\s?(.*)$/)
+  if (quote) {
+    return (
+      <Text color={theme.colors.mutedForeground}>
+        | <InlineMarkdown text={quote[1] || " "} />
+      </Text>
+    )
+  }
+
+  const unordered = text.match(/^(\s*)[-*]\s+(.+)$/)
+  if (unordered) {
+    return (
+      <Text color={theme.colors.foreground}>
+        {unordered[1]}- <InlineMarkdown text={unordered[2]} />
+      </Text>
+    )
+  }
+
+  const ordered = text.match(/^(\s*)(\d+[.)])\s+(.+)$/)
+  if (ordered) {
+    return (
+      <Text color={theme.colors.foreground}>
+        {ordered[1]}
+        {ordered[2]} <InlineMarkdown text={ordered[3]} />
+      </Text>
+    )
+  }
+
+  const fence = text.match(/^```(.*)$/)
+  if (fence) {
+    return <Text color={theme.colors.mutedForeground}>{fence[1] ? `code ${fence[1]}` : "code"}</Text>
+  }
+
+  return (
+    <Text color={theme.colors.foreground}>
+      <InlineMarkdown text={text} />
+    </Text>
+  )
+}
+
+function InlineMarkdown({ text }: { text: string }): React.ReactNode {
+  const theme = useTheme()
+  const parts = parseInlineMarkdown(text)
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (part.kind === "code") {
+          return (
+            <Text key={index} color={theme.colors.accentForeground} backgroundColor={theme.colors.muted}>
+              {part.text}
+            </Text>
+          )
+        }
+        if (part.kind === "bold") {
+          return (
+            <Text key={index} color={theme.colors.foreground} bold>
+              {part.text}
+            </Text>
+          )
+        }
+        if (part.kind === "italic") {
+          return (
+            <Text key={index} color={theme.colors.foreground} italic>
+              {part.text}
+            </Text>
+          )
+        }
+        return <Text key={index}>{part.text}</Text>
+      })}
+    </>
+  )
+}
+
+function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  const hasToolActivities = toolActivities.length > 0
+  const finalAssistantIndex = hasToolActivities && transcript[transcript.length - 1]?.role === "assistant" ? transcript.length - 1 : -1
+
+  for (const [messageIndex, message] of transcript.entries()) {
+    if (messageIndex === finalAssistantIndex) continue
+    appendMessageLines(lines, message, messageIndex, width)
+  }
+
+  if (hasToolActivities) {
+    appendToolLines(lines, toolActivities, finalAssistantIndex >= 0 ? finalAssistantIndex : transcript.length, width)
+  }
+
+  if (finalAssistantIndex >= 0) {
+    appendMessageLines(lines, transcript[finalAssistantIndex], finalAssistantIndex, width)
+  }
+
   if (thinking) {
     lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "assistant" })
     lines.push({ kind: "spinner", messageIndex: transcript.length, role: "assistant", text: thinkingMessage })
   }
   return lines
+}
+
+function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
+  lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "user" : "assistant" })
+  for (const wrappedLine of wrapText(message.content || " ", width)) {
+    lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
+  }
+  lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
+}
+
+function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
+  lines.push({ kind: "role", messageIndex, role: "assistant", text: "tools" })
+  for (const activity of toolActivities) {
+    for (const rendered of formatToolActivity(activity, width)) {
+      lines.push({
+        kind: "tool",
+        messageIndex,
+        role: "assistant",
+        status: activity.status,
+        text: rendered.text,
+        toolTone: rendered.tone,
+      })
+    }
+  }
+  lines.push({ kind: "blank", messageIndex, role: "assistant", text: "" })
+}
+
+type InlineMarkdownPart = {
+  kind: "text" | "bold" | "italic" | "code"
+  text: string
+}
+
+export function parseInlineMarkdown(text: string): InlineMarkdownPart[] {
+  const parts: InlineMarkdownPart[] = []
+  let index = 0
+
+  while (index < text.length) {
+    const nextCode = text.indexOf("`", index)
+    const nextBold = text.indexOf("**", index)
+    const nextItalic = nextSingleAsterisk(text, index)
+    const candidates = [nextCode, nextBold, nextItalic].filter((value) => value >= 0)
+    const next = candidates.length > 0 ? Math.min(...candidates) : -1
+
+    if (next < 0) {
+      pushMarkdownPart(parts, "text", text.slice(index))
+      break
+    }
+
+    if (next > index) pushMarkdownPart(parts, "text", text.slice(index, next))
+
+    if (next === nextCode) {
+      const end = text.indexOf("`", next + 1)
+      if (end < 0) {
+        pushMarkdownPart(parts, "text", text.slice(next))
+        break
+      }
+      pushMarkdownPart(parts, "code", text.slice(next + 1, end))
+      index = end + 1
+      continue
+    }
+
+    if (next === nextBold) {
+      const end = text.indexOf("**", next + 2)
+      if (end < 0) {
+        pushMarkdownPart(parts, "text", text.slice(next))
+        break
+      }
+      pushMarkdownPart(parts, "bold", text.slice(next + 2, end))
+      index = end + 2
+      continue
+    }
+
+    const end = text.indexOf("*", next + 1)
+    if (end < 0) {
+      pushMarkdownPart(parts, "text", text.slice(next))
+      break
+    }
+    pushMarkdownPart(parts, "italic", text.slice(next + 1, end))
+    index = end + 1
+  }
+
+  return parts.length > 0 ? parts : [{ kind: "text", text }]
+}
+
+function nextSingleAsterisk(text: string, start: number): number {
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] !== "*") continue
+    if (text[index - 1] === "*" || text[index + 1] === "*") continue
+    return index
+  }
+  return -1
+}
+
+function pushMarkdownPart(parts: InlineMarkdownPart[], kind: InlineMarkdownPart["kind"], text: string): void {
+  if (!text) return
+  const previous = parts[parts.length - 1]
+  if (previous?.kind === kind) {
+    previous.text += text
+    return
+  }
+  parts.push({ kind, text })
+}
+
+type RenderedToolLine = {
+  text: string
+  tone?: TranscriptLineData["toolTone"]
+}
+
+export function formatToolActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  if (activity.status === "failed") {
+    return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "error" }]
+  }
+
+  if (activity.name === "edit") {
+    const editLines = formatEditActivity(activity, width)
+    if (editLines.length > 0) return editLines
+  }
+
+  if (activity.name === "write") {
+    const writeLines = formatWriteActivity(activity, width)
+    if (writeLines.length > 0) return writeLines
+  }
+
+  return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
+}
+
+function formatEditActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const patch = parseJsonStringField(activity.args, "patch")
+  if (!patch) return []
+
+  const operations = parsePatchPreview(patch)
+  if (operations.length === 0) return []
+
+  const resultFiles = parseEditResult(activity.result || "")
+  const lines: RenderedToolLine[] = []
+  const totalDelta = operations.reduce((sum, operation) => sum + operation.added - operation.removed, 0)
+  lines.push({
+    text: `${statusSymbol(activity.status)} Edited ${operations.map((operation) => operation.file).join(", ")}${formatDelta(totalDelta)}`,
+    tone: "summary",
+  })
+
+  for (const operation of operations.slice(0, 3)) {
+    const result = resultFiles.find((candidate) => candidate.file === operation.file)
+    const delta = formatDelta((result?.added ?? operation.added) - (result?.removed ?? operation.removed))
+    lines.push({ text: `  ${operation.kind} ${truncateEnd(operation.file, Math.max(24, width - 16))}${delta}`, tone: "meta" })
+    const preview = operation.lines.slice(0, 12)
+    for (const line of preview) {
+      const tone = line.startsWith("+") ? "addition" : line.startsWith("-") ? "deletion" : line.startsWith("@@") ? "meta" : "context"
+      lines.push({ text: `  ${truncateEnd(line, Math.max(24, width - 4))}`, tone })
+    }
+    if (operation.lines.length > preview.length) lines.push({ text: `  ... truncated ${operation.lines.length - preview.length} more lines`, tone: "meta" })
+  }
+  if (operations.length > 3) lines.push({ text: `  ... ${operations.length - 3} more file operation${operations.length - 3 === 1 ? "" : "s"}`, tone: "meta" })
+  return lines
+}
+
+function formatWriteActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const path = parseJsonStringField(activity.args, "path")
+  const content = parseJsonStringField(activity.args, "content")
+  if (!path) return []
+
+  const contentLines = typeof content === "string" ? content.split(/\r?\n/).filter((line, index, all) => index < all.length - 1 || line !== "") : []
+  const lines: RenderedToolLine[] = [
+    {
+      text: `${statusSymbol(activity.status)} Wrote ${truncateEnd(path, Math.max(24, width - 24))}${contentLines.length > 0 ? ` +${contentLines.length}` : ""}`,
+      tone: "summary",
+    },
+  ]
+
+  for (const line of contentLines.slice(0, 8)) {
+    lines.push({ text: `  +${truncateEnd(line, Math.max(24, width - 5))}`, tone: "addition" })
+  }
+  if (contentLines.length > 8) lines.push({ text: `  ... truncated ${contentLines.length - 8} more lines`, tone: "meta" })
+  return lines
+}
+
+type PatchPreviewOperation = {
+  added: number
+  file: string
+  kind: "Added" | "Deleted" | "Edited"
+  lines: string[]
+  removed: number
+}
+
+function parsePatchPreview(patch: string): PatchPreviewOperation[] {
+  const operations: PatchPreviewOperation[] = []
+  const lines = patch.replace(/\r\n/g, "\n").split("\n")
+  let current: PatchPreviewOperation | undefined
+
+  for (const line of lines) {
+    if (line.startsWith("*** Add File: ")) {
+      current = { added: 0, file: line.slice("*** Add File: ".length).trim(), kind: "Added", lines: [], removed: 0 }
+      operations.push(current)
+      continue
+    }
+    if (line.startsWith("*** Update File: ")) {
+      current = { added: 0, file: line.slice("*** Update File: ".length).trim(), kind: "Edited", lines: [], removed: 0 }
+      operations.push(current)
+      continue
+    }
+    if (line.startsWith("*** Delete File: ")) {
+      current = { added: 0, file: line.slice("*** Delete File: ".length).trim(), kind: "Deleted", lines: [], removed: 0 }
+      operations.push(current)
+      continue
+    }
+    if (!current || line === "*** Begin Patch" || line === "*** End Patch" || line === "*** End of File") continue
+    if (line.startsWith("@@")) {
+      current.lines.push(line)
+      continue
+    }
+    if (line.startsWith("+")) {
+      current.added += 1
+      current.lines.push(line)
+      continue
+    }
+    if (line.startsWith("-")) {
+      current.removed += 1
+      current.lines.push(line)
+      continue
+    }
+    if (line.startsWith(" ")) current.lines.push(line)
+  }
+
+  return operations
+}
+
+function parseEditResult(result: string): Array<{ added: number; file: string; removed: number }> {
+  return result.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^(Added|Updated|Deleted)\s+(.+?)(?:\s+\(|$)/)
+    if (!match) return []
+    return [{ added: 0, file: match[2], removed: 0 }]
+  })
+}
+
+function formatDelta(delta: number): string {
+  if (delta === 0) return ""
+  return delta > 0 ? ` +${delta}` : ` ${delta}`
+}
+
+function parseJsonStringField(args: string, key: string): string | undefined {
+  try {
+    const parsed = JSON.parse(args) as Record<string, unknown>
+    return typeof parsed[key] === "string" ? parsed[key] : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function statusSymbol(status: ToolActivity["status"]): string {
+  if (status === "running") return ">"
+  if (status === "failed") return "x"
+  return "ok"
+}
+
+function formatToolArgs(args: string, width: number): string {
+  const compact = compactToolArgs(args)
+  if (!compact) return ""
+  const maxLength = Math.max(16, Math.min(72, width - 16))
+  return ` ${truncateEnd(compact, maxLength)}`
+}
+
+function formatToolResult(result: string | undefined, width: number): string {
+  if (!result) return ""
+  const firstLine = result.split(/\r?\n/).find((line) => line.trim())?.trim()
+  if (!firstLine) return ""
+  const maxLength = Math.max(16, Math.min(56, width - 24))
+  return ` -> ${truncateEnd(firstLine, maxLength)}`
+}
+
+function compactToolArgs(args: string): string {
+  try {
+    const parsed = JSON.parse(args) as Record<string, unknown>
+    const summary = ["path", "pattern", "query", "command", "patch"]
+      .flatMap((key) => (typeof parsed[key] === "string" ? [`${key}: ${JSON.stringify(parsed[key])}`] : []))
+      .slice(0, 2)
+      .join(", ")
+    return summary || JSON.stringify(parsed)
+  } catch {
+    return args.trim()
+  }
+}
+
+function truncateEnd(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  if (maxLength <= 3) return value.slice(0, maxLength)
+  return `${value.slice(0, maxLength - 3)}...`
 }
 
 function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end: number, viewportRows: number): TranscriptLineData[] {

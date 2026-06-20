@@ -1,9 +1,44 @@
 import type { FurnaceConfig } from "./config.js"
 
 export type OpenRouterMessage = {
-  role: "system" | "user" | "assistant"
-  content: string
+  role: "system" | "user" | "assistant" | "tool"
+  content: string | null
+  name?: string
+  tool_call_id?: string
+  tool_calls?: OpenRouterToolCall[]
 }
+
+export type OpenRouterToolDefinition = {
+  type: "function"
+  function: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+  }
+}
+
+export type OpenRouterToolCall = {
+  id: string
+  type: "function"
+  function: {
+    name: string
+    arguments: string
+  }
+}
+
+export type OpenRouterAssistantResponse = {
+  content: string
+  toolCalls: OpenRouterToolCall[]
+}
+
+export type OpenRouterToolChoice =
+  | "auto"
+  | {
+      type: "function"
+      function: {
+        name: string
+      }
+    }
 
 export type OpenRouterModel = {
   id: string
@@ -40,6 +75,7 @@ type ChatCompletionResponse = {
   choices?: Array<{
     message?: {
       content?: string
+      tool_calls?: OpenRouterToolCall[]
     }
   }>
   error?: {
@@ -139,6 +175,47 @@ export async function completeOpenRouterResponse(
   if (parsed.error?.message) throw new Error(parsed.error.message)
 
   return parsed.choices?.[0]?.message?.content?.trim() || ""
+}
+
+export async function completeOpenRouterToolResponse(
+  config: FurnaceConfig,
+  messages: OpenRouterMessage[],
+  tools: OpenRouterToolDefinition[],
+  options: { toolChoice?: OpenRouterToolChoice } = {},
+  signal?: AbortSignal,
+): Promise<OpenRouterAssistantResponse> {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    signal,
+    headers: {
+      Authorization: `Bearer ${config.openRouterApiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": config.siteUrl,
+      "X-Title": config.appName,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages,
+      tools,
+      tool_choice: options.toolChoice || "auto",
+      ...requestOptions(config),
+      stream: false,
+    }),
+  })
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "")
+    throw new Error(`OpenRouter request failed (${response.status}): ${body || response.statusText}`)
+  }
+
+  const parsed = (await response.json()) as ChatCompletionResponse
+  if (parsed.error?.message) throw new Error(parsed.error.message)
+
+  const message = parsed.choices?.[0]?.message
+  return {
+    content: message?.content?.trim() || "",
+    toolCalls: Array.isArray(message?.tool_calls) ? message.tool_calls : [],
+  }
 }
 
 export async function listOpenRouterModels(config: FurnaceConfig): Promise<OpenRouterModel[]> {

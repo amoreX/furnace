@@ -31,3 +31,49 @@ test("termcn theme registry exposes all bundled themes", async () => {
   }
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
 })
+
+test("assistant markdown inline formatting is parsed for terminal rendering", async () => {
+  const { parseInlineMarkdown } = await import("../dist/ui/ink-terminal.js")
+
+  assert.deepEqual(parseInlineMarkdown("**File operations:** `read` and *search*"), [
+    { kind: "bold", text: "File operations:" },
+    { kind: "text", text: " " },
+    { kind: "code", text: "read" },
+    { kind: "text", text: " and " },
+    { kind: "italic", text: "search" },
+  ])
+})
+
+test("edit tool activity renders as a diff preview", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-1",
+      name: "edit",
+      status: "done",
+      args: JSON.stringify({
+        patch: `*** Begin Patch
+*** Update File: docs/design-choices.md
+@@
+-old line
++new line
+ context line
+*** End Patch`,
+      }),
+      result: "Updated docs/design-choices.md (1 hunks)",
+    },
+    80,
+  )
+
+  assert.deepEqual(lines.map((line) => line.tone), ["summary", "meta", "meta", "deletion", "addition", "context"])
+  assert.match(lines[0].text, /ok Edited docs\/design-choices\.md/)
+  assert.equal(lines[3].text.trim(), "-old line")
+  assert.equal(lines[4].text.trim(), "+new line")
+})
+
+test("chat viewport reserves space above fixed input chrome", async () => {
+  const { chatViewportRows } = await import("../dist/ui/ink-terminal.js")
+
+  assert.equal(chatViewportRows(24), 13)
+  assert.equal(chatViewportRows(8), 3)
+})

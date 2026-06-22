@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { compactSessionIfNeeded } from "../dist/session/compaction.js"
 import { SessionStore } from "../dist/session/store.js"
 
 test("session store appends entries as a Pi-style active leaf chain", async () => {
@@ -75,3 +76,75 @@ test("session store records parent-linked child sessions", async () => {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test("compaction appends marker and clears file read state", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+  const originalFetch = globalThis.fetch
+
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("summarizer unavailable")
+    }
+    const store = SessionStore.open(dir)
+    const session = store.createSession({ cwd: dir, title: "Compaction" })
+    store.appendMessage(session.id, "user", "old " + "history ".repeat(30_000))
+    const kept = store.appendMessage(session.id, "user", "current task")
+    store.recordFileRead({
+      cwd: dir,
+      displayPath: "notes.txt",
+      file: join(dir, "notes.txt"),
+      limit: 10,
+      mtimeMs: 1,
+      offset: 1,
+      sessionId: session.id,
+      size: 5,
+    })
+
+    const result = await compactSessionIfNeeded({
+      config: fakeConfig({ contextLength: 16_000 }),
+      cwd: dir,
+      force: true,
+      reason: "manual",
+      sessionId: session.id,
+      store,
+      systemPrompt: "base system",
+      tools: [],
+    })
+
+    assert.ok(result.entry)
+    assert.equal(result.entry.data.firstKeptEntryId, kept.id)
+    assert.equal(result.entry.data.details.fallback, true)
+    assert.equal(
+      store.getFileReadReceipt({
+        cwd: dir,
+        file: join(dir, "notes.txt"),
+        limit: 10,
+        offset: 1,
+        sessionId: session.id,
+      }),
+      undefined,
+    )
+    assert.equal(store.getActivePath(session.id).at(-1).type, "compaction")
+
+    store.close()
+  } finally {
+    globalThis.fetch = originalFetch
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+function fakeConfig(settings = {}) {
+  return {
+    appName: "Furnace Test",
+    model: "test-model",
+    modelSettings: settings,
+    openRouterApiKey: "test-key",
+    siteUrl: "http://localhost",
+    skillPaths: [],
+    subagentSystemPrompt: "subagent",
+    systemPrompt: "system",
+    theme: "flexoki",
+    titleModel: "title-model",
+    titleSystemPrompt: "title",
+  }
+}

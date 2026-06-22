@@ -1,5 +1,5 @@
 import type { FurnaceConfig } from "../config.js"
-import { completeOpenRouterToolResponse, type OpenRouterMessage, type OpenRouterToolChoice } from "../openrouter.js"
+import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouterMessage, type OpenRouterToolChoice } from "../openrouter.js"
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
@@ -17,6 +17,8 @@ export type RunAgentTurnInput = {
   taskRunner?: TaskRunner
   tools?: typeof toolDefinitions
   permissions?: SessionPermissionStore
+  onBeforeModelRequest?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[]>
+  onContextOverflow?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[] | undefined>
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
   onToolResult?: (call: { arguments: string; id: string; name: string }, content: string) => void
 }
@@ -26,14 +28,31 @@ export type RunAgentTurnResult = {
 }
 
 export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTurnResult> {
-  const messages = [...input.messages]
+  let messages = [...input.messages]
+  const tools = input.tools || toolDefinitions
   let iteration = 0
+  let overflowRecoveryAttempted = false
 
   while (true) {
+    messages = input.onBeforeModelRequest ? await input.onBeforeModelRequest(messages, tools) : messages
     const toolChoice: OpenRouterToolChoice = iteration === 0 && shouldForceWebSearch(messages) ? { type: "function", function: { name: "websearch" } } : "auto"
     iteration += 1
     if (input.signal?.aborted) throw abortError()
-    const response = await completeOpenRouterToolResponse(input.config, messages, input.tools || toolDefinitions, { toolChoice }, input.signal)
+    let response
+    try {
+      response = await completeOpenRouterToolResponse(input.config, messages, tools, { toolChoice }, input.signal)
+    } catch (error) {
+      if (!overflowRecoveryAttempted && input.onContextOverflow && isContextOverflowError(error)) {
+        overflowRecoveryAttempted = true
+        const recoveredMessages = await input.onContextOverflow(messages, tools)
+        if (recoveredMessages) {
+          messages = recoveredMessages
+          iteration -= 1
+          continue
+        }
+      }
+      throw error
+    }
 
     if (response.toolCalls.length === 0) {
       return { content: response.content }

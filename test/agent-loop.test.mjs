@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { shouldForceWebSearch } from "../dist/agent/loop.js"
+import { runAgentTurn, shouldForceWebSearch } from "../dist/agent/loop.js"
 
 test("current information prompts force websearch", () => {
   assert.equal(shouldForceWebSearch([{ role: "user", content: "latest FIFA news" }]), true)
@@ -11,3 +11,64 @@ test("local repo prompts do not force websearch", () => {
   assert.equal(shouldForceWebSearch([{ role: "user", content: "latest changes in this repo" }]), false)
   assert.equal(shouldForceWebSearch([{ role: "user", content: "current git status" }]), false)
 })
+
+test("agent turn compacts and retries once after context overflow", async () => {
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  let recovered = 0
+
+  try {
+    globalThis.fetch = async () => {
+      calls += 1
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          async text() {
+            return "maximum context length exceeded"
+          },
+        }
+      }
+      return {
+        ok: true,
+        async json() {
+          return { choices: [{ message: { content: "done" } }] }
+        },
+      }
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig(),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "hello" }],
+      onContextOverflow: async () => {
+        recovered += 1
+        return [{ role: "user", content: "compacted hello" }]
+      },
+      tools: [],
+    })
+
+    assert.equal(result.content, "done")
+    assert.equal(calls, 2)
+    assert.equal(recovered, 1)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+function fakeConfig() {
+  return {
+    appName: "Furnace Test",
+    model: "test-model",
+    modelSettings: {},
+    openRouterApiKey: "test-key",
+    siteUrl: "http://localhost",
+    skillPaths: [],
+    subagentSystemPrompt: "subagent",
+    systemPrompt: "system",
+    theme: "flexoki",
+    titleModel: "title-model",
+    titleSystemPrompt: "title",
+  }
+}

@@ -22,6 +22,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/mode plan", description: "Switch to plan mode" },
   { name: "/theme", description: "Select or set theme", insertText: "/theme ", usage: "/theme [name]" },
   { name: "/tasks", description: "Show active subagents" },
+  { name: "/compact", description: "Summarize old context and keep recent turns", insertText: "/compact ", usage: "/compact [focus]" },
   { name: "/skills", description: "List, view, or reload skills", insertText: "/skills ", usage: "/skills [list|view <name>|reload]" },
   { name: "/skills list", description: "List discovered skills" },
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },

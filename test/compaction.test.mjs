@@ -1,0 +1,30 @@
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import { findKeepStart, shouldCompactTokenEstimate } from "../dist/session/compaction.js"
+
+test("threshold compaction leaves reserve tokens", () => {
+  assert.equal(shouldCompactTokenEstimate(83_999, { contextWindow: 100_000, enabled: true, keepRecentTokens: 20_000, reserveTokens: 16_000 }), false)
+  assert.equal(shouldCompactTokenEstimate(84_000, { contextWindow: 100_000, enabled: true, keepRecentTokens: 20_000, reserveTokens: 16_000 }), true)
+})
+
+test("keep-start selection protects latest user and does not split before a tool result", () => {
+  const entries = [
+    entry("entry-1", "message", "user", { content: "old request " + "x".repeat(200) }),
+    entry("entry-2", "tool_call", "assistant", { arguments: "{\"path\":\"notes.txt\"}", name: "read", toolCallId: "call_1" }),
+    entry("entry-3", "tool_result", "tool", { content: "1|hello " + "x".repeat(300), name: "read", toolCallId: "call_1" }),
+  ]
+
+  assert.equal(findKeepStart(entries, { keepRecentTokens: 80 }), 0)
+})
+
+function entry(id, type, role, data) {
+  return {
+    createdAt: Number(id.split("-").at(-1) || 0),
+    data,
+    id,
+    parentEntryId: null,
+    role,
+    sessionId: "session-1",
+    type,
+  }
+}

@@ -48,6 +48,23 @@ export type ToolResultEntryData = {
   toolCallId: string
 }
 
+export type CompactionEntryData = {
+  details?: {
+    fallback?: boolean
+    modifiedFiles?: string[]
+    readFiles?: string[]
+    summarizedEntryCount?: number
+  }
+  firstKeptEntryId: string
+  focus?: string
+  kind: "context_compaction"
+  model: string
+  reason: "manual" | "threshold" | "overflow"
+  summary: string
+  tokensAfter?: number
+  tokensBefore: number
+}
+
 export type FileReadSnapshot = {
   mtimeMs: number
   size: number

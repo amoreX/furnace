@@ -250,6 +250,12 @@ export async function listOpenRouterModels(config: FurnaceConfig): Promise<OpenR
     .sort((left, right) => left.id.localeCompare(right.id))
 }
 
+export function isContextOverflowError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /\b(context|token|tokens|input)\b.*\b(length|limit|window|maximum|too large|too long|exceed)/i.test(message)
+    || /\b(maximum context|context_length|context window|too many tokens|input is too long|prompt is too long)\b/i.test(message)
+}
+
 function requestOptions(config: FurnaceConfig): Record<string, unknown> {
   const options: Record<string, unknown> = {}
   if (config.modelSettings.reasoningEffort && config.modelSettings.reasoningEffort !== "none") {

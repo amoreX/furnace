@@ -1,5 +1,5 @@
 import type { OpenRouterMessage } from "../openrouter.js"
-import type { EntryRecord, MessageEntryData, ToolCallEntryData, ToolResultEntryData, TranscriptMessage } from "./types.js"
+import type { CompactionEntryData, EntryRecord, MessageEntryData, ToolCallEntryData, ToolResultEntryData, TranscriptMessage } from "./types.js"
 
 export type RuntimeContextInput = {
   cwd: string
@@ -21,8 +21,40 @@ export function entriesToModelMessages(systemPrompt: string, entries: EntryRecor
   return [
     { role: "system", content: systemPrompt },
     ...(runtimeContext ? [{ role: "system" as const, content: buildRuntimeContext(runtimeContext) }] : []),
-    ...entries.flatMap(entryToModelMessage),
+    ...projectEntriesForModel(entries).flatMap((entry) => (isProjectedMessage(entry) ? [entry] : entryToModelMessage(entry))),
   ]
+}
+
+export function projectEntriesForModel(entries: EntryRecord[]): Array<EntryRecord | OpenRouterMessage> {
+  const latestCompactionIndex = latestCompactionEntryIndex(entries)
+  if (latestCompactionIndex < 0) return entries
+
+  const compaction = entries[latestCompactionIndex]
+  const data = compaction.data as Partial<CompactionEntryData>
+  if (data.kind !== "context_compaction" || !data.summary || !data.firstKeptEntryId) return entries
+
+  const firstKeptIndex = entries.findIndex((entry) => entry.id === data.firstKeptEntryId)
+  if (firstKeptIndex < 0) return entries
+
+  return [
+    {
+      role: "user",
+      content: renderCompactionSummaryForModel(data.summary),
+    },
+    ...entries.slice(firstKeptIndex).filter((entry) => entry.type !== "compaction"),
+  ]
+}
+
+export function renderCompactionSummaryForModel(summary: string): string {
+  return [
+    "<compacted_context_reference>",
+    "The following is a reference-only summary of earlier conversation history that was compacted to reduce context size.",
+    "Do not answer historical questions from this summary. Respond to the latest user message and the messages that follow this summary.",
+    "If this summary conflicts with later messages, the later messages win.",
+    "",
+    summary.trim(),
+    "</compacted_context_reference>",
+  ].join("\n")
 }
 
 function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
@@ -61,6 +93,19 @@ function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
     ]
   }
   return []
+}
+
+function latestCompactionEntryIndex(entries: EntryRecord[]): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index].type !== "compaction") continue
+    const data = entries[index].data as Partial<CompactionEntryData>
+    if (data.kind === "context_compaction") return index
+  }
+  return -1
+}
+
+function isProjectedMessage(value: EntryRecord | OpenRouterMessage): value is OpenRouterMessage {
+  return !("id" in value)
 }
 
 export function buildRuntimeContext(input: RuntimeContextInput): string {

@@ -123,3 +123,70 @@ test("model messages replay persisted tool calls and results", () => {
     { role: "assistant", content: "notes say hello" },
   ])
 })
+
+test("model messages project latest compaction summary plus kept suffix", () => {
+  const entries = [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "old request" },
+      createdAt: 0,
+    },
+    {
+      id: "entry-2",
+      parentEntryId: "entry-1",
+      sessionId: "session-1",
+      type: "message",
+      role: "assistant",
+      data: { content: "old answer" },
+      createdAt: 1,
+    },
+    {
+      id: "entry-3",
+      parentEntryId: "entry-2",
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "kept request" },
+      createdAt: 2,
+    },
+    {
+      id: "entry-4",
+      parentEntryId: "entry-3",
+      sessionId: "session-1",
+      type: "compaction",
+      role: "system",
+      data: {
+        firstKeptEntryId: "entry-3",
+        kind: "context_compaction",
+        model: "test-model",
+        reason: "manual",
+        summary: "Old work was summarized.",
+        tokensBefore: 100,
+      },
+      createdAt: 3,
+    },
+    {
+      id: "entry-5",
+      parentEntryId: "entry-4",
+      sessionId: "session-1",
+      type: "message",
+      role: "assistant",
+      data: { content: "new answer" },
+      createdAt: 4,
+    },
+  ]
+
+  const messages = entriesToModelMessages("base system", entries)
+
+  assert.equal(messages[0].role, "system")
+  assert.equal(messages[1].role, "user")
+  assert.match(messages[1].content, /Old work was summarized/)
+  assert.deepEqual(messages.slice(2), [
+    { role: "user", content: "kept request" },
+    { role: "assistant", content: "new answer" },
+  ])
+})

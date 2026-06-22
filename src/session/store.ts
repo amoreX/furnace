@@ -11,6 +11,7 @@ import type {
   FileReadReceipt,
   FileReadRecord,
   FileReadSnapshot,
+  CompactionEntryData,
   MessageEntryData,
   SessionRecord,
   ToolCallEntryData,
@@ -172,6 +173,10 @@ export class SessionStore {
     return this.appendEntry<ToolResultEntryData>(sessionId, "tool_result", "tool", input)
   }
 
+  appendCompaction(sessionId: string, input: CompactionEntryData): EntryRecord<CompactionEntryData> {
+    return this.appendEntry<CompactionEntryData>(sessionId, "compaction", "system", input)
+  }
+
   getFileReadReceipt(input: FileReadRangeKey): FileReadReceipt | undefined {
     const row = this.db
       .prepare(
@@ -264,6 +269,14 @@ export class SessionStore {
     transaction()
   }
 
+  clearFileReadState(sessionId: string): void {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("delete from file_read_ranges where session_id = ?").run(sessionId)
+      this.db.prepare("delete from file_read_files where session_id = ?").run(sessionId)
+    })
+    transaction()
+  }
+
   appendEntry<TData>(sessionId: string, type: EntryType, role: EntryRole, data: TData): EntryRecord<TData> {
     const session = this.getSession(sessionId)
     const now = Date.now()
@@ -294,6 +307,10 @@ export class SessionStore {
 
     transaction()
     return entry
+  }
+
+  updateEntryData<TData>(entryId: string, data: TData): void {
+    this.db.prepare("update entries set data = ? where id = ?").run(JSON.stringify(data), entryId)
   }
 
   getActivePath(sessionId: string): EntryRecord[] {

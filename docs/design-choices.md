@@ -146,6 +146,40 @@ Current implementation:
 - `src/cli.ts` persists tool entries from `onToolStart` and `onToolResult`.
 - `src/session/context.ts` replays tool entries back into OpenRouter-compatible model messages.
 
+## Compaction
+
+Furnace treats compaction as durable session context projection, not transcript deletion.
+
+Reasoning:
+
+Long coding sessions need to preserve continuity without sending every historical tool result back to the model forever. The safest local design is to keep the SQLite entry tree append-only, add a compaction marker, and change only the model-facing replay view. Clearing file-read state after compaction is part of that invariant: once file contents have been summarized, future reads should be allowed to return fresh content instead of being suppressed by stale dedupe receipts.
+
+Harness provenance:
+
+- Pi contributed the storage shape: a `compaction` entry with `summary` and `firstKeptEntryId`, while keeping full history durable.
+- OpenCode contributed the trigger shape: check before model requests and retry once after context-overflow rejection.
+- Hermes Agent contributed summary hardening: latest-user-message-wins wording, reference-only summaries, tool boundary protection, secret redaction, and deterministic fallback when summarization fails.
+- Headroom contributed the later direction for live-zone/tool-output compression, but Furnace does not use it as the primary session compactor.
+
+Current behavior:
+
+- `/compact [focus]` manually compacts older session history.
+- Before every model request, Furnace estimates the full request and compacts when it reaches `context window - reserve`.
+- If OpenRouter rejects a request for context length, Furnace compacts and retries once.
+- Normal contexts reserve `16K` tokens and keep about `20K` recent tokens.
+- Contexts at `64K` or smaller reserve `8K` tokens and keep about `25%` of the context, with a `4K` minimum.
+- Successful compaction clears persisted file-read receipts for the session.
+
+Current implementation:
+
+- `docs/compaction.md` is the canonical compaction behavior reference.
+- `report/compaction.md` is the inspected-source research snapshot.
+- `src/session/compaction.ts` owns token estimation, cut selection, summary prompting, fallback, and redaction.
+- `src/session/context.ts` projects latest compaction summary plus the kept suffix into model messages.
+- `src/session/store.ts` persists compaction entries and clears session file-read state.
+- `src/agent/loop.ts` provides preflight and one-shot overflow hooks.
+- `src/cli.ts` wires `/compact`, parent turns, and subagent turns.
+
 ## File Read Tracking
 
 File reads are tracked by active session, workspace, absolute path, file size, mtime, and requested line range. In real sessions this state is persisted in SQLite so resume/restart keeps dedupe and stale-write behavior.

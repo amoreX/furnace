@@ -1147,8 +1147,9 @@ export function chatViewportRows(windowRows: number, reservedRows = 0): number {
 }
 
 type TranscriptLineData = {
-  kind: "blank" | "content" | "spinner" | "role" | "tool"
+  kind: "blank" | "content" | "plan" | "spinner" | "role" | "tool"
   messageIndex?: number
+  planTone?: "border" | "content" | "meta"
   role?: TranscriptMessage["role"]
   status?: ToolActivity["status"]
   text: string
@@ -1166,6 +1167,11 @@ function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode
     if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{line.text}</Text>
     const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.primary
     return <Text color={color} bold={line.toolTone === "summary"}>{line.text}</Text>
+  }
+  if (line.kind === "plan") {
+    if (line.planTone === "content") return <PlanMarkdownLine text={line.text || " "} />
+    const color = line.planTone === "border" ? theme.colors.primary : theme.colors.mutedForeground
+    return <Text color={color}>{line.planTone === "meta" ? `| ${line.text || " "}` : line.text || " "}</Text>
   }
   if (line.role === "assistant") return <MarkdownLine text={line.text || " "} />
   return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
@@ -1218,6 +1224,57 @@ function MarkdownLine({ text }: { text: string }): React.ReactNode {
   return (
     <Text color={theme.colors.foreground}>
       <InlineMarkdown text={text} />
+    </Text>
+  )
+}
+
+function PlanMarkdownLine({ text }: { text: string }): React.ReactNode {
+  const theme = useTheme()
+  const heading = text.match(/^(#{1,6})\s+(.+)$/)
+  if (heading) {
+    return (
+      <Text color={theme.colors.primary} bold>
+        | {heading[2]}
+      </Text>
+    )
+  }
+
+  const quote = text.match(/^>\s?(.*)$/)
+  if (quote) {
+    return (
+      <Text color={theme.colors.mutedForeground}>
+        | | <InlineMarkdown text={quote[1] || " "} />
+      </Text>
+    )
+  }
+
+  const unordered = text.match(/^(\s*)[-*]\s+(.+)$/)
+  if (unordered) {
+    return (
+      <Text color={theme.colors.foreground}>
+        | {unordered[1]}- <InlineMarkdown text={unordered[2]} />
+      </Text>
+    )
+  }
+
+  const ordered = text.match(/^(\s*)(\d+[.)])\s+(.+)$/)
+  if (ordered) {
+    return (
+      <Text color={theme.colors.foreground}>
+        | {ordered[1]}
+        {ordered[2]} <InlineMarkdown text={ordered[3]} />
+      </Text>
+    )
+  }
+
+  const fence = text.match(/^```(.*)$/)
+  if (fence) {
+    return <Text color={theme.colors.mutedForeground}>| {fence[1] ? `code ${fence[1]}` : "code"}</Text>
+  }
+
+  return (
+    <Text color={theme.colors.foreground}>
+      | <InlineMarkdown text={text} />
     </Text>
   )
 }
@@ -1282,10 +1339,25 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
   lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "user" : "assistant" })
-  for (const wrappedLine of wrapText(message.content || " ", width)) {
+  if (message.role === "assistant") {
+    const planPreview = splitSavedPlanPreview(message.content)
+    if (planPreview) {
+      appendWrappedContentLines(lines, planPreview.before.join("\n") || " ", message, messageIndex, width)
+      for (const line of planPreviewBoxLines(planPreview.path, planPreview.body.join("\n"), width)) {
+        lines.push({ kind: "plan", messageIndex, planTone: line.tone, role: message.role, text: line.text })
+      }
+      lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
+      return
+    }
+  }
+  appendWrappedContentLines(lines, message.content || " ", message, messageIndex, width)
+  lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
+}
+
+function appendWrappedContentLines(lines: TranscriptLineData[], content: string, message: TranscriptMessage, messageIndex: number, width: number): void {
+  for (const wrappedLine of wrapText(content, width)) {
     lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
   }
-  lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
@@ -1303,6 +1375,58 @@ function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivi
     }
   }
   lines.push({ kind: "blank", messageIndex, role: "assistant", text: "" })
+}
+
+type SavedPlanPreview = {
+  before: string[]
+  body: string[]
+  path: string
+}
+
+function splitSavedPlanPreview(content: string): SavedPlanPreview | undefined {
+  const source = content.split(/\r?\n/)
+  const markerIndex = source.findIndex((line) => line.trim() === "## Saved Plan")
+  if (markerIndex < 0) return undefined
+
+  const pathIndex = source.findIndex((line, index) => index > markerIndex && /^Path: `.+`$/.test(line.trim()))
+  if (pathIndex < 0) return undefined
+  const path = source[pathIndex].trim().match(/^Path: `(.+)`$/)?.[1]
+  if (!path) return undefined
+
+  const before = trimEmptyLines(source.slice(0, markerIndex))
+  const body = trimEmptyLines(source.slice(pathIndex + 1))
+  return { before, body, path }
+}
+
+export function planPreviewBoxLines(path: string, body: string, width: number): Array<{ text: string; tone: "border" | "content" | "meta" }> {
+  const boxWidth = Math.max(32, width)
+  const innerWidth = Math.max(1, boxWidth - 4)
+  const lines: Array<{ text: string; tone: "border" | "content" | "meta" }> = []
+  lines.push({ text: planPreviewBorder(" Saved Plan ", boxWidth), tone: "border" })
+  for (const wrappedPath of wrapText(`Path: ${path}`, innerWidth)) {
+    lines.push({ text: wrappedPath, tone: "meta" })
+  }
+  lines.push({ text: "|", tone: "border" })
+  for (const sourceLine of body.split(/\r?\n/)) {
+    const wrapped = sourceLine ? wrapText(sourceLine, innerWidth) : [""]
+    for (const line of wrapped) {
+      lines.push({ text: line, tone: "content" })
+    }
+  }
+  lines.push({ text: planPreviewBorder("", boxWidth), tone: "border" })
+  return lines
+}
+
+function planPreviewBorder(label: string, width: number): string {
+  const prefix = label ? `+${label}` : "+"
+  return `${prefix}${"-".repeat(Math.max(0, width - prefix.length - 1))}+`
+}
+
+function trimEmptyLines(lines: string[]): string[] {
+  const next = [...lines]
+  while (next[0]?.trim() === "") next.shift()
+  while (next[next.length - 1]?.trim() === "") next.pop()
+  return next
 }
 
 type InlineMarkdownPart = {

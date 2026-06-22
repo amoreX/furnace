@@ -71,6 +71,17 @@ test("edit tool activity renders as a diff preview", async () => {
   assert.equal(lines[4].text.trim(), "+new line")
 })
 
+test("saved plan preview renders as a bordered block", async () => {
+  const { planPreviewBoxLines } = await import("../dist/ui/ink-terminal.js")
+  const lines = planPreviewBoxLines(".furnace/plans/example.md", "# Plan\n\n- Step one", 52)
+
+  assert.equal(lines[0].tone, "border")
+  assert.match(lines[0].text, /^\+ Saved Plan -+\+$/)
+  assert.equal(lines[1].text, "Path: .furnace/plans/example.md")
+  assert.equal(lines.some((line) => line.text.includes("# Plan") && line.tone === "content"), true)
+  assert.equal(lines.at(-1).tone, "border")
+})
+
 test("ask_question tool activity renders questions and answers", async () => {
   const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
   const lines = formatToolActivity(

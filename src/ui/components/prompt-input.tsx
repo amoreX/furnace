@@ -8,6 +8,7 @@ export type PromptInputProps = {
   autocompleteItems?: PromptAutocompleteItem[]
   busy?: boolean
   disabled?: boolean
+  historyItems?: string[]
   onChange?: (value: string) => void
   onEmptyUp?: () => void
   onModeCycle?: (direction: 1 | -1) => void
@@ -33,6 +34,7 @@ export function PromptInput({
   autocompleteItems = [],
   busy = false,
   disabled = false,
+  historyItems = [],
   onChange,
   onEmptyUp,
   onModeCycle,
@@ -45,6 +47,8 @@ export function PromptInput({
   const [localValue, setLocalValue] = React.useState("")
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = React.useState(0)
+  const [historyIndex, setHistoryIndex] = React.useState(-1)
+  const historySavedDraft = React.useRef("")
   const previousControlledValue = React.useRef(controlledValue)
   const value = controlledValue ?? localValue
   const enabled = active && !disabled
@@ -73,6 +77,11 @@ export function PromptInput({
   React.useEffect(() => {
     setSelectedAutocompleteIndex(0)
   }, [autocompleteItems, value])
+
+  React.useEffect(() => {
+    setHistoryIndex(-1)
+    historySavedDraft.current = ""
+  }, [historyItems])
 
   usePaste((pastedText) => {
     if (!enabled) return
@@ -148,6 +157,47 @@ export function PromptInput({
       }
     }
 
+    if (historyItems.length > 0 && value.length === 0 && key.upArrow && historyIndex === -1) {
+      historySavedDraft.current = ""
+      setHistoryIndex(0)
+      setValue(historyItems[0])
+      setCursorOffset(historyItems[0].length)
+      return
+    }
+
+    if (historyIndex >= 0) {
+      if (key.upArrow) {
+        if (historyIndex < historyItems.length - 1) {
+          const next = historyIndex + 1
+          setHistoryIndex(next)
+          setValue(historyItems[next])
+          setCursorOffset(historyItems[next].length)
+        } else {
+          onEmptyUp?.()
+        }
+        return
+      }
+      if (key.downArrow) {
+        if (historyIndex > 0) {
+          const next = historyIndex - 1
+          setHistoryIndex(next)
+          setValue(historyItems[next])
+          setCursorOffset(historyItems[next].length)
+        } else {
+          setHistoryIndex(-1)
+          setValue(historySavedDraft.current)
+          setCursorOffset(historySavedDraft.current.length)
+        }
+        return
+      }
+      if (key.escape) {
+        setHistoryIndex(-1)
+        setValue(historySavedDraft.current)
+        setCursorOffset(historySavedDraft.current.length)
+        return
+      }
+    }
+
     if (key.upArrow && value.length === 0) {
       onEmptyUp?.()
       return
@@ -156,6 +206,8 @@ export function PromptInput({
     if (key.return) {
       const submitted = value.trim()
       if (!submitted) return
+      setHistoryIndex(-1)
+      historySavedDraft.current = ""
       setValue("")
       setCursorOffset(0)
       onSubmit(submitted)

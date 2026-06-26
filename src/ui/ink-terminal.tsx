@@ -47,6 +47,7 @@ export type FurnaceTerminal = {
   setTheme(theme: string): void
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
+  clearTranscriptDisplay(): void
   setTranscript(transcript: TranscriptMessage[]): void
 }
 
@@ -148,6 +149,7 @@ type UiState = {
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
+  transcriptOffset: number
 }
 
 class UiStore {
@@ -204,6 +206,7 @@ class UiStore {
       tasks: [],
       toolActivities: [],
       transcript: [],
+      transcriptOffset: 0,
     }
   }
 
@@ -348,8 +351,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setToolActivities(activities) {
       store.update({ toolActivities: activities })
     },
+    clearTranscriptDisplay() {
+      store.update((state) => ({ ...state, transcriptOffset: state.transcript.length }))
+    },
     setTranscript(transcript) {
-      store.update({ screen: { kind: "chat" }, transcript })
+      store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0 })
     },
   }
 }
@@ -382,6 +388,15 @@ function FurnaceApp({
     }
   })
 
+  const sentMessages = React.useMemo(
+    () =>
+      state.transcript
+        .filter((m) => m.role === "user" && m.content.trim())
+        .map((m) => m.content)
+        .reverse(),
+    [state.transcript],
+  )
+
   return (
     <AppShell>
       <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} title={state.title} />
@@ -403,7 +418,7 @@ function FurnaceApp({
               thinkingMessage={state.thinkingMessage}
               reservedRows={reservedInteractionRows(state)}
               toolActivities={state.toolActivities}
-              transcript={state.transcript}
+              transcript={state.transcript.slice(state.transcriptOffset)}
             />
             {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
             {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
@@ -419,6 +434,7 @@ function FurnaceApp({
         busy={state.busy}
         disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
         autocompleteItems={state.slashCommandItems}
+        historyItems={sentMessages}
         onChange={(value) => store.update({ inputDraft: value })}
         onEmptyUp={() => {
           if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
@@ -1829,20 +1845,45 @@ function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end
 
 function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "history" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
+  const [filter, setFilter] = React.useState("")
+
+  const filteredChoices = React.useMemo(() => {
+    const normalized = filter.trim().toLowerCase()
+    if (!normalized) return screen.choices
+    return screen.choices.filter((c) => c.title.toLowerCase().includes(normalized))
+  }, [screen.choices, filter])
+
   const items: Array<SelectListItem<string>> = React.useMemo(
     () =>
-      screen.choices.map((choice) => ({
+      filteredChoices.map((choice) => ({
         description: formatRelativeTime(choice.updatedAt),
         label: choice.title,
         value: choice.id,
       })),
-    [screen.choices],
+    [filteredChoices],
   )
+
+  useInput((input, key) => {
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.backspace || key.delete) {
+      setFilter((current) => current.slice(0, -1))
+      return
+    }
+    if (!key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && input) {
+      setFilter((current) => current + input)
+    }
+  })
+
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       <Text color={theme.colors.primary} bold>
         Select a conversation
       </Text>
+      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
       <SelectList
         items={items}
         maxRows={12}
@@ -1854,7 +1895,7 @@ function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "h
           store.update({ screen: { kind: "chat" } })
           screen.onSelect(item.value)
         }}
-        selectedValue={screen.currentSessionId}
+        selectedValue={filter ? null : screen.currentSessionId}
       />
     </Box>
   )

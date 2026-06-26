@@ -200,6 +200,10 @@ async function runInteractive(input: {
       showTransientStatus(result.message)
       return
     }
+    if (command.name === "/clear") {
+      terminal.clearTranscriptDisplay()
+      return
+    }
     if (isSkillCommand(command.name)) {
       if (running) {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)

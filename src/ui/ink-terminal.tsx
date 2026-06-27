@@ -1173,11 +1173,12 @@ export function chatViewportRows(windowRows: number, reservedRows = 0): number {
 }
 
 type TranscriptLineData = {
-  kind: "blank" | "content" | "plan" | "spinner" | "role" | "tool"
+  kind: "blank" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
   role?: TranscriptMessage["role"]
   status?: ToolActivity["status"]
+  tableTone?: "header" | "divider" | "row"
   text: string
   toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary"
 }
@@ -1202,6 +1203,11 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     }
     return <Text color={color}>{"  "}{line.text}</Text>
   }
+  if (line.kind === "table") {
+    if (line.tableTone === "header") return <Text color={theme.colors.primary} bold>{line.text}</Text>
+    if (line.tableTone === "divider") return <Text color={theme.colors.border}>{line.text}</Text>
+    return <Text color={theme.colors.foreground}>{line.text}</Text>
+  }
   if (line.kind === "plan") {
     if (line.planTone === "content") return <MarkdownLine text={line.text || " "} prefix="| " />
     const color = line.planTone === "border" ? theme.colors.primary : theme.colors.mutedForeground
@@ -1225,7 +1231,7 @@ function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }):
   }
 
   if (/^(-{3,}|\*{3,}|_{3,})$/.test(text.trim())) {
-    return <Text color={theme.colors.border}>{prefix}{"─".repeat(36)}</Text>
+    return <Text> </Text>
   }
 
   const quote = text.match(/^>\s?(.*)$/)
@@ -1303,6 +1309,10 @@ function InlineMarkdown({ text }: { text: string }): React.ReactNode {
   )
 }
 
+export function buildTranscriptLinesForTest(transcript: TranscriptMessage[], width: number): TranscriptLineData[] {
+  return buildTranscriptLines(transcript, width, [], false, "thinking", "")
+}
+
 function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string, streamingContent = ""): TranscriptLineData[] {
   const lines: TranscriptLineData[] = []
   const hasToolActivities = toolActivities.length > 0
@@ -1351,9 +1361,81 @@ function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMess
 }
 
 function appendWrappedContentLines(lines: TranscriptLineData[], content: string, message: TranscriptMessage, messageIndex: number, width: number): void {
-  for (const wrappedLine of wrapAnsi(content, width, { hard: false, wordWrap: true }).split("\n")) {
-    lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
+  const sourceLines = content.split("\n")
+  let index = 0
+  while (index < sourceLines.length) {
+    const line = sourceLines[index]
+
+    if (isTableRow(line) && index + 1 < sourceLines.length && isTableSeparator(sourceLines[index + 1])) {
+      const block: string[] = []
+      while (index < sourceLines.length && isTableRow(sourceLines[index])) {
+        block.push(sourceLines[index])
+        index += 1
+      }
+      for (const rendered of formatMarkdownTable(block, width)) {
+        lines.push({ kind: "table", messageIndex, role: message.role, tableTone: rendered.tone, text: rendered.text })
+      }
+      continue
+    }
+
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      index += 1
+      continue
+    }
+
+    for (const wrappedLine of wrapAnsi(line, width, { hard: false, wordWrap: true }).split("\n")) {
+      lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
+    }
+    index += 1
   }
+}
+
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 1
+}
+
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim()
+  return /^\|[\s:|-]+\|$/.test(trimmed) && trimmed.includes("-")
+}
+
+function parseTableRow(line: string): string[] {
+  return line.trim().slice(1, -1).split("|").map((cell) => plainInlineText(cell.trim()))
+}
+
+function plainInlineText(text: string): string {
+  return parseInlineMarkdown(text).map((part) => part.text).join("")
+}
+
+function formatMarkdownTable(block: string[], width: number): Array<{ text: string; tone: "header" | "divider" | "row" }> {
+  const rows = block.map(parseTableRow)
+  const columnCount = Math.max(...rows.map((row) => row.length))
+  const dataRows = rows.filter((_, rowIndex) => rowIndex !== 1)
+
+  let widths: number[] = []
+  for (let column = 0; column < columnCount; column += 1) {
+    widths[column] = Math.max(3, ...dataRows.map((row) => (row[column] || "").length))
+  }
+
+  const separatorWidth = (columnCount - 1) * 3
+  const maxContentWidth = Math.max(columnCount * 3, width - separatorWidth - 2)
+  const totalWidth = widths.reduce((sum, value) => sum + value, 0)
+  if (totalWidth > maxContentWidth) {
+    const scale = maxContentWidth / totalWidth
+    widths = widths.map((value) => Math.max(3, Math.floor(value * scale)))
+  }
+
+  const renderRow = (cells: string[]): string =>
+    widths.map((columnWidth, column) => truncateEnd(cells[column] || "", columnWidth).padEnd(columnWidth)).join(" │ ")
+
+  const result: Array<{ text: string; tone: "header" | "divider" | "row" }> = []
+  result.push({ text: renderRow(rows[0]), tone: "header" })
+  result.push({ text: widths.map((columnWidth) => "─".repeat(columnWidth)).join("─┼─"), tone: "divider" })
+  for (let rowIndex = 2; rowIndex < rows.length; rowIndex += 1) {
+    result.push({ text: renderRow(rows[rowIndex]), tone: "row" })
+  }
+  return result
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
@@ -1533,6 +1615,13 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
   if (activity.name === "skill_manage") {
     const skillLines = formatSkillManageActivity(activity, width)
     if (skillLines.length > 0) return skillLines
+  }
+
+  if (activity.name === "skill") {
+    const skillName = parseJsonStringField(activity.args, "name")
+    if (skillName) {
+      return [{ text: `${statusSymbol(activity.status)} Used skill: ${skillName}`, tone: "summary" }]
+    }
   }
 
   return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]

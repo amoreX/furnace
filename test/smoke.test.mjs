@@ -269,6 +269,35 @@ test("skill_manage tool activity renders proposed SKILL.md", async () => {
   assert.equal(lines.some((line) => line.text.includes("disable-model-invocation: true") && line.tone === "addition"), true)
 })
 
+test("skill tool activity renders a clean used-skill line", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-skill",
+      name: "skill",
+      status: "done",
+      args: JSON.stringify({ name: "ce-plan" }),
+      result: '<skill_content name="ce-plan">...</skill_content>',
+    },
+    100,
+  )
+
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].text, "✓ Used skill: ce-plan")
+  assert.equal(lines[0].tone, "summary")
+})
+
+test("markdown tables render with aligned columns and no horizontal rules", async () => {
+  const { buildTranscriptLinesForTest } = await import("../dist/ui/ink-terminal.js")
+  const content = "Intro line\n\n---\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |"
+  const lines = buildTranscriptLinesForTest([{ role: "assistant", content }], 80)
+
+  assert.equal(lines.some((line) => line.kind === "table" && line.tableTone === "header" && /Name/.test(line.text) && /Age/.test(line.text)), true)
+  assert.equal(lines.some((line) => line.kind === "table" && line.tableTone === "divider" && line.text.includes("┼")), true)
+  assert.equal(lines.some((line) => line.kind === "table" && line.tableTone === "row" && /Alice/.test(line.text)), true)
+  assert.equal(lines.some((line) => /^-{3,}$/.test(line.text.trim())), false)
+})
+
 test("task previews hide child session ids", async () => {
   const { taskPreviewItems } = await import("../dist/ui/ink-terminal.js")
   const previews = taskPreviewItems([

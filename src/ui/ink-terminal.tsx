@@ -48,6 +48,7 @@ export type FurnaceTerminal = {
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
   clearTranscriptDisplay(): void
+  setStreamingContent(text: string): void
   setTranscript(transcript: TranscriptMessage[]): void
 }
 
@@ -146,6 +147,7 @@ type UiState = {
   thinking: boolean
   thinkingMessage: string
   title: string
+  streamingContent: string
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
@@ -203,6 +205,7 @@ class UiStore {
       thinking: false,
       thinkingMessage: "thinking",
       title: options.title,
+      streamingContent: "",
       tasks: [],
       toolActivities: [],
       transcript: [],
@@ -354,8 +357,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     clearTranscriptDisplay() {
       store.update((state) => ({ ...state, transcriptOffset: state.transcript.length }))
     },
+    setStreamingContent(text) {
+      store.update({ streamingContent: text })
+    },
     setTranscript(transcript) {
-      store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0 })
+      store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0, streamingContent: "" })
     },
   }
 }
@@ -417,6 +423,7 @@ function FurnaceApp({
               thinking={state.thinking}
               thinkingMessage={state.thinkingMessage}
               reservedRows={reservedInteractionRows(state)}
+              streamingContent={state.streamingContent}
               toolActivities={state.toolActivities}
               transcript={state.transcript.slice(state.transcriptOffset)}
             />
@@ -1071,12 +1078,14 @@ function ChatScreen({
   thinking,
   thinkingMessage,
   reservedRows,
+  streamingContent,
   toolActivities,
   transcript,
 }: {
   interactionActive?: boolean
   onScrollStateChange?: (canScrollUp: boolean) => void
   reservedRows?: number
+  streamingContent: string
   thinking: boolean
   thinkingMessage: string
   toolActivities: ToolActivity[]
@@ -1091,8 +1100,8 @@ function ChatScreen({
     [toolActivities],
   )
   const transcriptLines = React.useMemo(
-    () => buildTranscriptLines(transcript, Math.max(20, columns - 4), toolActivities, thinking, thinkingMessage),
-    [columns, thinking, thinkingMessage, toolActivities, transcript],
+    () => buildTranscriptLines(transcript, Math.max(20, columns - 4), toolActivities, thinking, thinkingMessage, streamingContent),
+    [columns, streamingContent, thinking, thinkingMessage, toolActivities, transcript],
   )
   const maxScrollOffset = Math.max(0, transcriptLines.length - viewportRows)
   const pageScrollRows = Math.max(1, viewportRows - 2)
@@ -1179,11 +1188,19 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
   if (line.kind === "spinner") return <Spinner label={line.text} />
   if (line.kind === "role") return <Text color={line.role === "user" ? theme.colors.primary : theme.colors.border} bold>{line.text}</Text>
   if (line.kind === "tool") {
-    if (line.toolTone === "addition") return <Text color={theme.colors.success}>{line.text}</Text>
-    if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{line.text}</Text>
-    if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{line.text}</Text>
-    const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.primary
-    return <Text color={color} bold={line.toolTone === "summary"}>{line.text}</Text>
+    if (line.toolTone === "addition") return <Text color={theme.colors.success}>{"  "}{line.text}</Text>
+    if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{"  "}{line.text}</Text>
+    if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{"  "}{line.text}</Text>
+    const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.warning
+    if (line.toolTone === "summary") {
+      return (
+        <Text>
+          <Text color={theme.colors.mutedForeground}>{"  │ "}</Text>
+          <Text color={color} bold>{line.text}</Text>
+        </Text>
+      )
+    }
+    return <Text color={color}>{"  "}{line.text}</Text>
   }
   if (line.kind === "plan") {
     if (line.planTone === "content") return <MarkdownLine text={line.text || " "} prefix="| " />
@@ -1196,29 +1213,37 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
 
 function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }): React.ReactNode {
   const theme = useTheme()
+
   const heading = text.match(/^(#{1,6})\s+(.+)$/)
   if (heading) {
+    const level = heading[1].length
     return (
-      <Text color={theme.colors.primary} bold>
+      <Text color={level <= 2 ? theme.colors.primary : theme.colors.foreground} bold>
         {prefix}{heading[2]}
       </Text>
     )
+  }
+
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(text.trim())) {
+    return <Text color={theme.colors.border}>{prefix}{"─".repeat(36)}</Text>
   }
 
   const quote = text.match(/^>\s?(.*)$/)
   if (quote) {
     return (
       <Text color={theme.colors.mutedForeground}>
-        {prefix}| <InlineMarkdown text={quote[1] || " "} />
+        {prefix}│ <InlineMarkdown text={quote[1] || " "} />
       </Text>
     )
   }
 
-  const unordered = text.match(/^(\s*)[-*]\s+(.+)$/)
+  const unordered = text.match(/^(\s*)[-*+]\s+(.+)$/)
   if (unordered) {
+    const indent = unordered[1]
+    const bullet = indent.length > 0 ? "◦" : "•"
     return (
       <Text color={theme.colors.foreground}>
-        {prefix}{unordered[1]}- <InlineMarkdown text={unordered[2]} />
+        {prefix}{indent}{bullet} <InlineMarkdown text={unordered[2]} />
       </Text>
     )
   }
@@ -1227,15 +1252,15 @@ function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }):
   if (ordered) {
     return (
       <Text color={theme.colors.foreground}>
-        {prefix}{ordered[1]}
-        {ordered[2]} <InlineMarkdown text={ordered[3]} />
+        {prefix}{ordered[1]}{ordered[2]} <InlineMarkdown text={ordered[3]} />
       </Text>
     )
   }
 
   const fence = text.match(/^```(.*)$/)
   if (fence) {
-    return <Text color={theme.colors.mutedForeground}>{prefix}{fence[1] ? `code ${fence[1]}` : "code"}</Text>
+    const lang = fence[1].trim()
+    return <Text color={theme.colors.mutedForeground}>{prefix}{lang ? `▸ ${lang}` : "▸"}</Text>
   }
 
   return (
@@ -1278,7 +1303,7 @@ function InlineMarkdown({ text }: { text: string }): React.ReactNode {
   )
 }
 
-function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string): TranscriptLineData[] {
+function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string, streamingContent = ""): TranscriptLineData[] {
   const lines: TranscriptLineData[] = []
   const hasToolActivities = toolActivities.length > 0
   const finalAssistantIndex = hasToolActivities && transcript[transcript.length - 1]?.role === "assistant" ? transcript.length - 1 : -1
@@ -1294,6 +1319,11 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
 
   if (finalAssistantIndex >= 0) {
     appendMessageLines(lines, transcript[finalAssistantIndex], finalAssistantIndex, width)
+  }
+
+  if (streamingContent && !thinking) {
+    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "assistant" })
+    appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, transcript.length, width)
   }
 
   if (thinking) {
@@ -1327,7 +1357,6 @@ function appendWrappedContentLines(lines: TranscriptLineData[], content: string,
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
-  lines.push({ kind: "role", messageIndex, role: "assistant", text: "tools" })
   for (const activity of toolActivities) {
     for (const rendered of formatToolActivity(activity, width)) {
       lines.push({
@@ -1791,9 +1820,9 @@ function parseTaskArgs(args: string): Array<{ description?: string; prompt: stri
 }
 
 function statusSymbol(status: ToolActivity["status"]): string {
-  if (status === "running") return ">"
-  if (status === "failed") return "x"
-  return "ok"
+  if (status === "running") return "◆"
+  if (status === "failed") return "✗"
+  return "✓"
 }
 
 function formatToolArgs(args: string, width: number): string {

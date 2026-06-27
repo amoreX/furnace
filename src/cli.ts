@@ -889,11 +889,20 @@ async function runSingleTurn(input: {
 
   const toolActivities: ToolActivity[] = []
   const terminal = input.terminal
+  let streamingText = ""
+  terminal?.setStreamingContent("")
   const result = await runAgentTurn({
     config: input.config,
     cwd: input.cwd,
     fileReadStore: input.store,
     messages,
+    onTextDelta: terminal
+      ? (delta) => {
+          streamingText += delta
+          terminal.setThinking(false)
+          terminal.setStreamingContent(streamingText)
+        }
+      : undefined,
     onPermissionRequest: terminal
       ? async (request) => {
           terminal.setThinking(true, `waiting for ${request.toolName} approval`)
@@ -935,6 +944,8 @@ async function runSingleTurn(input: {
       tools: activeTools,
     }),
     onToolStart: (call) => {
+      streamingText = ""
+      terminal?.setStreamingContent("")
       input.store.appendToolCall(input.sessionId, {
         arguments: call.arguments,
         name: call.name,
@@ -956,6 +967,8 @@ async function runSingleTurn(input: {
       if (index >= 0) toolActivities[index] = activity
       else toolActivities.push(activity)
       input.terminal?.setToolActivities([...toolActivities])
+      streamingText = ""
+      terminal?.setStreamingContent("")
       input.terminal?.setThinking(true, "thinking")
     },
   })

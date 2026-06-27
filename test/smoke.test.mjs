@@ -66,7 +66,7 @@ test("edit tool activity renders as a diff preview", async () => {
   )
 
   assert.deepEqual(lines.map((line) => line.tone), ["summary", "meta", "meta", "deletion", "addition", "context"])
-  assert.match(lines[0].text, /ok Edited docs\/design-choices\.md/)
+  assert.match(lines[0].text, /✓ Edited docs\/design-choices\.md/)
   assert.equal(lines[3].text.trim(), "-old line")
   assert.equal(lines[4].text.trim(), "+new line")
 })
@@ -107,7 +107,7 @@ test("ask_question tool activity renders questions and answers", async () => {
   )
 
   assert.deepEqual(lines.map((line) => line.tone), ["summary", "meta", "context", "addition"])
-  assert.equal(lines[0].text, "ok Asked 1 question")
+  assert.equal(lines[0].text, "✓ Asked 1 question")
   assert.match(lines[1].text, /What should the app be called/)
   assert.match(lines[2].text, /damn-bro-whatever/)
   assert.match(lines[3].text, /selected "damn-bro-whatever"/)
@@ -264,7 +264,7 @@ test("skill_manage tool activity renders proposed SKILL.md", async () => {
     100,
   )
 
-  assert.equal(lines[0].text, "> Create skill terminal-polish")
+  assert.equal(lines[0].text, "◆ Create skill terminal-polish")
   assert.match(lines[1].text, /\.furnace\/skills\/terminal-polish\/SKILL\.md/)
   assert.equal(lines.some((line) => line.text.includes("disable-model-invocation: true") && line.tone === "addition"), true)
 })

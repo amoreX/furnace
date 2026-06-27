@@ -19,6 +19,7 @@ export type RunAgentTurnInput = {
   permissions?: SessionPermissionStore
   onBeforeModelRequest?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[]>
   onContextOverflow?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[] | undefined>
+  onTextDelta?: (delta: string) => void
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
   onToolResult?: (call: { arguments: string; id: string; name: string }, content: string) => void
 }
@@ -40,7 +41,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     if (input.signal?.aborted) throw abortError()
     let response
     try {
-      response = await completeOpenRouterToolResponse(input.config, messages, tools, { toolChoice }, input.signal)
+      response = await completeOpenRouterToolResponse(input.config, messages, tools, { toolChoice, onTextDelta: input.onTextDelta }, input.signal)
     } catch (error) {
       if (!overflowRecoveryAttempted && input.onContextOverflow && isContextOverflowError(error)) {
         overflowRecoveryAttempted = true

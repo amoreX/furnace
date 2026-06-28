@@ -12,7 +12,7 @@ import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterToolDefini
 import { SessionPermissionStore } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveModelPreferences, saveThemePreference } from "./preferences.js"
-import { compactSessionIfNeeded, type CompactionReason } from "./session/compaction.js"
+import { compactSessionIfNeeded, estimateRequestTokens, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
@@ -544,6 +544,7 @@ async function runInteractive(input: {
       })
       terminal.setThinking(false)
       refreshCurrentSession()
+      refreshContextUsage()
       const message = result.entry
         ? `Compacted context: ${formatTokenCount(result.tokensBefore)} -> ${formatTokenCount(result.tokensAfter || result.tokensBefore)} tokens. File-read state cleared.`
         : `Compaction skipped: ${formatCompactionSkip(result.skipped)}.`
@@ -599,6 +600,14 @@ async function runInteractive(input: {
     terminal.setMode(state.mode, state.planPath)
     if (state.mode !== "plan") terminal.clearPlanActions()
     terminal.setTasks(taskManager.status(sessionId).tasks)
+    refreshContextUsage()
+  }
+
+  function refreshContextUsage(): void {
+    const activePath = input.store.getActivePath(sessionId)
+    const state = currentPlanModeState(activePath)
+    const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), state)
+    updateTerminalContextUsage(terminal, input.config, entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd }), toolDefinitions)
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
@@ -937,6 +946,7 @@ async function runSingleTurn(input: {
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
   const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState)
   const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
+  updateTerminalContextUsage(input.terminal, input.config, messages, toolDefinitions)
 
   if (input.terminal) input.terminal.setTranscript(transcript)
   else renderAssistantStart(transcript)
@@ -968,17 +978,22 @@ async function runSingleTurn(input: {
     sessionId: input.sessionId,
     signal: input.signal,
     taskRunner,
-    onBeforeModelRequest: (currentMessages, activeTools) => compactMessagesBeforeRequest({
-      config: input.config,
-      currentMessages,
-      cwd: input.cwd,
-      reason: "threshold",
-      sessionId: input.sessionId,
-      store: input.store,
-      systemPrompt,
-      terminal: input.terminal,
-      tools: activeTools,
-    }),
+    todoStore: input.store,
+    onBeforeModelRequest: async (currentMessages, activeTools) => {
+      const compacted = await compactMessagesBeforeRequest({
+        config: input.config,
+        currentMessages,
+        cwd: input.cwd,
+        reason: "threshold",
+        sessionId: input.sessionId,
+        store: input.store,
+        systemPrompt,
+        terminal: input.terminal,
+        tools: activeTools,
+      })
+      updateTerminalContextUsage(input.terminal, input.config, compacted, activeTools)
+      return compacted
+    },
     onContextOverflow: (_currentMessages, activeTools) => compactMessagesAfterOverflow({
       config: input.config,
       cwd: input.cwd,
@@ -1072,6 +1087,7 @@ async function runSubagentTask(input: {
     sessionId: input.record.childSessionId,
     signal: input.signal,
     tools: childToolDefinitions,
+    todoStore: input.store,
     onBeforeModelRequest: (currentMessages, activeTools) => compactMessagesBeforeRequest({
       config: input.config,
       currentMessages,
@@ -1172,7 +1188,7 @@ async function runCompaction(input: {
   terminal?: FurnaceTerminal
   tools: OpenRouterToolDefinition[]
 }) {
-  input.terminal?.setThinking(true, input.reason === "overflow" ? "compacting after context overflow" : "checking context")
+  input.terminal?.setThinking(true, input.reason === "overflow" ? "compacting after context overflow" : "checking whether to compact context")
   const result = await compactSessionIfNeeded({
     config: input.config,
     cwd: input.cwd,
@@ -1183,7 +1199,15 @@ async function runCompaction(input: {
     systemPrompt: input.systemPrompt,
     tools: input.tools,
   })
-  if (result.entry) input.terminal?.setThinking(true, "compacted context")
+  if (result.entry) {
+    input.terminal?.setThinking(true, `compacted context ${formatTokenCount(result.tokensBefore)} -> ${formatTokenCount(result.tokensAfter || result.tokensBefore)}`)
+    updateTerminalContextUsage(
+      input.terminal,
+      input.config,
+      entriesToModelMessages(input.systemPrompt, input.store.getActivePath(input.sessionId), { cwd: input.cwd }),
+      input.tools,
+    )
+  }
   else input.terminal?.setThinking(true, "thinking")
   return result
 }
@@ -1341,6 +1365,18 @@ function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
   return String(tokens)
+}
+
+function updateTerminalContextUsage(
+  terminal: FurnaceTerminal | undefined,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  messages: OpenRouterMessage[],
+  tools: OpenRouterToolDefinition[],
+): void {
+  terminal?.setContextUsage({
+    limit: config.modelSettings.contextLength,
+    tokens: estimateRequestTokens(messages, tools),
+  })
 }
 
 function formatCompactionSkip(reason: string | undefined): string {

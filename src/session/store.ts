@@ -15,6 +15,8 @@ import type {
   CompactionEntryData,
   MessageEntryData,
   SessionRecord,
+  TodoItem,
+  TodoStateEntryData,
   ToolCallEntryData,
   ToolResultEntryData,
 } from "./types.js"
@@ -190,6 +192,26 @@ export class SessionStore {
 
   appendCompaction(sessionId: string, input: CompactionEntryData): EntryRecord<CompactionEntryData> {
     return this.appendEntry<CompactionEntryData>(sessionId, "compaction", "system", input)
+  }
+
+  appendTodoState(sessionId: string, todos: TodoItem[]): EntryRecord<TodoStateEntryData> {
+    return this.appendEntry<TodoStateEntryData>(sessionId, "custom", null, {
+      kind: "todo_state",
+      todos,
+      updatedAt: Date.now(),
+    })
+  }
+
+  getTodoState(sessionId: string): TodoItem[] {
+    const path = this.getActivePath(sessionId)
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+      const entry = path[index]
+      if (entry.type !== "custom") continue
+      const data = entry.data as Partial<TodoStateEntryData>
+      if (data.kind !== "todo_state" || !Array.isArray(data.todos)) continue
+      return data.todos.map((todo) => ({ ...todo }))
+    }
+    return []
   }
 
   getFileReadReceipt(input: FileReadRangeKey): FileReadReceipt | undefined {

@@ -3,7 +3,7 @@ import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouter
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
-import { executeToolCall, toolDefinitions, type ToolFileReadStore } from "../tools/registry.js"
+import { executeToolCall, toolDefinitions, type ToolFileReadStore, type ToolTodoStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
   config: FurnaceConfig
@@ -15,6 +15,7 @@ export type RunAgentTurnInput = {
   sessionId?: string
   signal?: AbortSignal
   taskRunner?: TaskRunner
+  todoStore?: ToolTodoStore
   tools?: typeof toolDefinitions
   permissions?: SessionPermissionStore
   onBeforeModelRequest?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[]>
@@ -96,7 +97,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
         },
-        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner },
+        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner, todoStore: input.todoStore },
       )
       input.onToolResult?.(call, result.content)
       messages.push({

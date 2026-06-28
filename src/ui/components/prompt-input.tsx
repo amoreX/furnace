@@ -18,6 +18,7 @@ export type PromptInputProps = {
   onSubmit: (value: string) => void
   placeholder?: string
   prefix?: string
+  status?: string
   value?: string
 }
 
@@ -46,6 +47,7 @@ export function PromptInput({
   onSubmit,
   placeholder = "Ask Furnace...",
   prefix = ">",
+  status,
   value: controlledValue,
 }: PromptInputProps): React.ReactNode {
   const theme = useTheme()
@@ -313,6 +315,7 @@ export function PromptInput({
           </Text>
           )}
         </Box>
+        {status ? <Text color={theme.colors.mutedForeground}> {status}</Text> : null}
       </Box>
     </>
   )

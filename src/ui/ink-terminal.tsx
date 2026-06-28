@@ -46,6 +46,7 @@ export type FurnaceTerminal = {
   showThemePicker(choices: ThemeChoice[], currentTheme: string, onSelect: (theme: string, done: boolean) => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
   setModel(model: string, settings: ModelSettings): void
+  setContextUsage(usage: ContextUsage): void
   setTheme(theme: string): void
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
@@ -75,6 +76,11 @@ export type ToolActivity = {
   name: string
   result?: string
   status: "running" | "done" | "failed"
+}
+
+export type ContextUsage = {
+  limit?: number | null
+  tokens: number
 }
 
 export type QueuedPrompt = {
@@ -134,6 +140,7 @@ type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
   chatCanScrollUp: boolean
+  contextUsage?: ContextUsage
   cwd: string
   focus: UiFocus
   imageAttachments: ImageAttachment[]
@@ -192,6 +199,7 @@ class UiStore {
       approval: undefined,
       busy: false,
       chatCanScrollUp: false,
+      contextUsage: undefined,
       cwd: options.cwd,
       focus: "input",
       imageAttachments: [],
@@ -349,6 +357,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setModel(model, settings) {
       store.update((state) => ({ ...state, model, modelSettings: settings }))
     },
+    setContextUsage(usage) {
+      store.update({ contextUsage: usage })
+    },
     setTheme(themeName) {
       const choice = resolveTheme(themeName)
       store.update({ theme: choice.theme, themeName: choice.name })
@@ -471,7 +482,7 @@ function FurnaceApp({
 
   return (
     <AppShell>
-      <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} title={state.title} />
+      <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} status={headerStatus(state)} title={state.title} />
       <AppShell.Content>
         {state.screen.kind === "history" ? (
           <HistoryScreen screen={state.screen} store={store} />
@@ -504,7 +515,7 @@ function FurnaceApp({
       <PromptInput
         active={state.focus === "input"}
         busy={state.busy}
-        disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
+        disabled={inputDisabled(state)}
         autocompleteItems={state.slashCommandItems}
         historyItems={sentMessages}
         imageAttachments={state.imageAttachments}
@@ -517,6 +528,7 @@ function FurnaceApp({
         onSubmit={handleSubmit}
         placeholder={promptPlaceholder(state)}
         prefix={state.mode === "plan" ? "plan>" : ">"}
+        status={inputStatus(state)}
         value={state.inputDraft}
       />
       <AppShell.Hints items={hintItemsForState(state)} />
@@ -571,9 +583,22 @@ function hintItemsForState(state: UiState): string[] {
 function promptPlaceholder(state: UiState): string {
   if (state.approval) return "Resolve the permission prompt..."
   if (state.planAction) return "Choose a plan action, or press esc to keep planning..."
+  if (isCompacting(state)) return state.thinkingMessage || "Compacting context..."
   if (state.question) return state.busy ? "Type a follow-up to queue, or press up to answer..." : "Type a reply, or press up to answer..."
   if (state.busy) return "Furnace is working; submit to queue..."
   return state.mode === "plan" ? "Describe what to plan, or type /agent" : "Ask Furnace or type /plan"
+}
+
+function inputDisabled(state: UiState): boolean {
+  return state.screen.kind !== "chat" || Boolean(state.approval) || isCompacting(state)
+}
+
+function inputStatus(state: UiState): string | undefined {
+  return isCompacting(state) ? "disabled" : undefined
+}
+
+function isCompacting(state: UiState): boolean {
+  return state.thinking && /compact/i.test(state.thinkingMessage)
 }
 
 function reservedInteractionRows(state: UiState): number {
@@ -1241,10 +1266,11 @@ type TranscriptLineData = {
   kind: "blank" | "content" | "plan" | "spinner" | "role" | "tool"
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
+  plain?: boolean
   role?: TranscriptMessage["role"]
   status?: ToolActivity["status"]
   text: string
-  toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary"
+  toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary" | "todoCurrent" | "todoDone" | "todoPending"
 }
 
 const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
@@ -1253,6 +1279,9 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
   if (line.kind === "spinner") return <Spinner label={line.text} />
   if (line.kind === "role") return <Text color={line.role === "user" ? theme.colors.primary : theme.colors.border} bold>{line.text}</Text>
   if (line.kind === "tool") {
+    if (line.toolTone === "todoCurrent") return <Text color={theme.colors.primary} bold>{line.text}</Text>
+    if (line.toolTone === "todoDone") return <Text color={theme.colors.success} strikethrough>{line.text}</Text>
+    if (line.toolTone === "todoPending") return <Text color={theme.colors.foreground}>{line.text}</Text>
     if (line.toolTone === "addition") return <Text color={theme.colors.success}>{line.text}</Text>
     if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{line.text}</Text>
     if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{line.text}</Text>
@@ -1264,7 +1293,10 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     const color = line.planTone === "border" ? theme.colors.primary : theme.colors.mutedForeground
     return <Text color={color}>{line.planTone === "meta" ? `| ${line.text || " "}` : line.text || " "}</Text>
   }
-  if (line.role === "assistant") return <MarkdownLine text={line.text || " "} />
+  if (line.role === "assistant") {
+    if (line.plain) return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
+    return <MarkdownLine text={line.text || " "} />
+  }
   return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
 })
 
@@ -1406,14 +1438,22 @@ function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMess
 }
 
 function appendWrappedContentLines(lines: TranscriptLineData[], content: string, message: TranscriptMessage, messageIndex: number, width: number): void {
-  for (const wrappedLine of wrapAnsi(content, width, { hard: false, wordWrap: true }).split("\n")) {
-    lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
+  let inFence = false
+  for (const sourceLine of content.replace(/\r\n/g, "\n").split("\n")) {
+    if (/^\s*```/.test(sourceLine)) {
+      inFence = !inFence
+      continue
+    }
+    const wrapped = sourceLine ? wrapAnsi(sourceLine, width, { hard: false, wordWrap: true }).split("\n") : [""]
+    for (const wrappedLine of wrapped) {
+      lines.push({ kind: "content", messageIndex, plain: inFence, role: message.role, text: wrappedLine })
+    }
   }
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
   lines.push({ kind: "role", messageIndex, role: "assistant", text: "tools" })
-  for (const activity of toolActivities) {
+  for (const activity of latestTodoActivityOnly(toolActivities)) {
     for (const rendered of formatToolActivity(activity, width)) {
       lines.push({
         kind: "tool",
@@ -1426,6 +1466,19 @@ function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivi
     }
   }
   lines.push({ kind: "blank", messageIndex, role: "assistant", text: "" })
+}
+
+export function latestTodoActivityOnly(toolActivities: ToolActivity[]): ToolActivity[] {
+  let latestTodoIndex = -1
+  for (const [index, activity] of toolActivities.entries()) {
+    if (isTodoActivity(activity)) latestTodoIndex = index
+  }
+  if (latestTodoIndex < 0) return toolActivities
+  return toolActivities.filter((activity, index) => !isTodoActivity(activity) || index === latestTodoIndex)
+}
+
+function isTodoActivity(activity: ToolActivity): boolean {
+  return activity.name === "todoread" || activity.name === "todowrite"
 }
 
 type SavedPlanPreview = {
@@ -1586,6 +1639,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (taskLines.length > 0) return taskLines
   }
 
+  if (activity.name === "todowrite" || activity.name === "todoread") {
+    const todoLines = formatTodoActivity(activity, width)
+    if (todoLines.length > 0) return todoLines
+  }
+
   if (activity.name === "skill_manage") {
     const skillLines = formatSkillManageActivity(activity, width)
     if (skillLines.length > 0) return skillLines
@@ -1687,6 +1745,25 @@ function formatTaskActivity(activity: ToolActivity, width: number): RenderedTool
   if (tasks.length > 4) lines.push({ text: `  ... ${tasks.length - 4} more subagent${tasks.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
   const firstResult = activity.result?.split(/\r?\n/).find((line) => /^Task group /.test(line))
   if (firstResult) lines.push({ text: `  ${truncateEnd(firstResult, Math.max(24, width - 4))}`, tone: backgrounded ? "context" : "addition" })
+  return lines
+}
+
+function formatTodoActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const todos = parseTodoItems(activity)
+  if (todos.length === 0 && activity.name === "todowrite") return []
+  const activeCount = todos.filter((todo) => normalizeTodoStatus(todo.status) === "in_progress").length
+  const doneCount = todos.filter((todo) => normalizeTodoStatus(todo.status) === "completed").length
+  const verb = activity.name === "todoread" ? "Read" : activity.status === "running" ? "Updating" : "Updated"
+  const header = todos.length === 0 ? `${statusSymbol(activity.status)} ${verb} todos • none` : `${statusSymbol(activity.status)} ${verb} todos • Working on ${activeCount} to-do${activeCount === 1 ? "" : "s"} • ${doneCount} done`
+  const lines: RenderedToolLine[] = [{ text: header, tone: "summary" }]
+  for (const todo of todos.slice(0, 12)) {
+    const status = normalizeTodoStatus(todo.status)
+    lines.push({
+      text: `  ${todoStatusSymbol(status)} ${truncateEnd(todo.content, Math.max(24, width - 6))}`,
+      tone: todoTone(status),
+    })
+  }
+  if (todos.length > 12) lines.push({ text: `  ... ${todos.length - 12} more todo${todos.length - 12 === 1 ? "" : "s"}`, tone: "meta" })
   return lines
 }
 
@@ -1873,6 +1950,56 @@ function parseTaskArgs(args: string): Array<{ description?: string; prompt: stri
   } catch {
     return []
   }
+}
+
+type TodoPreviewItem = {
+  content: string
+  status: string
+}
+
+function parseTodoItems(activity: ToolActivity): TodoPreviewItem[] {
+  const fromArgs = parseTodoItemsFromJson(activity.args)
+  if (fromArgs.length > 0) return fromArgs
+  return parseTodoItemsFromJson(activity.result || "")
+}
+
+function parseTodoItemsFromJson(source: string): TodoPreviewItem[] {
+  try {
+    const parsed = JSON.parse(source) as unknown
+    const todos = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>).todos : undefined
+    if (!Array.isArray(todos)) return []
+    return todos.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return []
+      const record = item as Record<string, unknown>
+      const content = typeof record.content === "string" ? record.content : typeof record.title === "string" ? record.title : ""
+      const status = typeof record.status === "string" ? record.status : "pending"
+      return content ? [{ content, status }] : []
+    })
+  } catch {
+    return []
+  }
+}
+
+function normalizeTodoStatus(status: string): "cancelled" | "completed" | "in_progress" | "pending" {
+  const normalized = status.toLowerCase().replace(/[ -]/g, "_")
+  if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed"
+  if (normalized === "in_progress" || normalized === "current" || normalized === "running" || normalized === "active") return "in_progress"
+  if (normalized === "cancelled" || normalized === "canceled" || normalized === "abandoned") return "cancelled"
+  return "pending"
+}
+
+function todoStatusSymbol(status: ReturnType<typeof normalizeTodoStatus>): string {
+  if (status === "completed") return "✓"
+  if (status === "in_progress") return "◐"
+  if (status === "cancelled") return "⊘"
+  return "○"
+}
+
+function todoTone(status: ReturnType<typeof normalizeTodoStatus>): TranscriptLineData["toolTone"] {
+  if (status === "completed") return "todoDone"
+  if (status === "in_progress") return "todoCurrent"
+  if (status === "cancelled") return "meta"
+  return "todoPending"
 }
 
 function statusSymbol(status: ToolActivity["status"]): string {
@@ -2233,6 +2360,16 @@ function formatFooterSettings(settings: ModelSettings): string {
 
 function modeLabel(state: UiState): string {
   return state.mode === "plan" ? `plan${state.planPath ? ` ${state.planPath}` : ""}` : "agent"
+}
+
+function headerStatus(state: UiState): string {
+  const mode = modeLabel(state)
+  const usage = state.contextUsage
+  if (!usage) return mode
+  const used = formatContext(usage.tokens)
+  if (!usage.limit || usage.limit <= 0) return `${mode} · ${used} used`
+  const percent = Math.min(999, Math.max(0, (usage.tokens / usage.limit) * 100))
+  return `${mode} · ${percent.toFixed(1)}% · ${used}/${formatContext(usage.limit)}`
 }
 
 function supportsReasoning(choice: ModelChoice | undefined): boolean {

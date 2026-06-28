@@ -22,8 +22,41 @@ function sleep(ms) {
 test("tool registry exposes the core primitives", () => {
   assert.deepEqual(
     toolDefinitions.map((tool) => tool.function.name),
-    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "skill", "skill_manage", "task", "task_status", "websearch", "webfetch"],
+    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "skill", "skill_manage", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"],
   )
+})
+
+test("todo tools persist session-scoped todo state through the provided todo store", async () => {
+  await withWorkspace(async (cwd) => {
+    const states = new Map()
+    const todoStore = {
+      appendTodoState(sessionId, todos) {
+        states.set(sessionId, todos)
+      },
+      getTodoState(sessionId) {
+        return states.get(sessionId) || []
+      },
+    }
+    const todos = [
+      { id: "inspect", content: "Inspect implementation", status: "completed", priority: "high" },
+      { id: "verify", content: "Run verification", status: "in_progress", priority: "medium" },
+    ]
+
+    const write = await executeToolCall(
+      { name: "todowrite", arguments: JSON.stringify({ todos }) },
+      { cwd, sessionId: "session-1", todoStore },
+    )
+    assert.deepEqual(JSON.parse(write.content).todos, todos)
+
+    const read = await executeToolCall(
+      { name: "todoread", arguments: "{}" },
+      { cwd, sessionId: "session-1", todoStore },
+    )
+    const payload = JSON.parse(read.content)
+    assert.deepEqual(payload.todos, todos)
+    assert.equal(payload.summary.completed, 1)
+    assert.equal(payload.summary.in_progress, 1)
+  })
 })
 
 test("task delegates batched prompts through the task runner", async () => {

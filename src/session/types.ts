@@ -54,6 +54,23 @@ export type ToolResultEntryData = {
   toolCallId: string
 }
 
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
+
+export type TodoPriority = "high" | "medium" | "low"
+
+export type TodoItem = {
+  id: string
+  content: string
+  status: TodoStatus
+  priority?: TodoPriority
+}
+
+export type TodoStateEntryData = {
+  kind: "todo_state"
+  todos: TodoItem[]
+  updatedAt: number
+}
+
 export type CompactionEntryData = {
   details?: {
     fallback?: boolean

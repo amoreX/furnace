@@ -213,7 +213,6 @@ class UiStore {
       toolActivities: [],
       transcript: [],
     }
-    this.state.committedLines = [makeHeaderLine(this.state)]
   }
 
   getSnapshot = (): UiState => this.state
@@ -357,7 +356,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ toolActivities: activities })
     },
     clearTranscriptDisplay() {
-      store.update((state) => ({ ...state, committedLines: [makeHeaderLine(state)], staticKey: state.staticKey + 1 }))
+      store.update((state) => ({ ...state, committedLines: [], staticKey: state.staticKey + 1 }))
     },
     setStreamingContent(text) {
       store.update({ streamingContent: text })
@@ -378,7 +377,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "" }
         }
         const allLines = transcript.flatMap((message, index) => messageToLines(message, index, width))
-        return { ...state, screen: { kind: "chat" }, committedLines: [makeHeaderLine(state), ...allLines], transcript, toolActivities: [], streamingContent: "", staticKey: state.staticKey + 1 }
+        return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "", staticKey: state.staticKey + 1 }
       })
     },
   }
@@ -468,7 +467,12 @@ function FurnaceApp({
           prefix={state.mode === "plan" ? "plan>" : ">"}
           value={state.inputDraft}
         />
-        <AppShell.Hints items={hintItemsForState(state)} />
+        <AppShell.Header
+          cwd={shortenHome(state.cwd)}
+          model={state.model}
+          settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`}
+          title={state.title}
+        />
       </Box>
     </>
   )
@@ -1079,9 +1083,6 @@ function hintItems(kind: UiScreen["kind"]): string[] {
 }
 
 function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
-  if (line.kind === "header" && line.headerInfo) {
-    return <AppShell.Header cwd={line.headerInfo.cwd} model={line.headerInfo.model} settings={line.headerInfo.settings} title={line.headerInfo.title} />
-  }
   return (
     <Box paddingX={1}>
       <TranscriptLine line={line} />
@@ -1111,9 +1112,7 @@ function LiveChat({
   const width = Math.max(20, columns - 4)
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
-  // Content lines from committed transcript (skip the header banner — it's for scrollback)
-  const contentLines = committedLines.filter((line) => line.kind !== "header")
-  const allLines = [...contentLines, ...activeLines]
+  const allLines = [...committedLines, ...activeLines]
 
   if (allLines.length === 0) {
     return (
@@ -1141,8 +1140,7 @@ export function chatViewportRows(windowRows: number, reservedRows = 0): number {
 }
 
 type TranscriptLineData = {
-  kind: "blank" | "content" | "header" | "plan" | "spinner" | "role" | "table" | "tool"
-  headerInfo?: { cwd: string; model: string; settings: string; title: string }
+  kind: "blank" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
   role?: TranscriptMessage["role"]
@@ -1310,19 +1308,6 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
     lines.push({ kind: "spinner", messageIndex: transcript.length, role: "assistant", text: thinkingMessage })
   }
   return lines
-}
-
-function makeHeaderLine(state: UiState): TranscriptLineData {
-  return {
-    kind: "header",
-    text: "",
-    headerInfo: {
-      cwd: shortenHome(state.cwd),
-      model: state.model,
-      settings: `${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`,
-      title: state.title,
-    },
-  }
 }
 
 function messageToLines(message: TranscriptMessage, messageIndex: number, width: number): TranscriptLineData[] {

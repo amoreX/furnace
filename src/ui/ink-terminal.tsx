@@ -48,6 +48,7 @@ export type FurnaceTerminal = {
   setToolActivities(activities: ToolActivity[]): void
   clearTranscriptDisplay(): void
   setStreamingContent(text: string): void
+  setStatusNotice(content?: string): void
   setTranscript(transcript: TranscriptMessage[]): void
 }
 
@@ -144,6 +145,7 @@ type UiState = {
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
   slashCommandItems: PromptAutocompleteItem[]
+  statusNotice?: string
   theme: Theme
   themeName: string
   thinking: boolean
@@ -210,6 +212,7 @@ class UiStore {
       queuedPrompts: [],
       screen: { kind: "chat" },
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
+      statusNotice: undefined,
       theme: themeChoice.theme,
       themeName: themeChoice.name,
       thinking: false,
@@ -360,6 +363,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setStreamingContent(text) {
       store.update({ streamingContent: text })
     },
+    setStatusNotice(content) {
+      store.update({ statusNotice: content })
+    },
     setTranscript(transcript) {
       const width = Math.max(20, (process.stdout.columns || 80) - 4)
       store.update((state) => {
@@ -403,6 +409,7 @@ function FurnaceApp({
   store: UiStore
 }): React.ReactNode {
   const app = useApp()
+  const theme = useTheme()
   useInput((_input, key) => {
     if (key.ctrl && _input === "c") {
       onExit()
@@ -444,6 +451,7 @@ function FurnaceApp({
         {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
         {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
         {state.lofiEnabled ? <LofiCorner /> : null}
+        {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
         <PromptInput
           active={state.focus === "input"}
           busy={state.busy}

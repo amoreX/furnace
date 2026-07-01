@@ -385,11 +385,11 @@ async function runInteractive(input: {
   function showTransientStatus(content: string, ttlMs = 3000): void {
     clearTransientStatus()
     const token = ++transientStatusToken
-    terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content }])
+    terminal.setStatusNotice(content)
     transientStatusTimer = setTimeout(() => {
       if (token !== transientStatusToken) return
       transientStatusTimer = undefined
-      terminal.setTranscript(entriesToTranscript(input.store.getActivePath(sessionId)))
+      terminal.setStatusNotice(undefined)
     }, ttlMs)
     transientStatusTimer.unref?.()
   }
@@ -635,6 +635,7 @@ async function runInteractive(input: {
 
   function clearTransientStatus(): void {
     transientStatusToken += 1
+    terminal.setStatusNotice(undefined)
     if (!transientStatusTimer) return
     clearTimeout(transientStatusTimer)
     transientStatusTimer = undefined

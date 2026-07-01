@@ -14,7 +14,7 @@ export type ParsedPrompt = {
 export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/clear", description: "Clear the conversation display" },
   { name: "/new", description: "Start a fresh conversation" },
-  { name: "/history", aliases: ["/historu"], description: "Open saved conversations" },
+  { name: "/resume", aliases: ["/history"], description: "Open saved conversations" },
   { name: "/model", description: "Select model", usage: "/model" },
   { name: "/plan", description: "Switch to plan mode", insertText: "/plan ", usage: "/plan [prompt]" },
   { name: "/agent", description: "Switch to normal agent mode" },
@@ -29,7 +29,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
-  { name: "/reset-perms", description: "Clear conversation approvals" },
+  { name: "/permissions", description: "Clear conversation approvals" },
   { name: "/exit", aliases: ["/quit"], description: "Exit Furnace" },
 ]
 
@@ -41,8 +41,10 @@ export function parseSlashCommand(prompt: string): ParsedPrompt {
   return { argument: rest.join(" ").trim(), name: `/${name.toLowerCase()}` }
 }
 
+const historyCommandNames = new Set(["/resume", "/history"])
+
 export function isHistoryCommand(command: string): boolean {
-  return command === "/history" || command === "/historu"
+  return historyCommandNames.has(command)
 }
 
 export function isKnownSlashCommand(command: string): boolean {

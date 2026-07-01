@@ -229,12 +229,16 @@ test("slash autocomplete filters and inserts command text", async () => {
   const skillsView = slashAutocompleteMatches("/skills v", 9, items)
   assert.deepEqual(skillsView.map((item) => item.value), ["/skills view"])
   assert.equal(applySlashAutocomplete("/skills v", 9, skillsView[0]), "/skills view ")
+  assert.equal(isKnownSlashCommand("/resume"), true)
   assert.equal(isKnownSlashCommand("/history"), true)
   assert.equal(isKnownSlashCommand("/plan"), true)
   assert.equal(isKnownSlashCommand("/agent"), true)
   assert.equal(isKnownSlashCommand("/mode"), true)
   assert.equal(isKnownSlashCommand("/skills"), true)
   assert.equal(isKnownSlashCommand("/quit"), true)
+  assert.equal(isKnownSlashCommand("/permissions"), true)
+  assert.equal(isKnownSlashCommand("/reset-perms"), false)
+  assert.equal(isKnownSlashCommand("/historu"), false)
   assert.equal(isKnownSlashCommand("/not-real"), false)
 
   const manyItems = Array.from({ length: 12 }, (_, index) => ({
@@ -246,6 +250,15 @@ test("slash autocomplete filters and inserts command text", async () => {
   assert.equal(window.hiddenAbove > 0, true)
   assert.equal(window.visible.some((item) => item.value === "/command-10"), true)
   assert.equal(window.hiddenBelow, 0)
+})
+
+test("/resume is the primary history command name, with /history kept as an alias", async () => {
+  const { isHistoryCommand } = await import("../dist/commands.js")
+
+  assert.equal(isHistoryCommand("/resume"), true)
+  assert.equal(isHistoryCommand("/history"), true)
+  assert.equal(isHistoryCommand("/historu"), false)
+  assert.equal(isHistoryCommand("/model"), false)
 })
 
 test("skill_manage tool activity renders proposed SKILL.md", async () => {

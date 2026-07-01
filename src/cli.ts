@@ -229,7 +229,7 @@ async function runInteractive(input: {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)
         return
       }
-      if (command.name === "/reset-perms") {
+      if (command.name === "/permissions") {
         resetCurrentSessionPermissions()
         return
       }
@@ -266,7 +266,7 @@ async function runInteractive(input: {
       flushPendingBackgroundPrompts()
       return
     }
-    if (command.name === "/reset-perms") {
+    if (command.name === "/permissions") {
       resetCurrentSessionPermissions()
       return
     }
@@ -727,7 +727,7 @@ async function runPiped(input: {
       process.stdout.write("Usage: /mode [agent|plan]\n")
       continue
     }
-    if (command.name === "/reset-perms") {
+    if (command.name === "/permissions") {
       const removed = permissions.clearSession(sessionId)
       process.stdout.write(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.\n` : "No permission grants to reset for this conversation.\n")
       continue

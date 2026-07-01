@@ -1079,7 +1079,7 @@ function hintItems(kind: UiScreen["kind"]): string[] {
   if (kind === "model") return ["type to filter", "enter select", "tab edit", "esc cancel"]
   if (kind === "theme") return ["up/down navigate", "enter preview", "esc cancel"]
   if (kind === "history") return ["up/down navigate", "enter open", "esc cancel"]
-  return ["/new", "/history", "/model", "/theme", "/tasks", "/lofi", "/reset-perms", "/exit"]
+  return ["/new", "/resume", "/model", "/theme", "/tasks", "/lofi", "/permissions", "/exit"]
 }
 
 function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {

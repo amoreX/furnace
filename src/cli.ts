@@ -218,7 +218,7 @@ async function runInteractive(input: {
           (model, settings, done) => {
             input.config.model = model
             input.config.modelSettings = settings
-            terminal.setModel(model, settings)
+            terminal.setModel(model, settings, choice.name)
             void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
               terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
             })
@@ -243,6 +243,10 @@ async function runInteractive(input: {
     },
   })
   applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills))
+  void modelListCache.promise.then((models) => {
+    const match = models.find((model) => model.id === input.config.model)
+    if (match) terminal.setModel(input.config.model, input.config.modelSettings, match.name)
+  })
 
   refreshCurrentSession()
   try {
@@ -477,7 +481,7 @@ async function runInteractive(input: {
     const settings: ModelSettings = {}
     input.config.model = match.id
     input.config.modelSettings = settings
-    terminal.setModel(match.id, settings)
+    terminal.setModel(match.id, settings, match.name)
     await saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings }).catch((error) => {
       terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
     })

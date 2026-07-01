@@ -46,7 +46,7 @@ function Header({ contextUsagePercent, cwd, model, settings, title }: AppShellHe
       <Box justifyContent="space-between">
         <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
         <Text color={theme.colors.mutedForeground}>
-          {contextUsagePercent}/{settings}
+          {contextUsagePercent} · {settings}
         </Text>
       </Box>
     </Box>

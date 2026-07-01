@@ -1,4 +1,4 @@
-import { Box, Static, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
+import { Box, Newline, Static, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
@@ -42,7 +42,7 @@ export type FurnaceTerminal = {
   ): void
   showPermissions(grants: PermissionGrantSummary[], onRemove: (grant: PermissionGrantSummary) => void, onClearAll: () => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
-  setModel(model: string, settings: ModelSettings): void
+  setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
@@ -135,6 +135,7 @@ type UiState = {
   lofiEnabled: boolean
   mode: AgentMode
   model: string
+  modelDisplayName?: string
   modelSettings: ModelSettings
   planAction?: PlanActionState
   planPath?: string
@@ -199,6 +200,7 @@ class UiStore {
       lofiEnabled: false,
       mode: "agent",
       model: options.model,
+      modelDisplayName: undefined,
       modelSettings: options.modelSettings,
       planAction: undefined,
       planPath: undefined,
@@ -337,8 +339,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showPlanActions(planPath, onSelect) {
       store.update((state) => ({ ...state, focus: "plan_actions", planAction: { onSelect, planPath } }))
     },
-    setModel(model, settings) {
-      store.update((state) => ({ ...state, model, modelSettings: settings }))
+    setModel(model, settings, displayName) {
+      store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
     setTheme(themeName) {
       const choice = resolveTheme(themeName)
@@ -461,10 +463,10 @@ function FurnaceApp({
           value={state.inputDraft}
         />
         <AppShell.Header
-          contextUsagePercent={formatContextUsagePercent(state.contextUsage)}
+          contextUsagePercent={`${formatContextUsagePercent(state.contextUsage)} used`}
           cwd={shortenHome(state.cwd)}
-          model={state.model}
-          settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
+          model={state.modelDisplayName || state.model}
+          settings={`mode: ${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
           title={state.title}
         />
       </Box>
@@ -1112,6 +1114,7 @@ function LiveChat({
       <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-start" paddingX={1}>
         {!hasTranscript && (
           <Box flexDirection="column">
+            <Newline />
             {columns >= furnaceBannerWidth
               ? furnaceAsciiBanner().map((row, index) => (
                   <Text key={index} color={theme.colors.primary} bold>
@@ -1123,6 +1126,7 @@ function LiveChat({
                     FURNACE
                   </Text>
                 )}
+            <Newline />
             <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
             <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
           </Box>
@@ -2150,10 +2154,10 @@ function formatContextUsagePercent(usage: number): string {
 }
 
 function formatFooterSettings(settings: ModelSettings): string {
-  const context = settings.contextLength ? formatContext(settings.contextLength) : "auto"
-  const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? settings.reasoningEffort : "auto"
-  const fast = settings.fast ? ", fast" : ""
-  return `${context} (${reasoning}${fast})`
+  const window = `window: ${settings.contextLength ? formatContext(settings.contextLength) : "auto"}`
+  const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? `reasoning: ${settings.reasoningEffort}` : undefined
+  const fast = settings.fast ? "fast" : undefined
+  return [window, reasoning, fast].filter(Boolean).join(" · ")
 }
 
 function modeLabel(state: UiState): string {

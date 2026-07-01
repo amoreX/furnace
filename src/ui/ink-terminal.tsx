@@ -2165,9 +2165,15 @@ function formatContextUsage(tokens: number, window: number): string {
 }
 
 function formatTokenCompact(value: number): string {
-  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K`
-  return String(Math.round(Math.max(0, value)))
+  const clamped = Math.max(0, value)
+  if (clamped >= 1_000_000) return formatCompactUnit(clamped / 1_000_000, "M")
+  if (clamped >= 1_000) return formatCompactUnit(clamped / 1_000, "K")
+  return String(Math.round(clamped))
+}
+
+function formatCompactUnit(value: number, unit: string): string {
+  const rounded = Math.round(value * 10) / 10
+  return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)}${unit}`
 }
 
 function formatFooterSettings(settings: ModelSettings): string {

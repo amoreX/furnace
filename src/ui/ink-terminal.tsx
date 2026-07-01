@@ -26,7 +26,7 @@ export type FurnaceTerminal = {
   stop(): void
   waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
-  setContextUsage(usage: number): void
+  setContextUsage(tokens: number, window: number): void
   setInputDraft(value: string): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
@@ -128,7 +128,8 @@ type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
   chatCanScrollUp: boolean
-  contextUsage: number
+  contextTokens: number
+  contextWindowTokens: number
   cwd: string
   focus: UiFocus
   inputDraft: string
@@ -193,7 +194,8 @@ class UiStore {
       approval: undefined,
       busy: false,
       chatCanScrollUp: false,
-      contextUsage: 0,
+      contextTokens: 0,
+      contextWindowTokens: 0,
       cwd: options.cwd,
       focus: "input",
       inputDraft: "",
@@ -306,8 +308,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setBusy(busy) {
       store.update({ busy })
     },
-    setContextUsage(usage) {
-      store.update({ contextUsage: Math.max(0, Math.min(1, usage)) })
+    setContextUsage(tokens, window) {
+      store.update({ contextTokens: Math.max(0, tokens), contextWindowTokens: Math.max(0, window) })
     },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
@@ -459,11 +461,12 @@ function FurnaceApp({
           onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
           onSubmit={onSubmit}
           placeholder={promptPlaceholder(state)}
+          planMode={state.mode === "plan"}
           prefix={state.mode === "plan" ? "plan>" : ">"}
           value={state.inputDraft}
         />
         <AppShell.Header
-          contextUsagePercent={`${formatContextUsagePercent(state.contextUsage)} used`}
+          contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
           cwd={shortenHome(state.cwd)}
           model={state.modelDisplayName || state.model}
           settings={`mode: ${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
@@ -2149,8 +2152,14 @@ function furnaceAsciiBanner(): string[] {
   return rows.map((row) => row.trimEnd())
 }
 
-function formatContextUsagePercent(usage: number): string {
-  return `${(Math.max(0, Math.min(1, usage)) * 100).toFixed(1)}%`
+function formatContextUsage(tokens: number, window: number): string {
+  return `${formatTokenCompact(tokens)}/${formatTokenCompact(window)}`
+}
+
+function formatTokenCompact(value: number): string {
+  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`
+  return String(Math.round(Math.max(0, value)))
 }
 
 function formatFooterSettings(settings: ModelSettings): string {
@@ -2161,7 +2170,7 @@ function formatFooterSettings(settings: ModelSettings): string {
 }
 
 function modeLabel(state: UiState): string {
-  return state.mode === "plan" ? `plan${state.planPath ? ` ${state.planPath}` : ""}` : "agent"
+  return state.mode === "plan" ? "plan" : "agent"
 }
 
 function supportsReasoning(choice: ModelChoice | undefined): boolean {

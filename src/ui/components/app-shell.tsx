@@ -9,7 +9,7 @@ export type AppShellProps = {
 }
 
 export type AppShellHeaderProps = {
-  contextUsagePercent: string
+  contextUsage: string
   cwd: string
   model: string
   settings: string
@@ -33,7 +33,7 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
   )
 }
 
-function Header({ contextUsagePercent, cwd, model, settings, title }: AppShellHeaderProps): React.ReactNode {
+function Header({ contextUsage, cwd, model, settings, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1}>
@@ -46,7 +46,7 @@ function Header({ contextUsagePercent, cwd, model, settings, title }: AppShellHe
       <Box justifyContent="space-between">
         <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
         <Text color={theme.colors.mutedForeground}>
-          {contextUsagePercent} · {settings}
+          {contextUsage} · {settings}
         </Text>
       </Box>
     </Box>

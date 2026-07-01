@@ -15,6 +15,7 @@ export type PromptInputProps = {
   onModeCycle?: (direction: 1 | -1) => void
   onSubmit: (value: string) => void
   placeholder?: string
+  planMode?: boolean
   prefix?: string
   value?: string
 }
@@ -43,6 +44,7 @@ export function PromptInput({
   onModeCycle,
   onSubmit,
   placeholder = "Ask Furnace...",
+  planMode = false,
   prefix = ">",
   value: controlledValue,
 }: PromptInputProps): React.ReactNode {
@@ -285,8 +287,8 @@ export function PromptInput({
   return (
     <>
       {autocompleteActive ? <PromptAutocompleteMenu items={autocompleteMatches} /> : null}
-      <Box borderStyle="round" borderColor={enabled ? theme.colors.focusRing : theme.colors.border} paddingX={1}>
-        <Text color={enabled ? theme.colors.primary : theme.colors.mutedForeground} bold>
+      <Box borderStyle="round" borderColor={enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border} paddingX={1}>
+        <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
           {prefix}{" "}
         </Text>
         {value ? (

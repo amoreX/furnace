@@ -678,15 +678,16 @@ async function runInteractive(input: {
     terminal.setMode(state.mode, state.planPath)
     if (state.mode !== "plan") terminal.clearPlanActions()
     terminal.setTasks(taskManager.status(sessionId).tasks)
-    terminal.setContextUsage(estimateContextUsage())
+    const usage = estimateContextUsage()
+    terminal.setContextUsage(usage.tokens, usage.window)
   }
 
-  function estimateContextUsage(): number {
+  function estimateContextUsage(): { tokens: number; window: number } {
     const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(sessionId)))
     const messages = entriesToModelMessages(systemPrompt, input.store.getActivePath(sessionId), { cwd: input.cwd })
     const tokens = estimateRequestTokens(messages, toolDefinitions)
     const settings = resolveCompactionSettings(input.config)
-    return tokens / settings.contextWindow
+    return { tokens, window: settings.contextWindow }
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
@@ -762,7 +763,8 @@ async function runInteractive(input: {
           terminal.setTranscript(entriesToTranscript(input.store.getActivePath(sessionId)))
         } finally {
           if (activeAbortController === controller) activeAbortController = undefined
-          terminal.setContextUsage(estimateContextUsage())
+          const usage = estimateContextUsage()
+          terminal.setContextUsage(usage.tokens, usage.window)
         }
       }
     } finally {

@@ -12,7 +12,7 @@ import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, typ
 import { SessionPermissionStore } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveModelPreferences, saveThemePreference, type ModelSettings } from "./preferences.js"
-import { compactSessionIfNeeded, type CompactionReason } from "./session/compaction.js"
+import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
@@ -665,6 +665,15 @@ async function runInteractive(input: {
     terminal.setMode(state.mode, state.planPath)
     if (state.mode !== "plan") terminal.clearPlanActions()
     terminal.setTasks(taskManager.status(sessionId).tasks)
+    terminal.setContextUsage(estimateContextUsage())
+  }
+
+  function estimateContextUsage(): number {
+    const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(sessionId)))
+    const messages = entriesToModelMessages(systemPrompt, input.store.getActivePath(sessionId), { cwd: input.cwd })
+    const tokens = estimateRequestTokens(messages, toolDefinitions)
+    const settings = resolveCompactionSettings(input.config)
+    return tokens / settings.contextWindow
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
@@ -740,6 +749,7 @@ async function runInteractive(input: {
           terminal.setTranscript(entriesToTranscript(input.store.getActivePath(sessionId)))
         } finally {
           if (activeAbortController === controller) activeAbortController = undefined
+          terminal.setContextUsage(estimateContextUsage())
         }
       }
     } finally {

@@ -26,6 +26,7 @@ export type FurnaceTerminal = {
   stop(): void
   waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
+  setContextUsage(usage: number): void
   setInputDraft(value: string): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
@@ -119,6 +120,7 @@ type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
   chatCanScrollUp: boolean
+  contextUsage: number
   cwd: string
   focus: UiFocus
   inputDraft: string
@@ -182,6 +184,7 @@ class UiStore {
       approval: undefined,
       busy: false,
       chatCanScrollUp: false,
+      contextUsage: 0,
       cwd: options.cwd,
       focus: "input",
       inputDraft: "",
@@ -292,6 +295,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setBusy(busy) {
       store.update({ busy })
+    },
+    setContextUsage(usage) {
+      store.update({ contextUsage: Math.max(0, Math.min(1, usage)) })
     },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
@@ -443,9 +449,10 @@ function FurnaceApp({
           value={state.inputDraft}
         />
         <AppShell.Header
+          contextUsagePercent={formatContextUsagePercent(state.contextUsage)}
           cwd={shortenHome(state.cwd)}
           model={state.model}
-          settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
+          settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
           title={state.title}
         />
       </Box>
@@ -2033,6 +2040,10 @@ function formatContext(contextLength: number | null | undefined): string {
   if (contextLength >= 1_000_000) return `${Math.round(contextLength / 1_000_000)}M`
   if (contextLength >= 1_000) return `${Math.round(contextLength / 1_000)}K`
   return String(contextLength)
+}
+
+function formatContextUsagePercent(usage: number): string {
+  return `${(Math.max(0, Math.min(1, usage)) * 100).toFixed(1)}%`
 }
 
 function formatFooterSettings(settings: ModelSettings): string {

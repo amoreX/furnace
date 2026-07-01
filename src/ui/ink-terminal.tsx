@@ -1118,7 +1118,7 @@ function LiveChat({
     return (
       <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-end" paddingX={1}>
         {!hasTranscript && (
-          <Text color={theme.colors.mutedForeground}>Start a conversation, or use /history, /model, and /theme.</Text>
+          <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
         )}
       </Box>
     )

@@ -3,6 +3,7 @@ import { flexokiTheme } from "./flexoki.js"
 
 export type ThemeChoice = {
   description: string
+  displayLabel: string
   name: string
   theme: Theme
 }
@@ -243,14 +244,14 @@ export const gruvboxTheme: Theme = {
 }
 
 export const themeChoices: ThemeChoice[] = [
-  { name: "flexoki", description: "warm low-contrast palette", theme: flexokiTheme },
-  { name: "default", description: "default TermCN palette", theme: defaultTheme },
-  { name: "dracula", description: "purple-heavy dark palette", theme: draculaTheme },
-  { name: "catppuccin", description: "mocha terminal palette", theme: catppuccinTheme },
-  { name: "tokyo-night", description: "cool blue night palette", theme: tokyoNightTheme },
-  { name: "nord", description: "cool arctic palette", theme: nordTheme },
-  { name: "rosepine", description: "warm rose dark palette", theme: rosepineTheme },
-  { name: "gruvbox", description: "retro earth-tone palette", theme: gruvboxTheme },
+  { name: "flexoki", displayLabel: "Flexoki", description: "Warm, low-contrast palette", theme: flexokiTheme },
+  { name: "default", displayLabel: "Default", description: "Default TermCN palette", theme: defaultTheme },
+  { name: "dracula", displayLabel: "Dracula", description: "Purple-heavy dark palette", theme: draculaTheme },
+  { name: "catppuccin", displayLabel: "Catppuccin", description: "Mocha terminal palette", theme: catppuccinTheme },
+  { name: "tokyo-night", displayLabel: "Tokyo Night", description: "Cool blue night palette", theme: tokyoNightTheme },
+  { name: "nord", displayLabel: "Nord", description: "Cool arctic palette", theme: nordTheme },
+  { name: "rosepine", displayLabel: "Rosé Pine", description: "Warm rose dark palette", theme: rosepineTheme },
+  { name: "gruvbox", displayLabel: "Gruvbox", description: "Retro earth-tone palette", theme: gruvboxTheme },
 ]
 
 export function resolveTheme(name: string | undefined): ThemeChoice {

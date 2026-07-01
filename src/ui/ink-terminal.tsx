@@ -15,7 +15,7 @@ import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutoc
 import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
-import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
+import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
@@ -470,7 +470,7 @@ function FurnaceApp({
         <AppShell.Header
           cwd={shortenHome(state.cwd)}
           model={state.model}
-          settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`}
+          settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
           title={state.title}
         />
       </Box>
@@ -2020,7 +2020,7 @@ function ThemeScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "the
     () =>
       screen.choices.map((choice) => ({
         description: choice.description,
-        label: choice.name,
+        label: choice.displayLabel,
         value: choice.name,
       })),
     [screen.choices],

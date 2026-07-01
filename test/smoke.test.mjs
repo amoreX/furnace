@@ -30,6 +30,18 @@ test("termcn theme registry exposes all bundled themes", async () => {
     assert.equal(resolveTheme(name).name, name)
   }
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
+
+  const displayLabels = Object.fromEntries(themeChoices.map((theme) => [theme.name, theme.displayLabel]))
+  assert.deepEqual(displayLabels, {
+    flexoki: "Flexoki",
+    default: "Default",
+    dracula: "Dracula",
+    catppuccin: "Catppuccin",
+    "tokyo-night": "Tokyo Night",
+    nord: "Nord",
+    rosepine: "Rosé Pine",
+    gruvbox: "Gruvbox",
+  })
 })
 
 test("assistant markdown inline formatting is parsed for terminal rendering", async () => {

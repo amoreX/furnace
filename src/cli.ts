@@ -1325,8 +1325,8 @@ function formatRelativeTime(timestamp: number): string {
   const hour = 60 * minute
   const day = 24 * hour
 
-  if (isYesterday(timestamp, now) && diffMs >= 15 * hour) return "yesterday"
-  if (diffMs < minute) return "just now"
+  if (isYesterday(timestamp, now) && diffMs >= 15 * hour) return "Yesterday"
+  if (diffMs < minute) return "Just now"
   if (diffMs < hour) {
     const minutes = Math.max(1, Math.floor(diffMs / minute))
     return `${minutes} min${minutes === 1 ? "" : "s"} ago`

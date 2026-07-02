@@ -125,6 +125,44 @@ test("ask_question tool activity renders questions and answers", async () => {
   assert.match(lines[3].text, /selected "damn-bro-whatever"/)
 })
 
+test("todo tool activity renders a todo summary", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-todos",
+      name: "todowrite",
+      status: "done",
+      args: JSON.stringify({
+        todos: [
+          { id: "inspect", content: "Inspect implementation", status: "completed" },
+          { id: "verify", content: "Run verification", status: "in_progress" },
+          { id: "ship", content: "Report results", status: "pending" },
+        ],
+      }),
+      result: "",
+    },
+    100,
+  )
+
+  assert.deepEqual(lines.map((line) => line.tone), ["summary", "todoDone", "todoCurrent", "todoPending"])
+  assert.equal(lines[0].text, "ok Updated todos • Working on 1 to-do • 1 done")
+  assert.match(lines[1].text, /✓ Inspect implementation/)
+  assert.match(lines[2].text, /◐ Run verification/)
+  assert.match(lines[3].text, /○ Report results/)
+})
+
+test("todo tool activity keeps only the latest todo snapshot", async () => {
+  const { latestTodoActivityOnly } = await import("../dist/ui/ink-terminal.js")
+  const activities = [
+    { id: "read", name: "read", status: "done", args: "{}", result: "file" },
+    { id: "todo-1", name: "todowrite", status: "done", args: JSON.stringify({ todos: [{ id: "one", content: "Old todo", status: "in_progress" }] }), result: "" },
+    { id: "grep", name: "grep", status: "done", args: "{}", result: "match" },
+    { id: "todo-2", name: "todowrite", status: "done", args: JSON.stringify({ todos: [{ id: "one", content: "Latest todo", status: "completed" }] }), result: "" },
+  ]
+
+  assert.deepEqual(latestTodoActivityOnly(activities).map((activity) => activity.id), ["read", "grep", "todo-2"])
+})
+
 test("chat viewport reserves space above fixed input chrome", async () => {
   const { chatViewportRows } = await import("../dist/ui/ink-terminal.js")
 

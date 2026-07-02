@@ -35,7 +35,13 @@ export type TurnUsage = {
 }
 
 export type MessageEntryData = {
-  content: string | MessageContentBlock[]
+  content: string
+  images?: Array<{
+    type: "base64" | "url"
+    media_type?: string
+    data?: string
+    url?: string
+  }>
   hidden?: boolean
   model?: string
   source?: string
@@ -64,6 +70,23 @@ export type ToolResultEntryData = {
   content: string
   name: string
   toolCallId: string
+}
+
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
+
+export type TodoPriority = "high" | "medium" | "low"
+
+export type TodoItem = {
+  id: string
+  content: string
+  status: TodoStatus
+  priority?: TodoPriority
+}
+
+export type TodoStateEntryData = {
+  kind: "todo_state"
+  todos: TodoItem[]
+  updatedAt: number
 }
 
 export type CompactionEntryData = {
@@ -111,5 +134,6 @@ export type FileReadFileKey = {
 
 export type TranscriptMessage = {
   role: "user" | "assistant"
-  content: string | MessageContentBlock[]
+  content: string
+  imageCount?: number
 }

@@ -5,8 +5,10 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { promisify } from "node:util"
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
+import { retrieveContextArtifact, storeContextArtifact } from "../compression/artifacts.js"
+import { compressToolOutput } from "../compression/router.js"
 import { formatAskQuestionResult, normalizeAskQuestionRequest, type AskQuestionPrompt } from "../questions.js"
-import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot } from "../session/types.js"
+import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot, TodoItem, TodoPriority, TodoStatus } from "../session/types.js"
 import { renderSkillToolOutput } from "../skills/context.js"
 import { loadSkillByName } from "../skills/loader.js"
 import { writeManagedSkill, type SkillManageTarget } from "../skills/manage.js"
@@ -27,6 +29,7 @@ export type ToolContext = {
   signal?: AbortSignal
   skillPaths?: string[]
   taskRunner?: TaskRunner
+  todoStore?: ToolTodoStore
 }
 
 export type ToolFileReadStore = {
@@ -34,6 +37,11 @@ export type ToolFileReadStore = {
   getFileReadSnapshot(input: FileReadFileKey): FileReadSnapshot | undefined
   recordFileRead(input: FileReadRecord): void
   recordFileWrite(input: FileReadFileKey & { snapshot?: FileReadSnapshot }): void
+}
+
+export type ToolTodoStore = {
+  appendTodoState(sessionId: string, todos: TodoItem[]): void
+  getTodoState(sessionId: string): TodoItem[]
 }
 
 export type ToolCallInput = {
@@ -95,6 +103,21 @@ export const registeredTools: RegisteredTool[] = [
       },
     },
     execute: readTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "context_retrieve",
+        description: "Retrieve original full content that Furnace saved after compressing a large tool output. Use the ctx_* id from a compressed tool result; request an offset/limit for targeted ranges.",
+        parameters: objectSchema({
+          id: stringSchema("Artifact id, for example ctx_0123abcd..."),
+          offset: numberSchema("Optional 1-based line offset. Defaults to 1."),
+          limit: numberSchema("Optional number of lines to return. Defaults to 500 to avoid flooding context."),
+        }, ["id"]),
+      },
+    },
+    execute: contextRetrieveTool,
   },
   {
     definition: {
@@ -294,6 +317,45 @@ export const registeredTools: RegisteredTool[] = [
     definition: {
       type: "function",
       function: {
+        name: "todoread",
+        description: "Read the current session todo list. Use before resuming complex multi-step work when the current todo state is unclear.",
+        parameters: objectSchema({}),
+      },
+    },
+    execute: todoReadTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "todowrite",
+        description: [
+          "Create and maintain a structured task list for the current coding session. Tracks progress, organizes multi-step work, and surfaces status to the user.",
+          "",
+          "Use proactively when the task requires 3+ distinct steps, the work is non-trivial, the user provides multiple tasks, or the user explicitly asks for a todo list.",
+          "Skip for single straightforward tasks, purely informational requests, or when tracking adds no organizational value.",
+          "",
+          "Rules: keep exactly one in_progress item while work remains; update status in real time; mark completed only after the work and required verification are actually done; preserve user-provided commands verbatim; keep items specific and actionable.",
+        ].join("\n"),
+        parameters: objectSchema({
+          todos: arraySchema(
+            objectSchema({
+              id: stringSchema("Unique stable identifier for the todo item."),
+              content: stringSchema("Brief, specific task description."),
+              status: enumSchema(["pending", "in_progress", "completed", "cancelled"], "Current status."),
+              priority: enumSchema(["high", "medium", "low"], "Optional priority level."),
+            }, ["id", "content", "status"]),
+            "The full updated todo list, in priority/order of execution.",
+          ),
+        }, ["todos"]),
+      },
+    },
+    execute: todoWriteTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
         name: "websearch",
         description: "Search the web for current information using an Exa or Parallel MCP-style provider. Returns model-optimized text and bounds large responses.",
         parameters: objectSchema({
@@ -362,6 +424,22 @@ async function readTool(args: unknown, context: ToolContext): Promise<string> {
   const selected = typeof limit === "number" ? lines.slice(start, start + Math.max(0, limit)) : lines.slice(start)
   recordFileRead(context, file, snapshot, rangeKey, offset, limit)
   return truncate(selected.map((line, index) => `${start + index + 1}|${line}`).join("\n"), maxReadChars)
+}
+
+async function contextRetrieveTool(args: unknown, context: ToolContext): Promise<string> {
+  const id = requiredString(args, "id")
+  const offset = optionalNumber(args, "offset")
+  const limit = optionalNumber(args, "limit") ?? 500
+  const artifact = await retrieveContextArtifact({ cwd: context.cwd, id, offset, limit })
+  const range = artifact.lineCount > 0 ? `lines ${artifact.startLine}-${artifact.endLine} of ${artifact.totalLines}` : `no lines selected from ${artifact.totalLines} total lines`
+  return [
+    `Context artifact ${artifact.id}`,
+    `Path: ${artifact.relativePath}`,
+    `Size: ${artifact.bytes.toLocaleString()} bytes`,
+    `Returned: ${range}`,
+    "",
+    artifact.content,
+  ].join("\n")
 }
 
 async function lsTool(args: unknown, context: ToolContext): Promise<string> {
@@ -553,6 +631,18 @@ async function taskStatusTool(_args: unknown, context: ToolContext): Promise<str
     .join("\n")
 }
 
+async function todoReadTool(_args: unknown, context: ToolContext): Promise<string> {
+  if (!context.todoStore || !context.sessionId) return "Todo state is unavailable in this mode."
+  return formatTodoToolResult(context.todoStore.getTodoState(context.sessionId))
+}
+
+async function todoWriteTool(args: unknown, context: ToolContext): Promise<string> {
+  if (!context.todoStore || !context.sessionId) return "Todo state is unavailable in this mode."
+  const todos = normalizeTodoItems(args)
+  context.todoStore.appendTodoState(context.sessionId, todos)
+  return formatTodoToolResult(todos)
+}
+
 async function websearchTool(args: unknown, context: ToolContext): Promise<string> {
   const query = requiredString(args, "query")
   const numResults = clamp(optionalNumber(args, "numResults") || 8, 1, 20)
@@ -622,6 +712,44 @@ function formatTaskRunResult(result: TaskRunResult): string {
     lines.push("The subagent task group is now running in the background. Do not poll or duplicate its work; Furnace will notify the parent conversation when every task in the group finishes.")
   }
   return lines.join("\n")
+}
+
+function normalizeTodoItems(args: unknown): TodoItem[] {
+  const value = getArg(args, "todos")
+  if (!Array.isArray(value)) throw new Error("todos must be an array")
+  return value.slice(0, 100).map((item, index) => normalizeTodoItem(item, index))
+}
+
+function normalizeTodoItem(item: unknown, index: number): TodoItem {
+  if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`todos[${index}] must be an object`)
+  const record = item as Record<string, unknown>
+  const id = typeof record.id === "string" ? record.id.trim().slice(0, 80) : ""
+  const content = typeof record.content === "string" ? record.content.trim().slice(0, 2_000) : ""
+  if (!id) throw new Error(`todos[${index}].id is required`)
+  if (!content) throw new Error(`todos[${index}].content is required`)
+  const status = typeof record.status === "string" ? record.status : "pending"
+  if (!isTodoStatus(status)) throw new Error(`todos[${index}].status must be pending, in_progress, completed, or cancelled`)
+  const priority = typeof record.priority === "string" && isTodoPriority(record.priority) ? record.priority : undefined
+  return priority ? { id, content, status, priority } : { id, content, status }
+}
+
+function isTodoStatus(value: string): value is TodoStatus {
+  return value === "pending" || value === "in_progress" || value === "completed" || value === "cancelled"
+}
+
+function isTodoPriority(value: string): value is TodoPriority {
+  return value === "high" || value === "medium" || value === "low"
+}
+
+function formatTodoToolResult(todos: TodoItem[]): string {
+  const summary = {
+    total: todos.length,
+    pending: todos.filter((todo) => todo.status === "pending").length,
+    in_progress: todos.filter((todo) => todo.status === "in_progress").length,
+    completed: todos.filter((todo) => todo.status === "completed").length,
+    cancelled: todos.filter((todo) => todo.status === "cancelled").length,
+  }
+  return JSON.stringify({ todos, summary }, null, 2)
 }
 
 function indent(value: string): string {
@@ -1208,14 +1336,8 @@ async function boundToolOutput(value: string, context: ToolContext): Promise<str
   const lines = value.split("\n")
   if (byteLength <= maxToolOutputBytes && lines.length <= maxToolOutputLines) return value
 
-  const outputDir = resolveToolPath(context.cwd, ".furnace/tool-output")
-  await mkdir(outputDir, { recursive: true })
-  const outputPath = resolve(outputDir, `tool-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.txt`)
-  await writeFile(outputPath, value, "utf8")
-
-  const marker = `... output truncated; full content saved to ${displayPath(context.cwd, outputPath)} ...`
-  const preview = boundedPreview(value, marker, maxToolOutputLines, maxToolOutputBytes)
-  return preview
+  const artifact = await storeContextArtifact({ content: value, cwd: context.cwd, label: "tool-output" })
+  return compressToolOutput({ artifact, content: value, maxBytes: maxToolOutputBytes, maxLines: maxToolOutputLines }).content
 }
 
 function boundedPreview(value: string, marker: string, maxLines: number, maxBytes: number): string {

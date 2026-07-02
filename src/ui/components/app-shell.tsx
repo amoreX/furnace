@@ -9,9 +9,10 @@ export type AppShellProps = {
 }
 
 export type AppShellHeaderProps = {
-  contextUsage: string
+  contextUsage?: string
   cwd: string
   model: string
+  status?: string
   settings: string
   title: string
 }
@@ -33,9 +34,10 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
   )
 }
 
-function Header({ contextUsage, cwd, model, settings, title }: AppShellHeaderProps): React.ReactNode {
+function Header({ contextUsage, cwd, model, settings, status, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
   const { columns } = useWindowSize()
+  const statusText = contextUsage ? `${contextUsage} · ${settings}` : truncateEnd(`${status ?? ""} · ${settings}`, 80)
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1} width={columns}>
       <Box justifyContent="space-between">
@@ -46,9 +48,7 @@ function Header({ contextUsage, cwd, model, settings, title }: AppShellHeaderPro
       </Box>
       <Box justifyContent="space-between">
         <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
-        <Text color={theme.colors.mutedForeground}>
-          {contextUsage} · {settings}
-        </Text>
+        <Text color={theme.colors.mutedForeground}>{statusText}</Text>
       </Box>
     </Box>
   )

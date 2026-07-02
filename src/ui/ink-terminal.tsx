@@ -20,6 +20,8 @@ import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
 import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
+import { ImageAttachments } from "./components/image-attachments.js"
+import type { ImageAttachment } from "../utils/images.js"
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
@@ -56,6 +58,15 @@ export type FurnaceTerminal = {
   setTranscript(transcript: TranscriptMessage[]): void
   suspendForEditor(draft: string): Promise<string>
   setPendingImage(image: import("../clipboard-image.js").ClipboardImage | undefined): void
+  addImageAttachment(attachment: ImageAttachment): void
+  removeImageAttachment(id: string): void
+  clearImageAttachments(): void
+}
+
+export type HistoryChoice = {
+  id: string
+  title: string
+  updatedAt: number
 }
 
 export type ModelChoice = {
@@ -73,10 +84,16 @@ export type ToolActivity = {
   status: "running" | "done" | "failed"
 }
 
+export type ContextUsage = {
+  limit?: number | null
+  tokens: number
+}
+
 export type QueuedPrompt = {
   createdAt: number
   hidden?: boolean
   id: string
+  images?: ImageAttachment[]
   source?: string
   text: string
 }
@@ -140,11 +157,14 @@ type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
   chatScrollOffset: number
+  chatCanScrollUp: boolean
   inputMode: "standard" | "vim"
   contextTokens: number
   contextWindowTokens: number
+  contextUsage?: ContextUsage
   cwd: string
   focus: UiFocus
+  imageAttachments: ImageAttachment[]
   inputDraft: string
   lofiEnabled: boolean
   mode: AgentMode
@@ -216,11 +236,14 @@ class UiStore {
       approval: undefined,
       busy: false,
       chatScrollOffset: 0,
+      chatCanScrollUp: false,
       inputMode: options.inputMode || "standard",
       contextTokens: 0,
       contextWindowTokens: 0,
+      contextUsage: undefined,
       cwd: options.cwd,
       focus: "input",
+      imageAttachments: [],
       inputDraft: "",
       lofiEnabled: false,
       mode: "agent",
@@ -367,6 +390,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setModel(model, settings, displayName) {
       store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
+
     setTheme(themeName) {
       const choice = resolveTheme(themeName)
       store.update({ theme: choice.theme, themeName: choice.name })
@@ -435,6 +459,21 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setPendingImage(image) {
       store.update({ pendingImage: image })
     },
+    addImageAttachment(attachment) {
+      store.update((state) => ({
+        ...state,
+        imageAttachments: [...state.imageAttachments, attachment],
+      }))
+    },
+    removeImageAttachment(id) {
+      store.update((state) => ({
+        ...state,
+        imageAttachments: state.imageAttachments.filter((img) => img.id !== id),
+      }))
+    },
+    clearImageAttachments() {
+      store.update({ imageAttachments: [] })
+    },
   }
 }
 
@@ -492,6 +531,43 @@ function FurnaceApp({
         .reverse(),
     [state.transcript],
   )
+  
+  
+  const handleClipboardImage = React.useCallback(async () => {
+    try {
+      const { saveClipboardImage } = await import("../utils/clipboard.js")
+      const { createImageAttachment } = await import("../utils/images.js")
+      
+      // Save to .furnace/images/clip_TIMESTAMP_counter.png
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+      const counter = state.imageAttachments.length + 1
+      const furnaceDir = state.cwd + "/.furnace/images"
+      const imagePath = `${furnaceDir}/clip_${timestamp}_${counter}.png`
+      
+      console.log('[CLIPBOARD] Attempting to save clipboard image to:', imagePath)
+      const success = await saveClipboardImage(imagePath)
+      console.log('[CLIPBOARD] Save result:', success)
+      if (success) {
+        const { loadImageAsBase64 } = await import("../utils/images.js")
+        const result = await loadImageAsBase64(imagePath)
+        console.log('[CLIPBOARD] Load result:', result.success ? 'success' : result.error)
+        if (result.success) {
+          const attachment = createImageAttachment(result.source, {
+            displayName: `Image ${counter}`,
+            size: result.size,
+          })
+          console.log('[CLIPBOARD] Created attachment:', attachment.id, attachment.displayName)
+          store.update((s) => ({
+            ...s,
+            imageAttachments: [...s.imageAttachments, attachment],
+          }))
+          console.log('[CLIPBOARD] Updated store with attachment')
+        }
+      }
+    } catch (error) {
+      console.error('[CLIPBOARD] Error:', error)
+    }
+  }, [state.cwd, state.imageAttachments.length, store])
 
   const { columns, rows } = useWindowSize()
 
@@ -552,6 +628,8 @@ function FurnaceApp({
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
             onImagePaste={() => store.onImagePaste?.()}
+            imageAttachments={state.imageAttachments ?? []}
+            onClipboardImage={() => { void handleClipboardImage() }}
             onInterrupt={() => store.onInterrupt?.()}
             pendingImageAttachment={Boolean(state.pendingImage)}
             onClearAttachment={() => store.update({ pendingImage: undefined })}
@@ -623,10 +701,24 @@ function hintItemsForState(state: UiState): string[] {
 function promptPlaceholder(state: UiState): string {
   if (state.approval) return "Resolve the permission prompt..."
   if (state.planAction) return "Choose a plan action, or press esc to keep planning..."
+  if (isCompacting(state)) return state.thinkingMessage || "Compacting context..."
   if (state.question) return state.busy ? "Type a follow-up to queue, or press up to answer..." : "Type a reply, or press up to answer..."
   if (state.busy) return "Furnace is working; submit to queue..."
   return state.mode === "plan" ? "Describe what to plan, or type /agent" : "Ask Furnace or type /plan"
 }
+
+function inputDisabled(state: UiState): boolean {
+  return state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question) || isCompacting(state)
+}
+
+function inputStatus(state: UiState): string | undefined {
+  return isCompacting(state) ? "disabled" : undefined
+}
+
+function isCompacting(state: UiState): boolean {
+  return state.thinking && /compact/i.test(state.thinkingMessage)
+}
+
 
 function slashCommandAutocompleteVisible(state: UiState): boolean {
   return state.screen.kind === "chat" && state.focus === "input" && !state.approval && slashCommandAutocompleteRows(state) > 0
@@ -1218,11 +1310,12 @@ type TranscriptLineData = {
   kind: "blank" | "code" | "code-fence" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
+  plain?: boolean
   role?: TranscriptMessage["role"]
   status?: ToolActivity["status"]
   tableTone?: "header" | "divider" | "row"
   text: string
-  toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary"
+  toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary" | "todoCurrent" | "todoDone" | "todoPending"
 }
 
 const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
@@ -1231,12 +1324,15 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
   if (line.kind === "spinner") return <Spinner label={line.text} />
   if (line.kind === "role") return <Text color={line.role === "user" ? theme.colors.primary : theme.colors.border} bold>{line.text}</Text>
   if (line.kind === "tool") {
+    if (line.toolTone === "todoCurrent") return <Text color={theme.colors.primary} bold>{line.text}</Text>
+    if (line.toolTone === "todoDone") return <Text color={theme.colors.success} strikethrough>{line.text}</Text>
+    if (line.toolTone === "todoPending") return <Text color={theme.colors.foreground}>{line.text}</Text>
     if (line.toolTone === "addition") return <Text color={theme.colors.success}>{"  "}{line.text}</Text>
     if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{"  "}{line.text}</Text>
     if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{"  "}{line.text}</Text>
-    const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.warning
+    const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.primary
     if (line.toolTone === "summary") {
-      return <Text color={color} bold>{"  "}{line.text}</Text>
+      return <Text><Text color={theme.colors.mutedForeground}>{"  │ "}</Text><Text color={color} bold>{line.text}</Text></Text>
     }
     return <Text color={color}>{"  "}{line.text}</Text>
   }
@@ -1254,7 +1350,10 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     const color = line.planTone === "border" ? theme.colors.primary : theme.colors.mutedForeground
     return <Text color={color}>{line.planTone === "meta" ? `| ${line.text || " "}` : line.text || " "}</Text>
   }
-  if (line.role === "assistant") return <MarkdownLine text={line.text || " "} />
+  if (line.role === "assistant") {
+    if (line.plain) return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
+    return <MarkdownLine text={line.text || " "} />
+  }
   return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
 })
 
@@ -1418,14 +1517,10 @@ function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
   lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "User" : "Assistant" })
-  // Flatten multimodal content for display
-  const displayContent: string = Array.isArray(message.content)
-    ? message.content.map((b) => {
-        if (b.type === "text") return b.text
-        if (b.type === "image_url") return "[image]"
-        return ""
-      }).join("\n").trim()
-    : (message.content as string)
+  if (message.role === "user" && message.imageCount && message.imageCount > 0) {
+    lines.push({ kind: "content", messageIndex, role: message.role, text: `📎 ${message.imageCount} image${message.imageCount === 1 ? "" : "s"} attached` })
+  }
+  const displayContent: string = typeof message.content === "string" ? message.content : ""
   if (message.role === "assistant") {
     const planPreview = splitSavedPlanPreview(displayContent)
     if (planPreview) {
@@ -1486,7 +1581,7 @@ function appendWrappedContentLines(lines: TranscriptLineData[], content: string,
       lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
     }
     index += 1
-  }
+}
 }
 
 function isTableRow(line: string): boolean {
@@ -1538,8 +1633,7 @@ function formatMarkdownTable(block: string[], width: number): Array<{ text: stri
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
-  lines.push({ kind: "role", messageIndex, role: "assistant", text: "Assistant" })
-  for (const activity of toolActivities) {
+  for (const activity of latestTodoActivityOnly(toolActivities)) {
     for (const rendered of formatToolActivity(activity, width)) {
       lines.push({
         kind: "tool",
@@ -1552,6 +1646,19 @@ function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivi
     }
   }
   lines.push({ kind: "blank", messageIndex, role: "assistant", text: "" })
+}
+
+export function latestTodoActivityOnly(toolActivities: ToolActivity[]): ToolActivity[] {
+  let latestTodoIndex = -1
+  for (const [index, activity] of toolActivities.entries()) {
+    if (isTodoActivity(activity)) latestTodoIndex = index
+  }
+  if (latestTodoIndex < 0) return toolActivities
+  return toolActivities.filter((activity, index) => !isTodoActivity(activity) || index === latestTodoIndex)
+}
+
+function isTodoActivity(activity: ToolActivity): boolean {
+  return activity.name === "todoread" || activity.name === "todowrite"
 }
 
 type SavedPlanPreview = {
@@ -1712,6 +1819,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (taskLines.length > 0) return taskLines
   }
 
+  if (activity.name === "todowrite" || activity.name === "todoread") {
+    const todoLines = formatTodoActivity(activity, width)
+    if (todoLines.length > 0) return todoLines
+  }
+
   if (activity.name === "skill_manage") {
     const skillLines = formatSkillManageActivity(activity, width)
     if (skillLines.length > 0) return skillLines
@@ -1841,6 +1953,25 @@ function formatTaskActivity(activity: ToolActivity, width: number): RenderedTool
   if (tasks.length > 4) lines.push({ text: `  ... ${tasks.length - 4} more subagent${tasks.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
   const firstResult = activity.result?.split(/\r?\n/).find((line) => /^Task group /.test(line))
   if (firstResult) lines.push({ text: `  ${truncateEnd(firstResult, Math.max(24, width - 4))}`, tone: backgrounded ? "context" : "addition" })
+  return lines
+}
+
+function formatTodoActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const todos = parseTodoItems(activity)
+  if (todos.length === 0 && activity.name === "todowrite") return []
+  const activeCount = todos.filter((todo) => normalizeTodoStatus(todo.status) === "in_progress").length
+  const doneCount = todos.filter((todo) => normalizeTodoStatus(todo.status) === "completed").length
+  const verb = activity.name === "todoread" ? "Read" : activity.status === "running" ? "Updating" : "Updated"
+  const header = todos.length === 0 ? `${statusSymbol(activity.status)} ${verb} todos • none` : `${statusSymbol(activity.status)} ${verb} todos • Working on ${activeCount} to-do${activeCount === 1 ? "" : "s"} • ${doneCount} done`
+  const lines: RenderedToolLine[] = [{ text: header, tone: "summary" }]
+  for (const todo of todos.slice(0, 12)) {
+    const status = normalizeTodoStatus(todo.status)
+    lines.push({
+      text: `  ${todoStatusSymbol(status)} ${truncateEnd(todo.content, Math.max(24, width - 6))}`,
+      tone: todoTone(status),
+    })
+  }
+  if (todos.length > 12) lines.push({ text: `  ... ${todos.length - 12} more todo${todos.length - 12 === 1 ? "" : "s"}`, tone: "meta" })
   return lines
 }
 
@@ -2027,6 +2158,56 @@ function parseTaskArgs(args: string): Array<{ description?: string; prompt: stri
   } catch {
     return []
   }
+}
+
+type TodoPreviewItem = {
+  content: string
+  status: string
+}
+
+function parseTodoItems(activity: ToolActivity): TodoPreviewItem[] {
+  const fromArgs = parseTodoItemsFromJson(activity.args)
+  if (fromArgs.length > 0) return fromArgs
+  return parseTodoItemsFromJson(activity.result || "")
+}
+
+function parseTodoItemsFromJson(source: string): TodoPreviewItem[] {
+  try {
+    const parsed = JSON.parse(source) as unknown
+    const todos = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>).todos : undefined
+    if (!Array.isArray(todos)) return []
+    return todos.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return []
+      const record = item as Record<string, unknown>
+      const content = typeof record.content === "string" ? record.content : typeof record.title === "string" ? record.title : ""
+      const status = typeof record.status === "string" ? record.status : "pending"
+      return content ? [{ content, status }] : []
+    })
+  } catch {
+    return []
+  }
+}
+
+function normalizeTodoStatus(status: string): "cancelled" | "completed" | "in_progress" | "pending" {
+  const normalized = status.toLowerCase().replace(/[ -]/g, "_")
+  if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed"
+  if (normalized === "in_progress" || normalized === "current" || normalized === "running" || normalized === "active") return "in_progress"
+  if (normalized === "cancelled" || normalized === "canceled" || normalized === "abandoned") return "cancelled"
+  return "pending"
+}
+
+function todoStatusSymbol(status: ReturnType<typeof normalizeTodoStatus>): string {
+  if (status === "completed") return "✓"
+  if (status === "in_progress") return "◐"
+  if (status === "cancelled") return "⊘"
+  return "○"
+}
+
+function todoTone(status: ReturnType<typeof normalizeTodoStatus>): TranscriptLineData["toolTone"] {
+  if (status === "completed") return "todoDone"
+  if (status === "in_progress") return "todoCurrent"
+  if (status === "cancelled") return "meta"
+  return "todoPending"
 }
 
 function statusSymbol(status: ToolActivity["status"]): string {
@@ -2258,6 +2439,16 @@ function formatFooterSettings(settings: ModelSettings): string {
 
 function modeLabel(state: UiState): string {
   return state.mode === "plan" ? "plan" : "agent"
+}
+
+function headerStatus(state: UiState): string {
+  const mode = modeLabel(state)
+  const usage = state.contextUsage
+  if (!usage) return mode
+  const used = formatContext(usage.tokens)
+  if (!usage.limit || usage.limit <= 0) return `${mode} · ${used} used`
+  const percent = Math.min(999, Math.max(0, (usage.tokens / usage.limit) * 100))
+  return `${mode} · ${percent.toFixed(1)}% · ${used}/${formatContext(usage.limit)}`
 }
 
 function supportsReasoning(choice: ModelChoice | undefined): boolean {

@@ -2,6 +2,7 @@ import { Box, Text, useInput, usePaste, useWindowSize } from "ink"
 import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
+import type { ImageAttachment } from "../../utils/images.js"
 
 function truncateSidebar(str: string, max: number): string {
   return str.length > max ? str.slice(0, max - 1) + "…" : str
@@ -13,8 +14,10 @@ export type PromptInputProps = {
   busy?: boolean
   disabled?: boolean
   historyItems?: string[]
+  imageAttachments?: ImageAttachment[]
   inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onClipboardImage?: () => void
   onChange?: (value: string) => void
   onClearAttachment?: () => void
   onCopy?: () => void
@@ -32,6 +35,7 @@ export type PromptInputProps = {
   inputOverride?: React.ReactNode
   sidebarOverride?: React.ReactNode
   splitMode?: boolean
+  status?: string
   value?: string
 }
 
@@ -53,8 +57,10 @@ export function PromptInput({
   busy = false,
   disabled = false,
   historyItems = [],
+  imageAttachments = [],
   inputMode = "standard",
   onAutocompleteTab,
+  onClipboardImage,
   onChange,
   onClearAttachment,
   onCopy,
@@ -72,6 +78,7 @@ export function PromptInput({
   inputOverride,
   sidebarOverride,
   splitMode = false,
+  status,
   value: controlledValue,
 }: PromptInputProps): React.ReactNode {
   const theme = useTheme()
@@ -138,14 +145,10 @@ export function PromptInput({
 
   usePaste((pastedText) => {
     if (!enabled) return
-    // Detect binary/image paste: OSC 52 clipboard sequences or raw non-UTF8 data
-    // Real image data routed here will be very short (empty or garbled); the actual
-    // image is in the OS clipboard. We call onImagePaste to trigger a clipboard read.
-    // Heuristic: if the pasted string is empty or contains only control/non-printable
-    // bytes, treat it as an image paste event rather than text.
-    const isProbablyImage = pastedText.length === 0 || /^[\x00-\x08\x0e-\x1f\x7f-\x9f]+$/.test(pastedText)
-    if (isProbablyImage && onImagePaste) {
-      onImagePaste()
+    // Auto-attach clipboard images on empty paste (image-only gesture)
+    const isProbablyImage = !pastedText.trim() || /^[\x00-\x08\x0e-\x1f\x7f-\x9f]+$/.test(pastedText)
+    if (isProbablyImage && (onClipboardImage ?? onImagePaste)) {
+      onClipboardImage?.() ?? onImagePaste?.()
       return
     }
     const sanitized = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
@@ -155,6 +158,17 @@ export function PromptInput({
 
   useInput((input, key) => {
     if (!enabled) return
+    // Ctrl+V fallback for terminals without bracketed paste
+    if (key.ctrl && input === "v" && onClipboardImage) {
+      onClipboardImage()
+      return
+    }
+    // Alt/Meta+V (Escape+V) - explicit image paste fallback.
+    // Plain "v" must remain normal text input.
+    if (input === "v" && key.meta && onClipboardImage) {
+      onClipboardImage()
+      return
+    }
     const reverseTab = input === "\u001b[Z"
     if (reverseTab) {
       onModeCycle?.(-1)
@@ -736,6 +750,16 @@ export function PromptInput({
         : autocompleteActive
           ? <PromptAutocompleteMenu items={autocompleteMatches} />
           : null}
+      {imageAttachments.length > 0 ? (
+        <Box flexDirection="column" marginBottom={1}>
+          {imageAttachments.map((img, idx) => (
+            <Box key={img.id}>
+              <Text color={theme.colors.primary}>📎 </Text>
+              <Text color={theme.colors.foreground}>{img.displayName || `Image ${idx + 1}`}{img.size ? ` (${formatImageSize(img.size)})` : ""}</Text>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
       <Box
         borderStyle="round"
         borderColor={borderColor}
@@ -859,6 +883,12 @@ function HistorySearchMenu({ items, query }: { items: PromptAutocompleteMatch[];
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>
   )
+}
+
+function formatImageSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function autocompleteWindow(items: PromptAutocompleteMatch[], maxVisible = 8): { hiddenAbove: number; hiddenBelow: number; visible: PromptAutocompleteMatch[] } {

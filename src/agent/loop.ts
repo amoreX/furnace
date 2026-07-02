@@ -3,7 +3,7 @@ import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouter
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
-import { executeToolCall, toolDefinitions, type ToolFileReadStore } from "../tools/registry.js"
+import { executeToolCall, toolDefinitions, type ToolFileReadStore, type ToolTodoStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
   config: FurnaceConfig
@@ -15,6 +15,7 @@ export type RunAgentTurnInput = {
   sessionId?: string
   signal?: AbortSignal
   taskRunner?: TaskRunner
+  todoStore?: ToolTodoStore
   tools?: typeof toolDefinitions
   permissions?: SessionPermissionStore
   onBeforeModelRequest?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[]>
@@ -107,7 +108,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
         },
-        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner },
+        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner, todoStore: input.todoStore },
       )
       input.onToolResult?.(call, result.content)
       messages.push({
@@ -125,18 +126,17 @@ function abortError(): DOMException {
 }
 
 export function shouldForceWebSearch(messages: OpenRouterMessage[]): boolean {
-  const latestUserMsg = [...messages].reverse().find((message) => message.role === "user")
-  const latestUserMessage: string = latestUserMsg
-    ? (typeof latestUserMsg.content === "string"
-        ? latestUserMsg.content
-        : Array.isArray(latestUserMsg.content)
-          ? latestUserMsg.content.filter((b) => b.type === "text").map((b) => (b as { type: "text"; text: string }).text).join(" ")
-          : "")
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")
+  const contentText = latestUserMessage
+    ? typeof latestUserMessage.content === "string"
+      ? latestUserMessage.content
+      : Array.isArray(latestUserMessage.content)
+        ? latestUserMessage.content.find((block) => block.type === "text")?.text || ""
+        : ""
     : ""
-  const asksForCurrentInfo = /\b(latest|current|currently|today|right now|recent|newest|news|up[- ]?to[- ]?date|release|version)\b/i.test(latestUserMessage)
+  const asksForCurrentInfo = /\b(latest|current|currently|today|right now|recent|newest|news|up[- ]?to[- ]?date|release|version)\b/i.test(contentText)
   if (!asksForCurrentInfo) return false
 
-  // Keep local development questions on filesystem/git tools.
-  const isLocalQuestion = /\b(this repo|this repository|codebase|workspace|working tree|git status|branch|commit|diff|file|folder|directory)\b/i.test(latestUserMessage as string)
+  const isLocalQuestion = /\b(this repo|this repository|codebase|workspace|working tree|git status|branch|commit|diff|file|folder|directory)\b/i.test(contentText)
   return !isLocalQuestion
 }

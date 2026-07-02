@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
 import Database from "better-sqlite3"
+import type { ImageAttachment } from "../utils/images.js"
 import type {
   EntryRecord,
   EntryRole,
@@ -14,6 +15,8 @@ import type {
   CompactionEntryData,
   MessageEntryData,
   SessionRecord,
+  TodoItem,
+  TodoStateEntryData,
   ToolCallEntryData,
   ToolResultEntryData,
 } from "./types.js"
@@ -158,11 +161,25 @@ export class SessionStore {
   appendMessage(
     sessionId: string,
     role: "user" | "assistant",
-    content: string | import("./types.js").MessageContentBlock[],
-    modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string; usage?: import("./types.js").TurnUsage },
+    content: string,
+    modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string; images?: ImageAttachment[] },
   ): EntryRecord<MessageEntryData> {
     const options = typeof modelOrOptions === "string" ? { model: modelOrOptions } : modelOrOptions || {}
-    return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, ...options })
+    const { images: imageAttachments, ...entryOptions } = options
+    const images = imageAttachments?.map((img) => {
+      if (img.source.type === "base64") {
+        return {
+          type: "base64" as const,
+          media_type: img.source.media_type,
+          data: img.source.data,
+        }
+      }
+      return {
+        type: "url" as const,
+        url: img.source.url,
+      }
+    })
+    return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, images, ...entryOptions })
   }
 
   appendToolCall(sessionId: string, input: ToolCallEntryData): EntryRecord<ToolCallEntryData> {
@@ -175,6 +192,26 @@ export class SessionStore {
 
   appendCompaction(sessionId: string, input: CompactionEntryData): EntryRecord<CompactionEntryData> {
     return this.appendEntry<CompactionEntryData>(sessionId, "compaction", "system", input)
+  }
+
+  appendTodoState(sessionId: string, todos: TodoItem[]): EntryRecord<TodoStateEntryData> {
+    return this.appendEntry<TodoStateEntryData>(sessionId, "custom", null, {
+      kind: "todo_state",
+      todos,
+      updatedAt: Date.now(),
+    })
+  }
+
+  getTodoState(sessionId: string): TodoItem[] {
+    const path = this.getActivePath(sessionId)
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+      const entry = path[index]
+      if (entry.type !== "custom") continue
+      const data = entry.data as Partial<TodoStateEntryData>
+      if (data.kind !== "todo_state" || !Array.isArray(data.todos)) continue
+      return data.todos.map((todo) => ({ ...todo }))
+    }
+    return []
   }
 
   getFileReadReceipt(input: FileReadRangeKey): FileReadReceipt | undefined {

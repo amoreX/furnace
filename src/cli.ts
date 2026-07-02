@@ -7,6 +7,7 @@ import { resolve } from "node:path"
 import { Command } from "commander"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
+import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
@@ -29,6 +30,7 @@ import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
 import { readClipboardImage } from "./clipboard-image.js"
 import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
+import type { ImageAttachment } from "./utils/images.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -346,6 +348,10 @@ async function runInteractive(input: {
     }
     if (command.name === "/clear") {
       terminal.clearTranscriptDisplay()
+      return
+    }
+    if (command.name === "/image") {
+      await handleImageCommand(command.argument)
       return
     }
     if (isSkillCommand(command.name)) {
@@ -750,6 +756,39 @@ async function runInteractive(input: {
     applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   }
 
+  async function handleImageCommand(argument: string): Promise<void> {
+    if (!argument.trim()) {
+      showTransientStatus("Usage: /image <path|url>")
+      return
+    }
+    const { loadImageAsBase64, parseImageUrl, createImageAttachment } = await import("./utils/images.js")
+    const path = argument.trim()
+    
+    // Check if it's a URL
+    const url = parseImageUrl(path)
+    if (url) {
+      const attachment = createImageAttachment({ type: "url", url }, { displayName: path })
+      terminal.addImageAttachment(attachment)
+      showTransientStatus(`Added image from URL: ${path}`)
+      return
+    }
+    
+    // Try to load as local file
+    const result = await loadImageAsBase64(path)
+    if (!result.success) {
+      showTransientStatus(`Error loading image: ${result.error}`)
+      return
+    }
+    
+    const attachment = createImageAttachment(result.source, {
+      displayName: path,
+      size: result.size,
+    })
+    terminal.addImageAttachment(attachment)
+    const sizeStr = result.size < 1024 ? `${result.size} B` : result.size < 1024 * 1024 ? `${(result.size / 1024).toFixed(1)} KB` : `${(result.size / (1024 * 1024)).toFixed(1)} MB`
+    showTransientStatus(`Added image: ${path} (${sizeStr})`)
+  }
+
   async function compactCurrentSession(focus: string): Promise<void> {
     clearTransientStatus()
     terminal.setThinking(true, "Compacting context")
@@ -770,6 +809,7 @@ async function runInteractive(input: {
       })
       terminal.setThinking(false)
       refreshCurrentSession()
+      { const u = estimateContextUsage(); terminal.setContextUsage(u.tokens, u.window) }
       const message = result.entry
         ? `Compacted context: ${formatTokenCount(result.tokensBefore)} -> ${formatTokenCount(result.tokensAfter || result.tokensBefore)} tokens. File-read state cleared.`
         : `Compaction skipped: ${formatCompactionSkip(result.skipped)}.`
@@ -993,6 +1033,7 @@ async function runInteractive(input: {
     const tokens = estimateRequestTokens(messages, toolDefinitions)
     const settings = resolveCompactionSettings(input.config)
     return { tokens, window: settings.contextWindow }
+
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
@@ -1017,14 +1058,16 @@ async function runInteractive(input: {
     }
   }
 
-  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; source?: string; text: string }, pendingImage?: import("./clipboard-image.js").ClipboardImage): Promise<void> {
+  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; images?: ImageAttachment[]; source?: string; text: string }, pendingImage?: import("./clipboard-image.js").ClipboardImage): Promise<void> {
     const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
     const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
     const source = typeof firstPrompt === "string" ? undefined : firstPrompt.source
+    const images = typeof firstPrompt === "string" ? undefined : firstPrompt.images
     queuedPrompts.unshift({
       createdAt: Date.now(),
       hidden,
       id: `active-${Date.now()}-${queueCounter++}`,
+      images,
       source,
       text: promptText,
     })
@@ -1307,13 +1350,15 @@ async function runSingleTurn(input: {
       executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal: input.terminal }),
     })
 
-  const userContent: string | import("./session/types.js").MessageContentBlock[] = input.image
-    ? [
-        { type: "text", text: input.prompt },
-        { type: "image_url", image_url: { url: `data:${input.image.mediaType};base64,${input.image.base64}` } },
-      ]
-    : input.prompt
-  input.store.appendMessage(input.sessionId, "user", userContent, input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : undefined)
+  const clipImage = input.image
+  const userImages: ImageAttachment[] | undefined = clipImage
+    ? [{ id: `clip-${Date.now()}`, displayName: "clipboard", source: { type: "base64", media_type: clipImage.mediaType, data: clipImage.base64 } }]
+    : undefined
+  input.store.appendMessage(input.sessionId, "user", input.prompt, {
+    ...(input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : {}),
+    ...(userImages ? { images: userImages } : {}),
+  })
+
   if (input.terminal) {
     input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
@@ -1329,6 +1374,7 @@ async function runSingleTurn(input: {
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
   const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState)
   const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
+  updateTerminalContextUsage(input.terminal, input.config, messages, toolDefinitions)
 
   if (input.terminal) input.terminal.setTranscript(transcript)
   else renderAssistantStart(transcript)
@@ -1369,17 +1415,23 @@ async function runSingleTurn(input: {
     sessionId: input.sessionId,
     signal: input.signal,
     taskRunner,
-    onBeforeModelRequest: (currentMessages, activeTools) => compactMessagesBeforeRequest({
-      config: input.config,
-      currentMessages,
-      cwd: input.cwd,
-      reason: "threshold",
-      sessionId: input.sessionId,
-      store: input.store,
-      systemPrompt,
-      terminal: input.terminal,
-      tools: activeTools,
-    }),
+    todoStore: input.store,
+    onBeforeModelRequest: async (currentMessages, activeTools) => {
+      const compacted = await compactMessagesBeforeRequest({
+        config: input.config,
+        currentMessages,
+        cwd: input.cwd,
+        reason: "threshold",
+        sessionId: input.sessionId,
+        store: input.store,
+        systemPrompt,
+        terminal: input.terminal,
+        tools: activeTools,
+      })
+      const transformed = await applyHeadroomLiteRequestTransforms({ cwd: input.cwd, messages: compacted })
+      updateTerminalContextUsage(input.terminal, input.config, transformed.messages, activeTools)
+      return transformed.messages
+    },
     onContextOverflow: (_currentMessages, activeTools) => compactMessagesAfterOverflow({
       config: input.config,
       cwd: input.cwd,
@@ -1426,7 +1478,7 @@ async function runSingleTurn(input: {
     ? { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, costUsd: null as number | null }
     : undefined
 
-  input.store.appendMessage(input.sessionId, "assistant", assistantText, { model: input.config.model, usage: turnUsage })
+  input.store.appendMessage(input.sessionId, "assistant", assistantText, { model: input.config.model })
   if (input.terminal) {
     input.terminal.setThinking(false)
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
@@ -1492,17 +1544,21 @@ async function runSubagentTask(input: {
     sessionId: input.record.childSessionId,
     signal: input.signal,
     tools: childToolDefinitions,
-    onBeforeModelRequest: (currentMessages, activeTools) => compactMessagesBeforeRequest({
-      config: input.config,
-      currentMessages,
-      cwd: input.cwd,
-      reason: "threshold",
-      sessionId: input.record.childSessionId,
-      store: input.store,
-      systemPrompt,
-      terminal,
-      tools: activeTools,
-    }),
+    todoStore: input.store,
+    onBeforeModelRequest: async (currentMessages, activeTools) => {
+      const compacted = await compactMessagesBeforeRequest({
+        config: input.config,
+        currentMessages,
+        cwd: input.cwd,
+        reason: "threshold",
+        sessionId: input.record.childSessionId,
+        store: input.store,
+        systemPrompt,
+        terminal,
+        tools: activeTools,
+      })
+      return (await applyHeadroomLiteRequestTransforms({ cwd: input.cwd, messages: compacted })).messages
+    },
     onContextOverflow: (_currentMessages, activeTools) => compactMessagesAfterOverflow({
       config: input.config,
       cwd: input.cwd,
@@ -1605,6 +1661,7 @@ async function runCompaction(input: {
   })
   if (result.entry) input.terminal?.setThinking(true, "Compacted context")
   else input.terminal?.setThinking(true, "Thinking")
+
   return result
 }
 
@@ -1767,6 +1824,15 @@ function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
   return String(tokens)
+}
+
+function updateTerminalContextUsage(
+  terminal: FurnaceTerminal | undefined,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  messages: OpenRouterMessage[],
+  tools: OpenRouterToolDefinition[],
+): void {
+  terminal?.setContextUsage(estimateRequestTokens(messages, tools), config.modelSettings.contextLength ?? 200000)
 }
 
 function formatCompactionSkip(reason: string | undefined): string {

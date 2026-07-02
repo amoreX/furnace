@@ -424,6 +424,25 @@ async function runInteractive(input: {
       openPermissionsPanel()
       return
     }
+    if (command.name === "/settings" || command.name === "/prefs") {
+      const currentPrefs: import("./preferences.js").FurnacePreferences = {
+        sidebarEnabled: input.config.sidebarEnabled,
+        inputMode: input.config.inputMode,
+        notifications: input.config.notifications,
+        model: input.config.model,
+        theme: input.config.theme,
+        modelSettings: input.config.modelSettings,
+      }
+      terminal.showSettings(currentPrefs, async (updated) => {
+        Object.assign(input.config, {
+          sidebarEnabled: updated.sidebarEnabled !== false,
+          inputMode: updated.inputMode ?? input.config.inputMode,
+          notifications: updated.notifications === true,
+        })
+        await saveGlobalPreferences(updated).catch(() => {})
+      })
+      return
+    }
     if (isHistoryCommand(command.name)) {
       if (command.argument) {
         resumeSessionByToken(command.argument)
@@ -1282,6 +1301,10 @@ async function runPiped(input: {
     }
     if (command.name === "/lofi") {
       process.stdout.write("Lofi mode is only available in the interactive TUI.\n")
+      continue
+    }
+    if (command.name === "/settings" || command.name === "/prefs") {
+      process.stdout.write(`sidebar=${input.config.sidebarEnabled}\ninputMode=${input.config.inputMode}\nnotifications=${input.config.notifications}\n`)
       continue
     }
     if (isSkillCommand(command.name)) {

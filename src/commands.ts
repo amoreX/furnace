@@ -30,6 +30,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
+  { name: "/settings", aliases: ["/prefs"], description: "View and change app preferences" },
   { name: "/permissions", description: "Clear conversation approvals" },
   { name: "/status", description: "Show session status (model, mode, context, cwd)" },
   { name: "/export", description: "Export conversation to file", insertText: "/export ", usage: "/export [json] [path]" },

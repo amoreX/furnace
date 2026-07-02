@@ -49,6 +49,7 @@ export type FurnaceTerminal = {
   showPermissions(grants: PermissionGrantSummary[], onRemove: (grant: PermissionGrantSummary) => void, onClearAll: () => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
   setSidebarEnabled(enabled: boolean): void
+  showSettings(prefs: import("../preferences.js").FurnacePreferences, onSave: (prefs: import("../preferences.js").FurnacePreferences) => void): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
@@ -140,6 +141,11 @@ type UiScreen =
       onClearAll: () => void
       onRemove: (grant: PermissionGrantSummary) => void
     }
+  | {
+      kind: "settings"
+      prefs: import("../preferences.js").FurnacePreferences
+      onSave: (prefs: import("../preferences.js").FurnacePreferences) => void
+    }
 
 type PlanActionState = {
   onSelect: (action: PlanAction) => void
@@ -154,7 +160,7 @@ type QuestionPromptState = AskQuestionRequest & {
   resolve: (response: AskQuestionResponse) => void
 }
 
-type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks"
+type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks" | "settings"
 
 type UiState = {
   approval?: ApprovalPromptState
@@ -397,6 +403,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setSidebarEnabled(enabled) {
       store.update({ sidebarEnabled: enabled })
     },
+    showSettings(prefs, onSave) {
+      store.update({ screen: { kind: "settings", prefs, onSave }, focus: "settings" })
+    },
     setModel(model, settings, displayName) {
       store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
@@ -611,6 +620,7 @@ function FurnaceApp({
           </Box>
         )}
         <Box flexShrink={0} flexDirection="column">
+          {state.screen.kind === "settings" && <SettingsPanel screen={state.screen} store={store} />}
           {state.approval && <ApprovalPrompt request={state.approval} store={store} />}
           {state.tasks.length > 0 && !state.approval && <TaskPanel tasks={state.tasks} store={store} />}
           {state.planAction && !state.approval && <PlanActionPanel action={state.planAction} store={store} />}
@@ -704,6 +714,7 @@ function taskHintItems(state: UiState): string[] {
 
 function hintItemsForState(state: UiState): string[] {
   if (state.approval) return approvalHintItems()
+  if (state.focus === "settings" && state.screen.kind === "settings") return ["↑↓ select", "Enter toggle", "Esc to close"]
   if (state.focus === "plan_actions" && state.planAction) return ["Up/down to select", "Enter to select", "Esc to stay"]
   if (state.focus === "question" && state.question) return questionHintItems()
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
@@ -2389,6 +2400,83 @@ function PermissionsPanel({ screen, store }: { screen: Extract<UiScreen, { kind:
         ))
       )}
       <Text color={theme.colors.mutedForeground}>Enter to remove · c to clear all · Esc to close</Text>
+    </Box>
+  )
+}
+
+const SETTINGS_ROWS: Array<{
+  label: string
+  prefKey: keyof import("../preferences.js").FurnacePreferences
+  options: string[]
+}> = [
+  { label: "Sidebar", prefKey: "sidebarEnabled", options: ["on", "off"] },
+  { label: "Input mode", prefKey: "inputMode", options: ["standard", "vim"] },
+  { label: "Notifications", prefKey: "notifications", options: ["off", "on"] },
+]
+
+function settingDisplayValue(row: typeof SETTINGS_ROWS[number], prefs: import("../preferences.js").FurnacePreferences): string {
+  const val = prefs[row.prefKey]
+  if (row.prefKey === "sidebarEnabled") return val === false ? "off" : "on"
+  if (row.prefKey === "notifications") return val === true ? "on" : "off"
+  return (val as string) ?? row.options[0] ?? ""
+}
+
+function nextSettingValue(row: typeof SETTINGS_ROWS[number], prefs: import("../preferences.js").FurnacePreferences): import("../preferences.js").FurnacePreferences {
+  const current = settingDisplayValue(row, prefs)
+  const idx = row.options.indexOf(current)
+  const next = row.options[(idx + 1) % row.options.length] ?? row.options[0]
+  if (row.prefKey === "sidebarEnabled") return { ...prefs, sidebarEnabled: next === "on" }
+  if (row.prefKey === "notifications") return { ...prefs, notifications: next === "on" }
+  return { ...prefs, [row.prefKey]: next }
+}
+
+function SettingsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "settings" }>; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const active = store.getSnapshot().focus === "settings"
+  const [selectedIndex, setSelectedIndex] = React.useState(0)
+  const [prefs, setPrefs] = React.useState(screen.prefs)
+
+  useInput((_input, key) => {
+    if (!active) return
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" }, focus: "input" })
+      return
+    }
+    if (key.upArrow) {
+      setSelectedIndex((current) => (current <= 0 ? SETTINGS_ROWS.length - 1 : current - 1))
+      return
+    }
+    if (key.downArrow) {
+      setSelectedIndex((current) => (current >= SETTINGS_ROWS.length - 1 ? 0 : current + 1))
+      return
+    }
+    if (key.return) {
+      const row = SETTINGS_ROWS[selectedIndex]
+      if (!row) return
+      const updated = nextSettingValue(row, prefs)
+      setPrefs(updated)
+      if (row.prefKey === "sidebarEnabled") store.update({ sidebarEnabled: updated.sidebarEnabled !== false })
+      if (row.prefKey === "inputMode") store.update({ inputMode: (updated.inputMode as "standard" | "vim") ?? "standard" })
+      screen.onSave(updated)
+    }
+  }, { isActive: active })
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Settings</Text>
+        <Text color={theme.colors.mutedForeground}>↑↓ select · Enter toggle · Esc to close</Text>
+      </Box>
+      {SETTINGS_ROWS.map((row, index) => (
+        <Box key={row.prefKey} justifyContent="space-between">
+          <Text color={index === selectedIndex && active ? theme.colors.primary : theme.colors.foreground}>
+            {index === selectedIndex && active ? "› " : "  "}{row.label}
+          </Text>
+          <Text color={index === selectedIndex && active ? theme.colors.primary : theme.colors.mutedForeground}>
+            [{settingDisplayValue(row, prefs)}]
+          </Text>
+        </Box>
+      ))}
     </Box>
   )
 }

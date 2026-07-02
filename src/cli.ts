@@ -201,6 +201,10 @@ async function runInteractive(input: {
   terminal = createFurnaceTerminal({
     cwd: input.cwd,
     inputMode: input.config.inputMode,
+    sidebarEnabled: input.config.sidebarEnabled,
+    onSidebarToggle: (enabled) => {
+      void saveGlobalPreferences({ sidebarEnabled: enabled }).catch(() => {})
+    },
     model: input.config.model,
     modelSettings: input.config.modelSettings,
     onQueueEdit: (id) => {

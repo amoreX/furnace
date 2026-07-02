@@ -48,6 +48,7 @@ export type FurnaceTerminal = {
   ): void
   showPermissions(grants: PermissionGrantSummary[], onRemove: (grant: PermissionGrantSummary) => void, onClearAll: () => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
+  setSidebarEnabled(enabled: boolean): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
@@ -111,6 +112,8 @@ type CreateFurnaceTerminalOptions = {
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
   inputMode?: "standard" | "vim"
+  sidebarEnabled?: boolean
+  onSidebarToggle?: (enabled: boolean) => void
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
@@ -159,6 +162,7 @@ type UiState = {
   chatScrollOffset: number
   chatCanScrollUp: boolean
   inputMode: "standard" | "vim"
+  sidebarEnabled: boolean
   contextTokens: number
   contextWindowTokens: number
   contextUsage?: ContextUsage
@@ -212,6 +216,7 @@ class UiStore {
   readonly onCopy?: () => void
   readonly onImagePaste?: () => void
   readonly onInterrupt?: () => void
+  readonly onSidebarToggle?: (enabled: boolean) => void
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -232,12 +237,14 @@ class UiStore {
     this.onCopy = options.onCopy
     this.onImagePaste = options.onImagePaste
     this.onInterrupt = options.onInterrupt
+    this.onSidebarToggle = options.onSidebarToggle
     this.state = {
       approval: undefined,
       busy: false,
       chatScrollOffset: 0,
       chatCanScrollUp: false,
       inputMode: options.inputMode || "standard",
+      sidebarEnabled: options.sidebarEnabled !== false,
       contextTokens: 0,
       contextWindowTokens: 0,
       contextUsage: undefined,
@@ -387,6 +394,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showPlanActions(planPath, onSelect) {
       store.update((state) => ({ ...state, focus: "plan_actions", planAction: { onSelect, planPath } }))
     },
+    setSidebarEnabled(enabled) {
+      store.update({ sidebarEnabled: enabled })
+    },
     setModel(model, settings, displayName) {
       store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
@@ -525,6 +535,11 @@ function FurnaceApp({
       if (state.queuedPrompts.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "queue" ? "input" : "queue" }))
     }
+    if (key.ctrl && _input === "\\") {
+      const next = !state.sidebarEnabled
+      store.update({ sidebarEnabled: next })
+      store.onSidebarToggle?.(next)
+    }
   })
 
   const sentMessages = React.useMemo(
@@ -596,24 +611,21 @@ function FurnaceApp({
           </Box>
         )}
         <Box flexShrink={0} flexDirection="column">
+          {state.approval && <ApprovalPrompt request={state.approval} store={store} />}
+          {state.tasks.length > 0 && !state.approval && <TaskPanel tasks={state.tasks} store={store} />}
+          {state.planAction && !state.approval && <PlanActionPanel action={state.planAction} store={store} />}
+          {state.screen.kind === "modelEditor" && !state.approval && <ModelEditorPanel screen={state.screen} store={store} />}
+          {state.screen.kind === "permissions" && !state.approval && <PermissionsPanel screen={state.screen} store={store} />}
           {state.queuedPrompts.length > 0 && !state.approval && (
             <QueuedPromptPanel prompts={state.queuedPrompts} store={store} />
           )}
           <PromptInput
             active={state.focus === "input"}
             busy={state.busy}
-            disabled={state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question)}
+            disabled={state.screen.kind !== "chat" || Boolean(state.question)}
             autocompleteItems={state.slashCommandItems}
             historyItems={sentMessages}
-            inputOverride={
-              state.approval ? <ApprovalPrompt request={state.approval} store={store} /> :
-              state.question ? <QuestionPrompt request={state.question} store={store} /> :
-              state.planAction && !state.approval ? <PlanActionPanel action={state.planAction} store={store} /> :
-              state.screen.kind === "modelEditor" && !state.approval ? <ModelEditorPanel screen={state.screen} store={store} /> :
-              state.screen.kind === "permissions" && !state.approval ? <PermissionsPanel screen={state.screen} store={store} /> :
-              state.tasks.length > 0 && !state.approval ? <TaskPanel tasks={state.tasks} store={store} /> :
-              undefined
-            }
+            inputOverride={state.question ? <QuestionPrompt request={state.question} store={store} /> : undefined}
             onChange={(value) => {
               store.update({ inputDraft: value })
               store.onInputChange?.(value)
@@ -644,7 +656,7 @@ function FurnaceApp({
             placeholder={promptPlaceholder(state)}
             planMode={state.mode === "plan"}
             prefix={state.mode === "plan" ? "plan>" : ">"}
-            splitMode
+            splitMode={state.sidebarEnabled}
             value={state.inputDraft}
           />
           <AppShell.Header
@@ -701,7 +713,7 @@ function hintItemsForState(state: UiState): string[] {
   if (state.question) extras.push("Up to answer question")
   if (state.tasks.some((task) => task.status === "running")) extras.push("Up for task status")
   if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
-  return [...extras, "Tab to switch mode", ...hintItems(state.screen.kind)]
+  return [...extras, "Tab to switch mode", "Ctrl+\\ sidebar", ...hintItems(state.screen.kind)]
 }
 
 function promptPlaceholder(state: UiState): string {

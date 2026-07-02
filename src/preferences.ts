@@ -7,6 +7,7 @@ export type FurnacePreferences = {
   model?: string
   modelSettings?: ModelSettings
   notifications?: boolean
+  sidebarEnabled?: boolean
   skillPaths?: string[]
   theme?: string
 }

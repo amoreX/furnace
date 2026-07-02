@@ -199,6 +199,14 @@ export function PromptInput({
         onCopy?.()
         return
       }
+      if (input === "v") {
+        // Ctrl+V: explicit image paste from OS clipboard.
+        // usePaste handles text paste and some image paste cases, but many terminals
+        // (Terminal.app etc.) don't emit a bracketed paste event when the clipboard
+        // holds only an image. Ctrl+V provides a reliable fallback trigger.
+        onImagePaste?.()
+        return
+      }
       if (input === "k") {
         setValue((current) => current.slice(0, cursorOffset))
         return

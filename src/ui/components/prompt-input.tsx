@@ -628,19 +628,26 @@ export function PromptInput({
                     <Text>{indent}</Text>
                   )}
                   <Box flexGrow={1} overflow="hidden">
-                    {hasCursor ? (
-                      <Text color={theme.colors.foreground}>
-                        {line.text.slice(0, cursorVisCol)}
-                        <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                          {line.text[cursorVisCol] ?? " "}
+                    {hasCursor ? (() => {
+                      const isLastLine = absIdx === allVisualLines.length - 1
+                      const atEnd = line.text[cursorVisCol] === undefined
+                      const showGhost = isLastLine && ghostSuffix.length > 0
+                      // When cursor is at end-of-text and ghost text is available,
+                      // use the first ghost character as the cursor block so the
+                      // suggestion appears to start at the cursor position.
+                      const cursorChar = (atEnd && showGhost) ? ghostSuffix[0] : (line.text[cursorVisCol] ?? " ")
+                      const ghostRest = (atEnd && showGhost) ? ghostSuffix.slice(1) : ""
+                      return (
+                        <Text color={theme.colors.foreground}>
+                          {line.text.slice(0, cursorVisCol)}
+                          <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                            {cursorChar}
+                          </Text>
+                          {line.text.slice(cursorVisCol + 1)}
+                          {ghostRest ? <Text color={theme.colors.mutedForeground}>{ghostRest}</Text> : null}
                         </Text>
-                        {line.text.slice(cursorVisCol + 1)}
-                        {/* ghost-text: only on last wrapped line of the value */}
-                        {absIdx === allVisualLines.length - 1 && ghostSuffix ? (
-                          <Text color={theme.colors.mutedForeground}>{ghostSuffix}</Text>
-                        ) : null}
-                      </Text>
-                    ) : (
+                      )
+                    })() : (
                       <Text color={theme.colors.foreground}>{line.text}</Text>
                     )}
                   </Box>

@@ -752,10 +752,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
   const [customDraft, setCustomDraft] = React.useState("")
   const active = store.getSnapshot().focus === "question"
   const questions = request.questions
-  const reviewIndex = questions.length
-  const isReview = questionIndex === reviewIndex
-  const question = isReview ? undefined : questions[questionIndex]
-  const allAnswered = questions.every((item) => (answers[item.id]?.length ?? 0) > 0)
+  const question = questions[questionIndex]
   const choices = React.useMemo(() => question ? questionChoiceItems(question, answers[question.id] || []) : [], [answers, question])
 
   const resolve = React.useCallback(
@@ -766,27 +763,26 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     [request, store],
   )
 
-  const submitAnswers = React.useCallback(() => {
-    const flattened = questions.flatMap((item) => answers[item.id] || [])
-    resolve({ answers: flattened })
-  }, [answers, questions, resolve])
-
-  function moveQuestion(delta: number): void {
-    setCustomEditing(false)
-    setQuestionIndex((current) => {
-      const max = questions.length > 1 ? questions.length : questions.length - 1
-      return (current + delta + max + 1) % (max + 1)
-    })
+  // Advance to next question or auto-submit when all are answered.
+  // Takes the answer for the current question directly to avoid stale closure.
+  function advanceAfterAnswer(questionId: string, newAnswer: QuestionDraftAnswer[]): void {
+    const updatedAnswers = { ...answers, [questionId]: newAnswer }
+    const nextIndex = questionIndex + 1
+    if (nextIndex >= questions.length) {
+      const flattened = questions.flatMap((item) => updatedAnswers[item.id] || [])
+      resolve({ answers: flattened })
+    } else {
+      setAnswers(updatedAnswers)
+      setQuestionIndex(nextIndex)
+    }
   }
 
   function selectChoice(value: QuestionChoiceValue): void {
-    if (!question) {
-      if (value === "submit" && allAnswered) submitAnswers()
-      return
-    }
+    if (!question) return
     if (value === "continue") {
-      if ((answers[question.id]?.length ?? 0) === 0) return
-      advanceAfterAnswer()
+      const current = answers[question.id] || []
+      if (current.length === 0) return
+      advanceAfterAnswer(question.id, current)
       return
     }
     if (value === "custom") {
@@ -796,8 +792,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     }
     if (value === "refuse") {
       const answer = { answer: "Refuse to answer", kind: "refuse", label: "Refuse to answer", questionId: question.id } satisfies QuestionDraftAnswer
-      setQuestionAnswer(question, [answer])
-      advanceAfterAnswer()
+      advanceAfterAnswer(question.id, [answer])
       return
     }
     const index = Number(value.slice("option:".length))
@@ -815,16 +810,8 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
       })
       return
     }
-    setQuestionAnswer(question, [answer])
-    advanceAfterAnswer()
-  }
-
-  function setQuestionAnswer(question: AskQuestionItem, next: QuestionDraftAnswer[]): void {
-    setAnswers((current) => ({ ...current, [question.id]: next }))
-  }
-
-  function advanceAfterAnswer(): void {
-    setQuestionIndex((current) => Math.min(current + 1, reviewIndex))
+    // Single-select: immediately advance (auto-submits on last question)
+    advanceAfterAnswer(question.id, [answer])
   }
 
   useInput((input, key) => {
@@ -839,10 +826,13 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
         const trimmed = customDraft.trim()
         if (trimmed) {
           const answer = { answer: trimmed, kind: "custom", label: trimmed, questionId: question.id } satisfies QuestionDraftAnswer
-          setQuestionAnswer(question, question.allowMultiple ? [...(answers[question.id] || []).filter((item) => item.kind !== "custom"), answer] : [answer])
+          const existing = answers[question.id] || []
+          const merged = question.allowMultiple
+            ? [...existing.filter((item) => item.kind !== "custom"), answer]
+            : [answer]
           setCustomEditing(false)
           setCustomDraft("")
-          advanceAfterAnswer()
+          advanceAfterAnswer(question.id, merged)
         }
         return
       }
@@ -853,22 +843,10 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
       if (!key.ctrl && !key.meta && input) setCustomDraft((current) => current + input)
       return
     }
-
-    if (key.escape) {
-      // don't drop back to chat input while a question is pending — just no-op
-      return
-    }
-    if (key.leftArrow) {
-      moveQuestion(-1)
-      return
-    }
-    if (key.rightArrow) {
-      moveQuestion(1)
-      return
-    }
-    if (isReview && key.return && allAnswered) submitAnswers()
-    // Any printable character while not customEditing → jump into custom answer
-    if (!customEditing && question && !key.ctrl && !key.meta && !key.escape && input && input.trim()) {
+    // Swallow escape — focus must stay on this panel while question is pending
+    if (key.escape) return
+    // Jump into custom-answer mode on printable input
+    if (question && !key.ctrl && !key.meta && input && input.trim()) {
       setCustomEditing(true)
       setCustomDraft(input)
     }
@@ -877,33 +855,10 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
   return (
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
-        <Text color={theme.colors.primary} bold>Questions</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up to answer"}</Text>
+        <Text color={theme.colors.primary} bold>Question {questionIndex + 1}/{questions.length}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "↑↓ · Enter" : "Press up to focus"}</Text>
       </Box>
-      {questions.length > 1 ? (
-        <Text color={theme.colors.mutedForeground}>
-          {questions.map((item, index) => `${index === questionIndex ? ">" : answers[item.id]?.length ? "*" : "-"} ${item.id}`).join("  ")}
-          {`  ${isReview ? "> " : ""}Review`}
-        </Text>
-      ) : null}
-      {isReview ? (
-        <Box flexDirection="column">
-          <Text color={theme.colors.foreground}>Review answers</Text>
-          {questions.map((item) => (
-            <Text key={item.id} color={answers[item.id]?.length ? theme.colors.foreground : theme.colors.error}>
-              {item.id}: {answers[item.id]?.map((answer) => answer.label).join(", ") || "(Not answered)"}
-            </Text>
-          ))}
-          <SelectList
-            active={active && !customEditing}
-            items={[{ label: "Submit answers", value: "submit" as const, description: allAnswered ? "Send to agent" : "Answer all first", disabled: !allAnswered }]}
-            maxRows={1}
-            onBoundary={(direction) => focusAdjacentPanel(store, direction)}
-            onCancel={() => store.update({ focus: "input" })}
-            onSelect={(item) => selectChoice(item.value)}
-          />
-        </Box>
-      ) : question ? (
+      {question ? (
         <Box flexDirection="column">
           <Text color={theme.colors.foreground}>{question.prompt}{question.allowMultiple ? " (select all that apply)" : ""}</Text>
           {customEditing ? (
@@ -917,8 +872,8 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
               active={active}
               items={choices}
               maxRows={6}
-              onBoundary={(direction) => focusAdjacentPanel(store, direction)}
-              onCancel={() => store.update({ focus: "input" })}
+              onBoundary={() => {}}
+              onCancel={() => {}}
               onSelect={(item) => selectChoice(item.value)}
             />
           )}

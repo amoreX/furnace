@@ -560,17 +560,20 @@ export function PromptInput({
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
         <Box flexDirection="row" width={columns}>
-          {/* Left panel: input override (question/approval/etc) or textarea */}
+          {/* Left slot: override (question/approval/etc) renders border-free so its own
+              border is the only border; textarea wraps in its own bordered box */}
+          {inputOverride ? (
+            <Box flexGrow={1}>{inputOverride}</Box>
+          ) : (
           <Box
             flexGrow={1}
-            height={inputOverride ? undefined : INPUT_HEIGHT}
+            height={INPUT_HEIGHT}
             borderStyle="round"
-            borderColor={inputOverride ? theme.colors.warning : borderColor}
+            borderColor={borderColor}
             paddingX={1}
             flexDirection="column"
           >
-          {inputOverride ? inputOverride : null}
-          {!inputOverride && (<>
+            <>
             {/* Top indicator row — only rendered when text overflows */}
             {hasOverflow ? (
               <Text color={theme.colors.mutedForeground}>
@@ -634,8 +637,9 @@ export function PromptInput({
                 </Box>
               </Box>
             )}
-          </>)}
+          </>
           </Box>
+          )}
 
           {/* Right panel: always command sidebar */}
           <Box

@@ -3,6 +3,10 @@ import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
 
+function truncateSidebar(str: string, max: number): string {
+  return str.length > max ? str.slice(0, max - 1) + "…" : str
+}
+
 export type PromptInputProps = {
   active?: boolean
   autocompleteItems?: PromptAutocompleteItem[]
@@ -12,14 +16,19 @@ export type PromptInputProps = {
   inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onChange?: (value: string) => void
+  onClearAttachment?: () => void
   onCopy?: () => void
+  onEmptyDown?: () => void
   onEmptyUp?: () => void
+  onImagePaste?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onOpenEditor?: (draft: string) => Promise<string>
   onSubmit: (value: string) => void
   placeholder?: string
+  pendingImageAttachment?: boolean
   planMode?: boolean
   prefix?: string
+  splitMode?: boolean
   value?: string
 }
 
@@ -44,14 +53,19 @@ export function PromptInput({
   inputMode = "standard",
   onAutocompleteTab,
   onChange,
+  onClearAttachment,
   onCopy,
+  onEmptyDown,
   onEmptyUp,
+  onImagePaste,
   onModeCycle,
   onOpenEditor,
   onSubmit,
   placeholder = "Ask Furnace...",
+  pendingImageAttachment = false,
   planMode = false,
   prefix = ">",
+  splitMode = false,
   value: controlledValue,
 }: PromptInputProps): React.ReactNode {
   const theme = useTheme()
@@ -78,6 +92,10 @@ export function PromptInput({
   const autocompleteMatches = slashAutocompleteMatches(anchorValue, anchorCursorOffset, autocompleteItems, selectedAutocompleteIndex)
   const autocompleteActive = enabled && autocompleteMatches.length > 0
   const browsableActive = autocompleteActive && autocompleteMatches.some((item) => item.browsable)
+  // In split mode, sidebar shows all items when empty, filtered matches when typing
+  const sidebarItems: PromptAutocompleteItem[] = splitMode
+    ? (autocompleteActive ? autocompleteMatches : [...autocompleteItems].sort((a, b) => a.label.localeCompare(b.label)))
+    : []
 
   const setValue = React.useCallback(
     (next: string | ((current: string) => string)) => {
@@ -114,6 +132,16 @@ export function PromptInput({
 
   usePaste((pastedText) => {
     if (!enabled) return
+    // Detect binary/image paste: OSC 52 clipboard sequences or raw non-UTF8 data
+    // Real image data routed here will be very short (empty or garbled); the actual
+    // image is in the OS clipboard. We call onImagePaste to trigger a clipboard read.
+    // Heuristic: if the pasted string is empty or contains only control/non-printable
+    // bytes, treat it as an image paste event rather than text.
+    const isProbablyImage = pastedText.length === 0 || /^[\x00-\x08\x0e-\x1f\x7f-\x9f]+$/.test(pastedText)
+    if (isProbablyImage && onImagePaste) {
+      onImagePaste()
+      return
+    }
     const sanitized = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
     setValue((current) => current.slice(0, cursorOffset) + sanitized + current.slice(cursorOffset))
     setCursorOffset((current) => current + sanitized.length)
@@ -231,6 +259,23 @@ export function PromptInput({
       return
     }
 
+    // Split mode: up/down always navigates the sidebar; Tab inserts selected sidebar item
+    if (splitMode && (key.upArrow || key.downArrow)) {
+      const direction = key.upArrow ? -1 : 1
+      setSelectedAutocompleteIndex((prev) => Math.max(0, Math.min(sidebarItems.length - 1, prev + direction)))
+      return
+    }
+    if (splitMode && key.tab && sidebarItems.length > 0) {
+      const item = sidebarItems[selectedAutocompleteIndex] ?? sidebarItems[0]
+      if (item) {
+        const insertText = item.insertText ?? item.value
+        const next = value === "" ? insertText + " " : applySlashAutocomplete(value, cursorOffset, { ...item, selected: false } as PromptAutocompleteMatch)
+        setValue(next)
+        setCursorOffset(next.length)
+      }
+      return
+    }
+
     if (autocompleteActive) {
       if (key.escape) {
         setValue("")
@@ -317,6 +362,11 @@ export function PromptInput({
       return
     }
 
+    if (key.downArrow && value.length === 0 && !autocompleteActive) {
+      onEmptyDown?.()
+      return
+    }
+
     if (key.return) {
       const submitted = value.trim()
       if (!submitted) return
@@ -354,6 +404,9 @@ export function PromptInput({
       if (isVim && vimMode === "insert") {
         setVimMode("normal")
         return
+      }
+      if (pendingImageAttachment) {
+        onClearAttachment?.()
       }
       setValue("")
       setCursorOffset(0)
@@ -429,6 +482,134 @@ export function PromptInput({
         .map((item, index) => ({ label: item, value: item, selected: index === historySearchIndex }))
     : []
 
+  const borderColor = enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border
+  const prefixColor = enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground
+
+  if (splitMode) {
+    // Two-panel fixed-height layout: left input + right sidebar
+    const PANEL_HEIGHT = 9
+    const SIDEBAR_WIDTH = Math.min(48, Math.floor(columns * 0.4))
+    const leftWidth = columns - SIDEBAR_WIDTH
+
+    // Compute visible portion of the current line (keep cursor visible)
+    const prefixCols = (isVim ? 4 : 0) + prefix.length + 1  // "[N] " or "" + "> "
+    const textWidth = Math.max(10, leftWidth - prefixCols - 4)  // 4 for borders+padding
+    const currentLineText = valueLines ? (valueLines[cursorLineIdx] ?? "") : ""
+    const linesAbove = cursorLineIdx
+
+    // Clip so cursor stays visible: shift window start so cursorColIdx is in view
+    let windowStart = 0
+    if (currentLineText.length > textWidth) {
+      windowStart = Math.max(0, Math.min(cursorColIdx - Math.floor(textWidth * 0.6), currentLineText.length - textWidth))
+    }
+    const charsHidden = windowStart
+    const displayCurrentLine = currentLineText.slice(windowStart)
+    const displayCursorCol = cursorColIdx - windowStart
+
+    // Indicator line: shows hidden context
+    const parts: string[] = []
+    if (linesAbove > 0) parts.push(`${linesAbove} line${linesAbove > 1 ? "s" : ""} above`)
+    if (charsHidden > 0) parts.push(`${charsHidden} chars`)
+    const indicatorText = parts.length > 0 ? `[${parts.join(", ")}]` : ""
+
+    // Sidebar visible window (PANEL_HEIGHT - 3 = 6 items: 2 borders + 1 header)
+    const VISIBLE_ITEMS = PANEL_HEIGHT - 3
+    const safeIndex = Math.max(0, Math.min(selectedAutocompleteIndex, sidebarItems.length - 1))
+    const windowBegin = Math.max(0, Math.min(safeIndex - Math.floor(VISIBLE_ITEMS / 2), sidebarItems.length - VISIBLE_ITEMS))
+    const visibleSidebarItems = sidebarItems.slice(windowBegin, windowBegin + VISIBLE_ITEMS)
+
+    return (
+      <>
+        {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
+        <Box flexDirection="row">
+          {/* Left panel: input */}
+          <Box
+            flexGrow={1}
+            height={PANEL_HEIGHT}
+            borderStyle="round"
+            borderColor={borderColor}
+            paddingX={1}
+            flexDirection="column"
+            justifyContent="flex-end"
+          >
+            {pendingImageAttachment ? (
+              <Text color={theme.colors.mutedForeground}>📎 image attached · Esc to remove</Text>
+            ) : null}
+            {indicatorText ? (
+              <Text color={theme.colors.mutedForeground}>{indicatorText}</Text>
+            ) : null}
+            <Box>
+              {isVim ? (
+                <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
+                  [{vimMode === "normal" ? "N" : "I"}]{" "}
+                </Text>
+              ) : null}
+              <Text color={prefixColor} bold>{prefix}{" "}</Text>
+              <Box flexGrow={1}>
+                {value ? (
+                  <Text color={theme.colors.foreground}>
+                    {displayCurrentLine.slice(0, displayCursorCol)}
+                    <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                      {displayCurrentLine[displayCursorCol] ?? " "}
+                    </Text>
+                    {displayCurrentLine.slice(displayCursorCol + 1)}
+                  </Text>
+                ) : (
+                  <Text color={theme.colors.mutedForeground}>
+                    <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                      {display[0] ?? " "}
+                    </Text>
+                    {display.slice(1)}
+                  </Text>
+                )}
+              </Box>
+            </Box>
+          </Box>
+          {/* Right panel: sidebar command menu */}
+          <Box
+            width={SIDEBAR_WIDTH}
+            height={PANEL_HEIGHT}
+            borderStyle="round"
+            borderColor={theme.colors.border}
+            paddingX={1}
+            flexDirection="column"
+            overflow="hidden"
+          >
+            <Box justifyContent="space-between">
+              <Text color={theme.colors.primary} bold>Commands</Text>
+              <Text color={theme.colors.mutedForeground}>↑↓ · tab</Text>
+            </Box>
+            {visibleSidebarItems.map((item, i) => {
+              const absIdx = windowBegin + i
+              const isSelected = absIdx === safeIndex
+              const labelWidth = Math.floor(SIDEBAR_WIDTH * 0.45)
+              const descWidth = SIDEBAR_WIDTH - labelWidth - 6
+              return (
+                <Box key={item.value}>
+                  <Text
+                    color={isSelected ? theme.colors.primary : theme.colors.foreground}
+                    bold={isSelected}
+                  >
+                    {isSelected ? "› " : "  "}
+                    {truncateSidebar(item.label, labelWidth)}
+                  </Text>
+                  {item.description ? (
+                    <Text color={theme.colors.mutedForeground}>
+                      {" "}{truncateSidebar(item.description, descWidth)}
+                    </Text>
+                  ) : null}
+                </Box>
+              )
+            })}
+            {sidebarItems.length === 0 && (
+              <Text color={theme.colors.mutedForeground}>  No matches</Text>
+            )}
+          </Box>
+        </Box>
+      </>
+    )
+  }
+
   return (
     <>
       {historySearchActive
@@ -438,11 +619,18 @@ export function PromptInput({
           : null}
       <Box
         borderStyle="round"
-        borderColor={enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border}
+        borderColor={borderColor}
         paddingX={1}
         flexDirection="column"
         width={columns}
       >
+        {pendingImageAttachment ? (
+          <Box>
+            <Text color={theme.colors.primary}>📎 </Text>
+            <Text color={theme.colors.mutedForeground}>image attached  </Text>
+            <Text color={theme.colors.mutedForeground} dimColor>press Esc to remove</Text>
+          </Box>
+        ) : null}
         {valueLines ? (
           valueLines.map((line, lineIdx) => {
             const hasCursor = cursorLineIdx === lineIdx
@@ -485,7 +673,7 @@ export function PromptInput({
                 [{vimMode === "normal" ? "N" : "I"}]{" "}
               </Text>
             ) : null}
-            <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
+            <Text color={prefixColor} bold>
               {prefix}{" "}
             </Text>
             <Box flexGrow={1}>

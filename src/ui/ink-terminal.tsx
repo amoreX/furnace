@@ -55,6 +55,7 @@ export type FurnaceTerminal = {
   setStatusNotice(content?: string): void
   setTranscript(transcript: TranscriptMessage[]): void
   suspendForEditor(draft: string): Promise<string>
+  setPendingImage(image: import("../clipboard-image.js").ClipboardImage | undefined): void
 }
 
 export type ModelChoice = {
@@ -96,9 +97,10 @@ type CreateFurnaceTerminalOptions = {
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
+  onImagePaste?: () => void
   themeName: string
   title: string
-  onSubmit: (text: string) => void
+  onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
 }
 
 type UiScreen =
@@ -136,8 +138,8 @@ type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks"
 type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
+  chatScrollOffset: number
   inputMode: "standard" | "vim"
-  chatCanScrollUp: boolean
   contextTokens: number
   contextWindowTokens: number
   cwd: string
@@ -150,6 +152,7 @@ type UiState = {
   modelSettings: ModelSettings
   planAction?: PlanActionState
   planPath?: string
+  pendingImage?: import("../clipboard-image.js").ClipboardImage
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
@@ -161,7 +164,6 @@ type UiState = {
   thinkingMessage: string
   title: string
   committedLines: TranscriptLineData[]
-  staticKey: number
   streamingContent: string
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
@@ -187,6 +189,7 @@ class UiStore {
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   readonly onOpenEditor?: (draft: string) => Promise<string>
   readonly onCopy?: () => void
+  readonly onImagePaste?: () => void
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -205,10 +208,11 @@ class UiStore {
     this.onAutocompleteTab = options.onAutocompleteTab
     this.onOpenEditor = options.onOpenEditor
     this.onCopy = options.onCopy
+    this.onImagePaste = options.onImagePaste
     this.state = {
       approval: undefined,
       busy: false,
-      chatCanScrollUp: false,
+      chatScrollOffset: 0,
       inputMode: options.inputMode || "standard",
       contextTokens: 0,
       contextWindowTokens: 0,
@@ -233,7 +237,6 @@ class UiStore {
       thinkingMessage: "Thinking",
       title: options.title,
       committedLines: [],
-      staticKey: 0,
       streamingContent: "",
       tasks: [],
       toolActivities: [],
@@ -372,7 +375,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ toolActivities: activities })
     },
     clearTranscriptDisplay() {
-      store.update((state) => ({ ...state, committedLines: [], staticKey: state.staticKey + 1 }))
+      store.update((state) => ({ ...state, committedLines: [], chatScrollOffset: 0 }))
     },
     setStreamingContent(text) {
       store.update({ streamingContent: text })
@@ -414,16 +417,29 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           if (appended.length === 0) {
             return { ...state, screen: { kind: "chat" }, transcript, streamingContent: "" }
           }
-          return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "" }
+          return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "", chatScrollOffset: 0 }
         }
         const allLines = transcript.flatMap((message, index) => messageToLines(message, index, width))
-        return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "", staticKey: state.staticKey + 1 }
+        return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "", chatScrollOffset: 0 }
       })
+    },
+    setPendingImage(image) {
+      store.update({ pendingImage: image })
     },
   }
 }
 
-function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string) => void; store: UiStore }): React.ReactNode {
+function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void; store: UiStore }): React.ReactNode {
+  const state = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  return (
+    <ThemeProvider theme={state.theme}>
+      <FurnaceApp onExit={onExit} onSubmit={onSubmit} state={state} store={store} />
+    </ThemeProvider>
+  )
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function FurnaceRoot_DELETED({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string) => void; store: UiStore }): React.ReactNode {
   const state = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   return (
     <ThemeProvider theme={state.theme}>
@@ -439,7 +455,7 @@ function FurnaceApp({
   store,
 }: {
   onExit: () => void
-  onSubmit: (text: string) => void
+  onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
   state: UiState
   store: UiStore
 }): React.ReactNode {
@@ -455,8 +471,8 @@ function FurnaceApp({
   const sentMessages = React.useMemo(
     () =>
       state.transcript
-        .filter((m) => m.role === "user" && m.content.trim())
-        .map((m) => m.content)
+        .filter((m) => m.role === "user" && (Array.isArray(m.content) ? m.content.some((b) => b.type === "text" && b.text.trim()) : (m.content as string).trim()))
+        .map((m) => (Array.isArray(m.content) ? (m.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined)?.text ?? "" : m.content as string))
         .reverse(),
     [state.transcript],
   )
@@ -465,13 +481,11 @@ function FurnaceApp({
 
   return (
     <>
-      <Static key={state.staticKey} items={state.committedLines}>
-        {(line, index) => <StaticLine key={index} line={line} />}
-      </Static>
       <Box flexDirection="column" height={rows} width={columns} overflow="hidden">
         <LiveChat
           committedLines={state.committedLines}
           flexGrow
+          scrollOffset={state.chatScrollOffset}
           thinking={state.thinking}
           thinkingMessage={state.thinkingMessage}
           streamingContent={state.streamingContent}
@@ -498,17 +512,29 @@ function FurnaceApp({
               store.onInputChange?.(value)
             }}
             onEmptyUp={() => {
-              if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
+              const hasContent = state.committedLines.length > 0 || state.toolActivities.length > 0
+              if (hasContent) {
+                store.update((s) => ({ ...s, chatScrollOffset: Math.min(s.chatScrollOffset + 5, s.committedLines.length) }))
+              } else {
+                focusPanelAboveInput(store, state)
+              }
+            }}
+            onEmptyDown={() => {
+              store.update((s) => ({ ...s, chatScrollOffset: Math.max(0, s.chatScrollOffset - 5) }))
             }}
             onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
             onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
+            onImagePaste={() => store.onImagePaste?.()}
+            pendingImageAttachment={Boolean(state.pendingImage)}
+            onClearAttachment={() => store.update({ pendingImage: undefined })}
             inputMode={state.inputMode}
-            onSubmit={onSubmit}
+            onSubmit={(text) => { store.update({ chatScrollOffset: 0 }); onSubmit(text, state.pendingImage) }}
             placeholder={promptPlaceholder(state)}
             planMode={state.mode === "plan"}
             prefix={state.mode === "plan" ? "plan>" : ">"}
+            splitMode
             value={state.inputDraft}
           />
         </Box>
@@ -1145,6 +1171,7 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 function LiveChat({
   committedLines = [],
   flexGrow: grow,
+  scrollOffset = 0,
   streamingContent,
   thinking,
   thinkingMessage,
@@ -1152,6 +1179,7 @@ function LiveChat({
 }: {
   committedLines?: TranscriptLineData[]
   flexGrow?: boolean
+  scrollOffset?: number
   streamingContent: string
   thinking: boolean
   thinkingMessage: string
@@ -1164,6 +1192,8 @@ function LiveChat({
 
   const allLines = [...committedLines, ...activeLines]
   const hasLines = allLines.length > 0
+  // Virtual scroll: slice off the most-recent scrollOffset lines so the user sees history
+  const displayLines = scrollOffset > 0 ? allLines.slice(0, Math.max(0, allLines.length - scrollOffset)) : allLines
 
   if (!hasLines) {
     return (
@@ -1204,9 +1234,12 @@ function LiveChat({
       justifyContent="flex-end"
       paddingX={1}
     >
-      {allLines.map((line, index) => (
+      {displayLines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
+      {scrollOffset > 0 && (
+        <Text color={theme.colors.mutedForeground}> ↓ {scrollOffset} more below · press ↓ on empty input to scroll</Text>
+      )}
     </Box>
   )
 }
@@ -1422,8 +1455,16 @@ function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
   lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "User" : "Assistant" })
+  // Flatten multimodal content for display
+  const displayContent: string = Array.isArray(message.content)
+    ? message.content.map((b) => {
+        if (b.type === "text") return b.text
+        if (b.type === "image_url") return "[image]"
+        return ""
+      }).join("\n").trim()
+    : (message.content as string)
   if (message.role === "assistant") {
-    const planPreview = splitSavedPlanPreview(message.content)
+    const planPreview = splitSavedPlanPreview(displayContent)
     if (planPreview) {
       appendWrappedContentLines(lines, planPreview.before.join("\n") || " ", message, messageIndex, width)
       for (const line of planPreviewBoxLines(planPreview.path, planPreview.body.join("\n"), width)) {
@@ -1433,7 +1474,7 @@ function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMess
       return
     }
   }
-  appendWrappedContentLines(lines, message.content || " ", message, messageIndex, width)
+  appendWrappedContentLines(lines, displayContent || " ", message, messageIndex, width)
   lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
 }
 
@@ -1534,6 +1575,7 @@ function formatMarkdownTable(block: string[], width: number): Array<{ text: stri
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
+  lines.push({ kind: "role", messageIndex, role: "assistant", text: "Assistant" })
   for (const activity of toolActivities) {
     for (const rendered of formatToolActivity(activity, width)) {
       lines.push({

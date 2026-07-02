@@ -498,13 +498,6 @@ function FurnaceApp({
           streamingContent={state.streamingContent}
           toolActivities={state.toolActivities}
         />
-        {!state.approval && state.screen.kind === "modelEditor" ? <ModelEditorPanel screen={state.screen} store={store} /> : null}
-        {!state.approval && state.screen.kind === "permissions" ? <PermissionsPanel screen={state.screen} store={store} /> : null}
-        {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
-        {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
-        {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
-        {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
-        {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
         {state.lofiEnabled ? <LofiCorner /> : null}
         {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
         <Box flexShrink={0} flexDirection="column">
@@ -514,6 +507,16 @@ function FurnaceApp({
             disabled={state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question)}
             autocompleteItems={state.slashCommandItems}
             historyItems={sentMessages}
+            sidebarOverride={
+              state.approval ? <ApprovalPrompt request={state.approval} store={store} /> :
+              state.question ? <QuestionPrompt request={state.question} store={store} /> :
+              state.planAction && !state.approval ? <PlanActionPanel action={state.planAction} store={store} /> :
+              state.screen.kind === "modelEditor" && !state.approval ? <ModelEditorPanel screen={state.screen} store={store} /> :
+              state.screen.kind === "permissions" && !state.approval ? <PermissionsPanel screen={state.screen} store={store} /> :
+              state.tasks.length > 0 && !state.approval ? <TaskPanel tasks={state.tasks} store={store} /> :
+              state.queuedPrompts.length > 0 && !state.approval ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> :
+              undefined
+            }
             onChange={(value) => {
               store.update({ inputDraft: value })
               store.onInputChange?.(value)

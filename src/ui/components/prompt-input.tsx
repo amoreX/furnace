@@ -28,6 +28,7 @@ export type PromptInputProps = {
   pendingImageAttachment?: boolean
   planMode?: boolean
   prefix?: string
+  sidebarOverride?: React.ReactNode
   splitMode?: boolean
   value?: string
 }
@@ -65,6 +66,7 @@ export function PromptInput({
   pendingImageAttachment = false,
   planMode = false,
   prefix = ">",
+  sidebarOverride,
   splitMode = false,
   value: controlledValue,
 }: PromptInputProps): React.ReactNode {
@@ -494,9 +496,10 @@ export function PromptInput({
   const prefixColor = enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground
 
   if (splitMode) {
-    // Two-panel fixed-height layout: left input + right sidebar
-    const PANEL_HEIGHT = 9
+    // Two-panel layout: left input (flexGrow) + right sidebar (fixed width).
+    // Height is NOT fixed: right panel sizes to its content; left panel stretches to match.
     const SIDEBAR_WIDTH = 44  // fixed sidebar width; input gets all remaining space
+    const SIDEBAR_VISIBLE_ITEMS = 6  // items shown in command list
     const leftWidth = Math.max(20, columns - SIDEBAR_WIDTH)
 
     // Compute visible portion of the current line (keep cursor visible)
@@ -520,20 +523,17 @@ export function PromptInput({
     if (charsHidden > 0) parts.push(`${charsHidden} chars`)
     const indicatorText = parts.length > 0 ? `[${parts.join(", ")}]` : ""
 
-    // Sidebar visible window (PANEL_HEIGHT - 3 = 6 items: 2 borders + 1 header)
-    const VISIBLE_ITEMS = PANEL_HEIGHT - 3
     const safeIndex = Math.max(0, Math.min(selectedAutocompleteIndex, sidebarItems.length - 1))
-    const windowBegin = Math.max(0, Math.min(safeIndex - Math.floor(VISIBLE_ITEMS / 2), sidebarItems.length - VISIBLE_ITEMS))
-    const visibleSidebarItems = sidebarItems.slice(windowBegin, windowBegin + VISIBLE_ITEMS)
+    const windowBegin = Math.max(0, Math.min(safeIndex - Math.floor(SIDEBAR_VISIBLE_ITEMS / 2), sidebarItems.length - SIDEBAR_VISIBLE_ITEMS))
+    const visibleSidebarItems = sidebarItems.slice(windowBegin, windowBegin + SIDEBAR_VISIBLE_ITEMS)
 
     return (
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
         <Box flexDirection="row" width={columns}>
-          {/* Left panel: input */}
+          {/* Left panel: input — no fixed height; stretches to match right panel */}
           <Box
             flexGrow={1}
-            height={PANEL_HEIGHT}
             borderStyle="round"
             borderColor={borderColor}
             paddingX={1}
@@ -573,44 +573,46 @@ export function PromptInput({
               </Box>
             </Box>
           </Box>
-          {/* Right panel: sidebar command menu */}
+          {/* Right panel: override (approval / question / settings) or default command sidebar */}
           <Box
             width={SIDEBAR_WIDTH}
-            height={PANEL_HEIGHT}
             borderStyle="round"
-            borderColor={theme.colors.border}
+            borderColor={sidebarOverride ? theme.colors.warning : theme.colors.border}
             paddingX={1}
             flexDirection="column"
-            overflow="hidden"
           >
-            <Box justifyContent="space-between">
-              <Text color={theme.colors.primary} bold>Commands</Text>
-              <Text color={theme.colors.mutedForeground}>↑↓ · tab</Text>
-            </Box>
-            {visibleSidebarItems.map((item, i) => {
-              const absIdx = windowBegin + i
-              const isSelected = absIdx === safeIndex
-              const labelWidth = Math.floor(SIDEBAR_WIDTH * 0.45)
-              const descWidth = SIDEBAR_WIDTH - labelWidth - 6
-              return (
-                <Box key={item.value}>
-                  <Text
-                    color={isSelected ? theme.colors.primary : theme.colors.foreground}
-                    bold={isSelected}
-                  >
-                    {isSelected ? "› " : "  "}
-                    {truncateSidebar(item.label, labelWidth)}
-                  </Text>
-                  {item.description ? (
-                    <Text color={theme.colors.mutedForeground}>
-                      {" "}{truncateSidebar(item.description, descWidth)}
-                    </Text>
-                  ) : null}
+            {sidebarOverride ?? (
+              <>
+                <Box justifyContent="space-between">
+                  <Text color={theme.colors.primary} bold>Commands</Text>
+                  <Text color={theme.colors.mutedForeground}>↑↓ · tab</Text>
                 </Box>
-              )
-            })}
-            {sidebarItems.length === 0 && (
-              <Text color={theme.colors.mutedForeground}>  No matches</Text>
+                {visibleSidebarItems.map((item, i) => {
+                  const absIdx = windowBegin + i
+                  const isSelected = absIdx === safeIndex
+                  const labelWidth = Math.floor(SIDEBAR_WIDTH * 0.45)
+                  const descWidth = SIDEBAR_WIDTH - labelWidth - 6
+                  return (
+                    <Box key={item.value}>
+                      <Text
+                        color={isSelected ? theme.colors.primary : theme.colors.foreground}
+                        bold={isSelected}
+                      >
+                        {isSelected ? "› " : "  "}
+                        {truncateSidebar(item.label, labelWidth)}
+                      </Text>
+                      {item.description ? (
+                        <Text color={theme.colors.mutedForeground}>
+                          {" "}{truncateSidebar(item.description, descWidth)}
+                        </Text>
+                      ) : null}
+                    </Box>
+                  )
+                })}
+                {sidebarItems.length === 0 && (
+                  <Text color={theme.colors.mutedForeground}>  No matches</Text>
+                )}
+              </>
             )}
           </Box>
         </Box>

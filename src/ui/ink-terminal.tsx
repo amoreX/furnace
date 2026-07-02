@@ -82,6 +82,7 @@ export type ToolActivity = {
   args: string
   id: string
   name: string
+  narrationBefore?: string
   result?: string
   status: "running" | "done" | "failed"
 }
@@ -1382,9 +1383,9 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{"  "}{line.text}</Text>
     const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.primary
     if (line.toolTone === "summary") {
-      return <Text><Text color={theme.colors.mutedForeground}>{"  │ "}</Text><Text color={color} bold>{line.text}</Text></Text>
+      return <Text color={color} bold>{line.text}</Text>
     }
-    return <Text color={color}>{"  "}{line.text}</Text>
+    return <Text color={color}>{line.text}</Text>
   }
   if (line.kind === "code-fence") {
     return <Text color={theme.colors.mutedForeground}>{line.codeFenceOpen ? `┌─${line.text ? ` ${line.text} ` : "─"}` : "└─"}</Text>
@@ -1548,20 +1549,30 @@ function toolActivitiesToLines(toolActivities: ToolActivity[], messageIndex: num
 }
 
 function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string, thinking: boolean, thinkingMessage: string, width: number): TranscriptLineData[] {
+  const hasAny = toolActivities.length > 0 || !!streamingContent || thinking
+  if (!hasAny) return []
+
   const lines: TranscriptLineData[] = []
-  if (toolActivities.length > 0) {
-    appendToolLines(lines, toolActivities, 0, width)
+  lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
+
+  for (const activity of latestTodoActivityOnly(toolActivities)) {
+    if (activity.narrationBefore) {
+      appendWrappedContentLines(lines, activity.narrationBefore, { role: "assistant", content: activity.narrationBefore }, 0, width)
+    }
+    for (const rendered of formatToolActivity(activity, width)) {
+      lines.push({ kind: "tool", messageIndex: 0, role: "assistant", status: activity.status, text: rendered.text, toolTone: rendered.tone })
+    }
   }
+
   if (streamingContent && !thinking) {
-    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
     appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, 0, width)
-    lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   }
+
   if (thinking) {
-    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
     lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: `${thinkingMessage} [Esc to stop]` })
-    lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   }
+
+  lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   return lines
 }
 

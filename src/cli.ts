@@ -1469,6 +1469,7 @@ async function runSingleTurn(input: {
       tools: activeTools,
     }),
     onToolStart: (call) => {
+      const narrationBefore = streamingText
       streamingText = ""
       terminal?.setStreamingContent("")
       const fileSnapshot = captureFileSnapshot(call.name, call.arguments, input.cwd)
@@ -1478,7 +1479,7 @@ async function runSingleTurn(input: {
         name: call.name,
         toolCallId: call.id,
       })
-      toolActivities.push({ args: call.arguments, id: call.id, name: call.name, status: "running" })
+      toolActivities.push({ args: call.arguments, id: call.id, name: call.name, narrationBefore, status: "running" })
       input.terminal?.setToolActivities([...toolActivities])
       input.terminal?.setThinking(true, `Running ${call.name}`)
     },
@@ -1490,7 +1491,7 @@ async function runSingleTurn(input: {
       })
       const index = toolActivities.findIndex((activity) => activity.id === call.id)
       const status = content.startsWith(`Tool ${call.name} failed:`) || content.startsWith(`Tool ${call.name} denied:`) ? "failed" : "done"
-      const activity = { args: call.arguments, id: call.id, name: call.name, result: content, status } satisfies ToolActivity
+      const activity = { args: call.arguments, id: call.id, name: call.name, narrationBefore: toolActivities[index]?.narrationBefore, result: content, status } satisfies ToolActivity
       if (index >= 0) toolActivities[index] = activity
       else toolActivities.push(activity)
       input.terminal?.setToolActivities([...toolActivities])

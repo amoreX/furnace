@@ -27,6 +27,7 @@ import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
+import { readClipboardImage } from "./clipboard-image.js"
 import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
@@ -209,6 +210,9 @@ async function runInteractive(input: {
     onQueueRemove: (id) => {
       removeQueuedPrompt(id)
     },
+    onInterrupt: () => {
+      activeAbortController?.abort()
+    },
     onTaskBackground: () => {
       const promoted = taskManager.promoteActiveGroup(sessionId)
       showTransientStatus(promoted ? "Subagents moved to background. Furnace will continue once the task tool returns." : "No active foreground subagents to background.")
@@ -284,10 +288,19 @@ async function runInteractive(input: {
       copyToClipboard(content)
       showTransientStatus("Copied to clipboard.")
     },
+    onImagePaste: () => {
+      const img = readClipboardImage()
+      if (!img) {
+        showTransientStatus("No image found in clipboard. Copy an image first, then paste.")
+        return
+      }
+      terminal.setPendingImage(img)
+      showTransientStatus("Image attached — send your message to include it.")
+    },
     themeName: input.config.theme,
     title: initialSession.title,
-    onSubmit: (prompt) => {
-      void handleInteractiveSubmit(prompt).catch((error) => {
+    onSubmit: (prompt, pendingImage) => {
+      void handleInteractiveSubmit(prompt, pendingImage).catch((error) => {
         running = false
         activeAbortController = undefined
         terminal.setBusy(false)
@@ -316,7 +329,7 @@ async function runInteractive(input: {
     lofi.stop()
   }
 
-  async function handleInteractiveSubmit(prompt: string): Promise<void> {
+  async function handleInteractiveSubmit(prompt: string, pendingImage?: import("./clipboard-image.js").ClipboardImage): Promise<void> {
     const command = parseSlashCommand(prompt)
 
     if (command.name === "/exit" || command.name === "/quit") {
@@ -497,7 +510,7 @@ async function runInteractive(input: {
     }
 
     clearTransientStatus()
-    await runPromptQueue(prompt)
+    await runPromptQueue(prompt, pendingImage)
   }
 
   function showTransientStatus(content: string, ttlMs = 3000): void {
@@ -810,7 +823,10 @@ async function runInteractive(input: {
     } else {
       const lines = [`# ${session.title}`, ""]
       for (const msg of transcript) {
-        lines.push(`### ${msg.role === "user" ? "You" : "Furnace"}`, "", msg.content, "")
+        const text = Array.isArray(msg.content)
+          ? msg.content.filter((b) => b.type === "text").map((b) => (b as { type: "text"; text: string }).text).join("") + (msg.content.some((b) => b.type === "image_url") ? "\n[image attachment]" : "")
+          : msg.content
+        lines.push(`### ${msg.role === "user" ? "You" : "Furnace"}`, "", text, "")
       }
       content = lines.join("\n")
     }
@@ -1001,7 +1017,7 @@ async function runInteractive(input: {
     }
   }
 
-  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; source?: string; text: string }): Promise<void> {
+  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; source?: string; text: string }, pendingImage?: import("./clipboard-image.js").ClipboardImage): Promise<void> {
     const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
     const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
     const source = typeof firstPrompt === "string" ? undefined : firstPrompt.source
@@ -1016,11 +1032,13 @@ async function runInteractive(input: {
 
     running = true
     terminal.setBusy(true)
+    // Capture and clear the pending image before the turn loop starts
+    const turnImage = pendingImage
+    terminal.setPendingImage(undefined)
     try {
-      let firstPrompt = true
+      let isFirstTurn = true
       while (queuedPrompts.length > 0) {
-        if (!firstPrompt) await terminal.waitForInputFocus()
-        firstPrompt = false
+        if (!isFirstTurn) await terminal.waitForInputFocus()
         const next = queuedPrompts.shift()
         syncQueuedPrompts()
         if (!next) continue
@@ -1032,6 +1050,7 @@ async function runInteractive(input: {
             cwd: input.cwd,
             hiddenUserMessage: next.hidden,
             hiddenUserMessageSource: next.hidden ? next.source || "hidden_prompt" : undefined,
+            image: isFirstTurn ? turnImage : undefined,
             permissions,
             prompt: next.text,
             sessionId,
@@ -1055,6 +1074,7 @@ async function runInteractive(input: {
           const usage = estimateContextUsage()
           terminal.setContextUsage(usage.tokens, usage.window)
         }
+        isFirstTurn = false
       }
     } finally {
       running = false
@@ -1245,6 +1265,7 @@ async function runSingleTurn(input: {
   cwd: string
   hiddenUserMessage?: boolean
   hiddenUserMessageSource?: string
+  image?: import("./clipboard-image.js").ClipboardImage
   outputFormat?: "text" | "json"
   permissions?: SessionPermissionStore
   prompt: string
@@ -1286,7 +1307,13 @@ async function runSingleTurn(input: {
       executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal: input.terminal }),
     })
 
-  input.store.appendMessage(input.sessionId, "user", input.prompt, input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : undefined)
+  const userContent: string | import("./session/types.js").MessageContentBlock[] = input.image
+    ? [
+        { type: "text", text: input.prompt },
+        { type: "image_url", image_url: { url: `data:${input.image.mediaType};base64,${input.image.base64}` } },
+      ]
+    : input.prompt
+  input.store.appendMessage(input.sessionId, "user", userContent, input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : undefined)
   if (input.terminal) {
     input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))

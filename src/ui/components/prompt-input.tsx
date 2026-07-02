@@ -19,6 +19,7 @@ export type PromptInputProps = {
   onClearAttachment?: () => void
   onCopy?: () => void
   onEmptyDown?: () => void
+  onInterrupt?: () => void
   onEmptyUp?: () => void
   onImagePaste?: () => void
   onModeCycle?: (direction: 1 | -1) => void
@@ -58,6 +59,7 @@ export function PromptInput({
   onClearAttachment,
   onCopy,
   onEmptyDown,
+  onInterrupt,
   onEmptyUp,
   onImagePaste,
   onModeCycle,
@@ -417,6 +419,10 @@ export function PromptInput({
         setVimMode("normal")
         return
       }
+      if (busy) {
+        onInterrupt?.()
+        return
+      }
       if (pendingImageAttachment) {
         onClearAttachment?.()
       }
@@ -560,10 +566,9 @@ export function PromptInput({
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
         <Box flexDirection="row" width={columns}>
-          {/* Left slot: override (question/approval/etc) renders border-free so its own
-              border is the only border; textarea wraps in its own bordered box */}
+          {/* When an override is active it takes the full row width (no sidebar). */}
           {inputOverride ? (
-            <Box flexGrow={1}>{inputOverride}</Box>
+            <Box width={columns} flexDirection="column">{inputOverride}</Box>
           ) : (
           <Box
             flexGrow={1}
@@ -641,8 +646,8 @@ export function PromptInput({
           </Box>
           )}
 
-          {/* Right panel: always command sidebar */}
-          <Box
+          {/* Right panel: command sidebar — hidden when override occupies full width */}
+          {!inputOverride && <Box
             width={SIDEBAR_WIDTH}
             borderStyle="round"
             borderColor={theme.colors.border}
@@ -688,7 +693,7 @@ export function PromptInput({
                 )}
               </>
             )}
-          </Box>
+          </Box>}
         </Box>
       </>
     )

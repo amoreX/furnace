@@ -98,6 +98,7 @@ type CreateFurnaceTerminalOptions = {
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
   onImagePaste?: () => void
+  onInterrupt?: () => void
   themeName: string
   title: string
   onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
@@ -190,6 +191,7 @@ class UiStore {
   readonly onOpenEditor?: (draft: string) => Promise<string>
   readonly onCopy?: () => void
   readonly onImagePaste?: () => void
+  readonly onInterrupt?: () => void
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -209,6 +211,7 @@ class UiStore {
     this.onOpenEditor = options.onOpenEditor
     this.onCopy = options.onCopy
     this.onImagePaste = options.onImagePaste
+    this.onInterrupt = options.onInterrupt
     this.state = {
       approval: undefined,
       busy: false,
@@ -500,6 +503,12 @@ function FurnaceApp({
         />
         {state.lofiEnabled ? <LofiCorner /> : null}
         {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
+        {state.busy && (
+          <Box paddingX={1} flexShrink={0}>
+            <Spinner color={theme.colors.primary} />
+            <Text color={theme.colors.mutedForeground}>{" [Esc to stop]"}</Text>
+          </Box>
+        )}
         <Box flexShrink={0} flexDirection="column">
           <PromptInput
             active={state.focus === "input"}
@@ -537,6 +546,7 @@ function FurnaceApp({
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
             onImagePaste={() => store.onImagePaste?.()}
+            onInterrupt={() => store.onInterrupt?.()}
             pendingImageAttachment={Boolean(state.pendingImage)}
             onClearAttachment={() => store.update({ pendingImage: undefined })}
             inputMode={state.inputMode}
@@ -853,13 +863,13 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
   }, { isActive: active })
 
   return (
-    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1} flexGrow={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Question {questionIndex + 1}/{questions.length}</Text>
         <Text color={theme.colors.mutedForeground}>{active ? "↑↓ · Enter" : "Press up to focus"}</Text>
       </Box>
       {question ? (
-        <Box flexDirection="column">
+        <Box flexDirection="column" flexGrow={1}>
           <Text color={theme.colors.foreground}>{question.prompt}{question.allowMultiple ? " (select all that apply)" : ""}</Text>
           {customEditing ? (
             <Box flexDirection="column">

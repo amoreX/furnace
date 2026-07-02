@@ -1156,31 +1156,44 @@ function LiveChat({
   const allLines = [...committedLines, ...activeLines]
   const hasLines = allLines.length > 0
 
+  if (!hasLines) {
+    return (
+      <Box
+        flexDirection="column"
+        flexGrow={grow ? 1 : 0}
+        overflow="hidden"
+        justifyContent="center"
+        alignItems="center"
+        paddingX={1}
+      >
+        <Box flexDirection="column" alignItems="center">
+          {columns >= furnaceBannerWidth
+            ? furnaceAsciiBanner().map((row, index) => (
+                <Text key={index} color={theme.colors.primary} bold>
+                  {row}
+                </Text>
+              ))
+            : (
+                <Text color={theme.colors.primary} bold>
+                  FURNACE
+                </Text>
+              )}
+          <Newline />
+          <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
+          <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
+        </Box>
+      </Box>
+    )
+  }
+
   return (
     <Box
       flexDirection="column"
       flexGrow={grow ? 1 : 0}
       overflow="hidden"
-      justifyContent={hasLines ? "flex-end" : "flex-start"}
+      justifyContent="flex-end"
       paddingX={1}
     >
-      <Box flexDirection="column">
-        <Newline />
-        {columns >= furnaceBannerWidth
-          ? furnaceAsciiBanner().map((row, index) => (
-              <Text key={index} color={theme.colors.primary} bold>
-                {row}
-              </Text>
-            ))
-          : (
-              <Text color={theme.colors.primary} bold>
-                FURNACE
-              </Text>
-            )}
-        <Newline />
-        <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
-        <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
-      </Box>
       {allLines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
@@ -2176,25 +2189,17 @@ function formatContext(contextLength: number | null | undefined): string {
   return String(contextLength)
 }
 
-const furnaceGlyphs: Record<string, string[]> = {
-  A: [" ███ ", "█   █", "█████", "█   █", "█   █"],
-  C: [" ████", "█    ", "█    ", "█    ", " ████"],
-  E: ["█████", "█    ", "████ ", "█    ", "█████"],
-  F: ["█████", "█    ", "███  ", "█    ", "█    "],
-  N: ["█   █", "██  █", "█ █ █", "█  ██", "█   █"],
-  R: ["████ ", "█   █", "████ ", "█  █ ", "█   █"],
-  U: ["█   █", "█   █", "█   █", "█   █", " ███ "],
-}
-
-const furnaceBannerWidth = 42
+const furnaceBannerWidth = 65
 
 function furnaceAsciiBanner(): string[] {
-  const rows = ["", "", "", "", ""]
-  for (const letter of "FURNACE") {
-    const glyph = furnaceGlyphs[letter] || ["     ", "     ", "     ", "     ", "     "]
-    for (let row = 0; row < 5; row += 1) rows[row] += `${glyph[row]} `
-  }
-  return rows.map((row) => row.trimEnd())
+  return [
+    "███████╗██╗   ██╗██████╗ ███╗   ██╗███████╗ ██████╗███████╗",
+    "██╔════╝██║   ██║██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
+    "█████╗  ██║   ██║██████╔╝██╔██╗ ██║███████╗██║     █████╗  ",
+    "██╔══╝  ██║   ██║██╔══██╗██║╚██╗██║██╔══██║██║     ██╔══╝  ",
+    "██║     ╚██████╔╝██║  ██║██║ ╚████║██║  ██║╚██████╗███████╗",
+    "╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝",
+  ]
 }
 
 function formatContextUsage(tokens: number, window: number): string {

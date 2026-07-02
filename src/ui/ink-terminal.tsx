@@ -521,6 +521,10 @@ function FurnaceApp({
       onExit()
       app.exit()
     }
+    if (key.ctrl && _input === "q") {
+      if (state.queuedPrompts.length === 0) return
+      store.update((s) => ({ ...s, focus: s.focus === "queue" ? "input" : "queue" }))
+    }
   })
 
   const sentMessages = React.useMemo(
@@ -592,6 +596,9 @@ function FurnaceApp({
           </Box>
         )}
         <Box flexShrink={0} flexDirection="column">
+          {state.queuedPrompts.length > 0 && !state.approval && (
+            <QueuedPromptPanel prompts={state.queuedPrompts} store={store} />
+          )}
           <PromptInput
             active={state.focus === "input"}
             busy={state.busy}
@@ -605,7 +612,6 @@ function FurnaceApp({
               state.screen.kind === "modelEditor" && !state.approval ? <ModelEditorPanel screen={state.screen} store={store} /> :
               state.screen.kind === "permissions" && !state.approval ? <PermissionsPanel screen={state.screen} store={store} /> :
               state.tasks.length > 0 && !state.approval ? <TaskPanel tasks={state.tasks} store={store} /> :
-              state.queuedPrompts.length > 0 && !state.approval ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> :
               undefined
             }
             onChange={(value) => {
@@ -645,7 +651,7 @@ function FurnaceApp({
             contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
             cwd={shortenHome(state.cwd)}
             model={state.modelDisplayName || state.model}
-            settings={`mode: ${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
+            settings={[`mode: ${modeLabel(state)}`, formatFooterSettings(state.modelSettings), `theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`].filter(Boolean).join(" · ")}
             title={state.title}
           />
         </Box>
@@ -675,7 +681,7 @@ function questionHintItems(): string[] {
 }
 
 function queueHintItems(): string[] {
-  return ["Up/down to select", "E to edit", "D to remove", "Enter to run next", "Esc to return to input"]
+  return ["↑↓ select prompt", "←→ choose action", "Enter confirm", "Ctrl+Q or Esc to dismiss"]
 }
 
 function taskHintItems(state: UiState): string[] {
@@ -694,7 +700,7 @@ function hintItemsForState(state: UiState): string[] {
   if (state.planAction) extras.push("Up for plan actions")
   if (state.question) extras.push("Up to answer question")
   if (state.tasks.some((task) => task.status === "running")) extras.push("Up for task status")
-  if (state.queuedPrompts.length > 0) extras.push("Up to manage queue")
+  if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
   return [...extras, "Tab to switch mode", ...hintItems(state.screen.kind)]
 }
 
@@ -1021,41 +1027,44 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
     setSelected((current) => Math.min(current, Math.max(0, prompts.length - 1)))
   }, [prompts.length])
 
+  const ACTIONS = ["Send now", "Pop", "Delete"] as const
+  type Action = typeof ACTIONS[number]
+  const [actionIdx, setActionIdx] = React.useState(0)
+
   useInput((input, key) => {
     if (!active) return
-    if (key.escape) {
+    if (key.escape || (key.ctrl && input === "q")) {
       store.update({ focus: "input" })
       return
     }
     if (key.upArrow) {
-      if (selected <= 0) {
-        focusAdjacentPanel(store, "up")
-        return
-      }
-      setSelected((current) => Math.max(0, current - 1))
+      setSelected((current) => (current <= 0 ? prompts.length - 1 : current - 1))
       return
     }
     if (key.downArrow) {
-      if (selected >= prompts.length - 1) {
-        focusAdjacentPanel(store, "down")
-        return
-      }
-      setSelected((current) => Math.min(prompts.length - 1, current + 1))
+      setSelected((current) => (current >= prompts.length - 1 ? 0 : current + 1))
+      return
+    }
+    if (key.leftArrow) {
+      setActionIdx((current) => (current <= 0 ? ACTIONS.length - 1 : current - 1))
+      return
+    }
+    if (key.rightArrow) {
+      setActionIdx((current) => (current >= ACTIONS.length - 1 ? 0 : current + 1))
       return
     }
     if (!selectedPrompt) return
-    if (input === "e") {
-      store.queueHandlers.onEdit?.(selectedPrompt.id)
-      store.update({ focus: "input", inputDraft: selectedPrompt.text })
-      return
-    }
-    if (input === "d") {
-      store.queueHandlers.onRemove?.(selectedPrompt.id)
-      return
-    }
     if (key.return) {
-      store.queueHandlers.onPromote?.(selectedPrompt.id)
-      store.update({ focus: "input" })
+      const action: Action = ACTIONS[actionIdx]
+      if (action === "Send now") {
+        store.queueHandlers.onPromote?.(selectedPrompt.id)
+        store.update({ focus: "input" })
+      } else if (action === "Pop") {
+        store.queueHandlers.onEdit?.(selectedPrompt.id)
+        store.update({ focus: "input", inputDraft: selectedPrompt.text })
+      } else if (action === "Delete") {
+        store.queueHandlers.onRemove?.(selectedPrompt.id)
+      }
     }
   }, { isActive: active })
 
@@ -1063,16 +1072,27 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Queued prompts</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up to manage"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "↑↓ select · ←→ action · Enter confirm · Esc dismiss" : "Ctrl+Q to manage"}</Text>
       </Box>
-      {queuedPromptPreviewItems(prompts, selected).map((line) => (
-        <Text key={line.id} color={line.selected ? theme.colors.primary : theme.colors.mutedForeground}>
-          {line.selected ? "› " : "  "}{line.text}
-        </Text>
-      ))}
-      <Text color={theme.colors.mutedForeground}>
-        {active ? "Up/down to select · E to edit · D to remove · Enter to run next · Esc to return to input" : "Press up from empty input to manage"}
-      </Text>
+      {prompts.map((prompt, idx) => {
+        const isSelected = idx === selected
+        return (
+          <Box key={prompt.id} justifyContent="space-between">
+            <Text color={isSelected && active ? theme.colors.primary : theme.colors.mutedForeground} wrap="truncate">
+              {isSelected && active ? "› " : "  "}{prompt.text}
+            </Text>
+            {isSelected && active && (
+              <Box gap={1} flexShrink={0}>
+                {ACTIONS.map((action, aIdx) => (
+                  <Box key={action} borderStyle="round" borderColor={aIdx === actionIdx ? theme.colors.primary : theme.colors.border} paddingX={1}>
+                    <Text color={aIdx === actionIdx ? theme.colors.primary : theme.colors.mutedForeground}>{action}</Text>
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </Box>
+        )
+      })}
     </Box>
   )
 }
@@ -2431,7 +2451,7 @@ function formatCompactUnit(value: number, unit: string): string {
 }
 
 function formatFooterSettings(settings: ModelSettings): string {
-  const window = `window: ${settings.contextLength ? formatContext(settings.contextLength) : "auto"}`
+  const window = settings.contextLength ? `window: ${formatContext(settings.contextLength)}` : undefined
   const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? `reasoning: ${settings.reasoningEffort}` : undefined
   const fast = settings.fast ? "fast" : undefined
   return [window, reasoning, fast].filter(Boolean).join(" · ")

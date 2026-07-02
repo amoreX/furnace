@@ -1846,7 +1846,7 @@ type RenderedToolLine = {
 
 export function formatToolActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
   if (activity.status === "failed") {
-    return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "error" }]
+    return [{ text: `${statusSymbol(activity.status)} ${summarizeToolCall(activity.name, activity.args, width)}`, tone: "error" }]
   }
 
   if (activity.name === "edit") {
@@ -1886,7 +1886,64 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     }
   }
 
-  return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
+  return [{ text: `${statusSymbol(activity.status)} ${summarizeToolCall(activity.name, activity.args, width)}`, tone: "summary" }]
+}
+
+function summarizeToolCall(name: string, args: string, width: number): string {
+  const label = friendlyToolName(name)
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(args) as Record<string, unknown>
+  } catch {
+    return label
+  }
+
+  const maxSubjectLen = Math.max(16, Math.min(60, width - label.length - 4))
+
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined)
+
+  let subject: string | undefined
+
+  if (name === "read" || name === "Read") {
+    subject = str(parsed["file_path"]) ?? str(parsed["path"])
+  } else if (name === "ls") {
+    subject = str(parsed["directory_path"]) ?? str(parsed["path"])
+  } else if (name === "glob") {
+    const patterns = parsed["patterns"]
+    if (Array.isArray(patterns) && patterns.length > 0) subject = patterns.slice(0, 2).join(", ")
+    else subject = str(parsed["patterns"]) ?? str(parsed["path"])
+  } else if (name === "find") {
+    subject = str(parsed["pattern"]) ?? str(parsed["path"]) ?? str(parsed["directory_path"])
+  } else if (name === "grep") {
+    const pattern = str(parsed["pattern"]) ?? str(parsed["query"])
+    if (pattern) {
+      const loc = str(parsed["path"]) ?? str(parsed["directory"])
+      subject = loc ? `${pattern} in ${loc}` : pattern
+    }
+  } else if (name === "bash" || name === "execute") {
+    subject = str(parsed["command"])
+  } else if (name === "websearch") {
+    subject = str(parsed["query"])
+  } else if (name === "webfetch" || name === "fetch_url") {
+    const url = str(parsed["url"])
+    if (url) {
+      try {
+        subject = new URL(url).hostname
+      } catch {
+        subject = url
+      }
+    }
+  } else if (name === "task_status") {
+    subject = undefined
+  } else {
+    for (const val of Object.values(parsed)) {
+      const s = str(val)
+      if (s) { subject = s; break }
+    }
+  }
+
+  if (!subject) return label
+  return `${label} ${truncateEnd(subject, maxSubjectLen)}`
 }
 
 function friendlyToolName(name: string): string {

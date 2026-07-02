@@ -28,6 +28,7 @@ export type PromptInputProps = {
   pendingImageAttachment?: boolean
   planMode?: boolean
   prefix?: string
+  inputOverride?: React.ReactNode
   sidebarOverride?: React.ReactNode
   splitMode?: boolean
   value?: string
@@ -66,6 +67,7 @@ export function PromptInput({
   pendingImageAttachment = false,
   planMode = false,
   prefix = ">",
+  inputOverride,
   sidebarOverride,
   splitMode = false,
   value: controlledValue,
@@ -558,15 +560,17 @@ export function PromptInput({
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
         <Box flexDirection="row" width={columns}>
-          {/* Left panel: full-height textarea */}
+          {/* Left panel: input override (question/approval/etc) or textarea */}
           <Box
             flexGrow={1}
-            height={INPUT_HEIGHT}
+            height={inputOverride ? undefined : INPUT_HEIGHT}
             borderStyle="round"
-            borderColor={borderColor}
+            borderColor={inputOverride ? theme.colors.warning : borderColor}
             paddingX={1}
             flexDirection="column"
           >
+          {inputOverride ? inputOverride : null}
+          {!inputOverride && (<>
             {/* Top indicator row — only rendered when text overflows */}
             {hasOverflow ? (
               <Text color={theme.colors.mutedForeground}>
@@ -630,13 +634,14 @@ export function PromptInput({
                 </Box>
               </Box>
             )}
+          </>)}
           </Box>
 
-          {/* Right panel: override or command sidebar */}
+          {/* Right panel: always command sidebar */}
           <Box
             width={SIDEBAR_WIDTH}
             borderStyle="round"
-            borderColor={sidebarOverride ? theme.colors.warning : theme.colors.border}
+            borderColor={theme.colors.border}
             paddingX={1}
             flexDirection="column"
             overflow="hidden"

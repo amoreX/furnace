@@ -507,7 +507,7 @@ function FurnaceApp({
             disabled={state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question)}
             autocompleteItems={state.slashCommandItems}
             historyItems={sentMessages}
-            sidebarOverride={
+            inputOverride={
               state.approval ? <ApprovalPrompt request={state.approval} store={store} /> :
               state.question ? <QuestionPrompt request={state.question} store={store} /> :
               state.planAction && !state.approval ? <PlanActionPanel action={state.planAction} store={store} /> :

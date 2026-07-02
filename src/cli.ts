@@ -1410,7 +1410,9 @@ async function runSingleTurn(input: {
   const terminal = input.terminal
   let streamingText = ""
   terminal?.setStreamingContent("")
-  const result = await runAgentTurn({
+  let agentResult
+  try {
+    agentResult = await runAgentTurn({
     config: input.config,
     cwd: input.cwd,
     fileReadStore: input.store,
@@ -1500,10 +1502,21 @@ async function runSingleTurn(input: {
       input.terminal?.setThinking(true, "Thinking")
     },
   })
-  const assistantText = await visibleAssistantTextForMode(input.cwd, result.content, planState)
+  } catch (error) {
+    if (isAbortError(error) && streamingText.trim()) {
+      input.store.appendMessage(input.sessionId, "assistant", streamingText, { model: input.config.model })
+      if (terminal) {
+        terminal.setThinking(false)
+        terminal.setStreamingContent("")
+        terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+      }
+    }
+    throw error
+  }
+  const assistantText = await visibleAssistantTextForMode(input.cwd, agentResult.content, planState)
 
-  const turnUsage = result.usage
-    ? { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, costUsd: null as number | null }
+  const turnUsage = agentResult.usage
+    ? { promptTokens: agentResult.usage.promptTokens, completionTokens: agentResult.usage.completionTokens, costUsd: null as number | null }
     : undefined
 
   input.store.appendMessage(input.sessionId, "assistant", assistantText, { model: input.config.model })
@@ -1515,11 +1528,11 @@ async function runSingleTurn(input: {
     }
   } else if (input.outputFormat === "json") {
     const output = {
-      content: result.content,
+      content: agentResult.content,
       model: input.config.model,
       sessionId: input.sessionId,
-      promptTokens: result.usage?.promptTokens ?? null,
-      completionTokens: result.usage?.completionTokens ?? null,
+      promptTokens: agentResult.usage?.promptTokens ?? null,
+      completionTokens: agentResult.usage?.completionTokens ?? null,
     }
     process.stdout.write(JSON.stringify(output, null, 2) + "\n")
   } else {

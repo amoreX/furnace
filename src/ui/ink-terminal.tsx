@@ -503,10 +503,10 @@ function FurnaceApp({
         />
         {state.lofiEnabled ? <LofiCorner /> : null}
         {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
-        {state.busy && (
+        {state.busy && !state.thinking && (
           <Box paddingX={1} flexShrink={0}>
             <Spinner color={theme.colors.primary} />
-            <Text color={theme.colors.mutedForeground}>{" [Esc to stop]"}</Text>
+            <Text color={theme.colors.mutedForeground}>{" Thinking [Esc to stop]"}</Text>
           </Box>
         )}
         <Box flexShrink={0} flexDirection="column">
@@ -1404,7 +1404,7 @@ function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string
   }
   if (thinking) {
     lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
-    lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: thinkingMessage })
+    lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: `${thinkingMessage} [Esc to stop]` })
     lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   }
   return lines

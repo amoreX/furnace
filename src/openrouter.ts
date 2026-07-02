@@ -12,6 +12,10 @@ export type OpenRouterMessage = {
   tool_calls?: OpenRouterToolCall[]
 }
 
+export type OpenRouterContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+
 export type OpenRouterToolDefinition = {
   type: "function"
   function: {
@@ -33,6 +37,7 @@ export type OpenRouterToolCall = {
 export type OpenRouterAssistantResponse = {
   content: string
   toolCalls: OpenRouterToolCall[]
+  usage?: OpenRouterUsage
 }
 
 export type OpenRouterToolChoice =
@@ -44,11 +49,22 @@ export type OpenRouterToolChoice =
       }
     }
 
+export type OpenRouterModelPricing = {
+  completion: number
+  prompt: number
+}
+
 export type OpenRouterModel = {
   id: string
   name: string
   contextLength: number | null
+  pricing?: OpenRouterModelPricing
   supportedParameters: string[]
+}
+
+export type OpenRouterUsage = {
+  completionTokens: number
+  promptTokens: number
 }
 
 type ModelsResponse = {
@@ -56,6 +72,7 @@ type ModelsResponse = {
     id?: string
     name?: string
     context_length?: number
+    pricing?: { prompt?: string; completion?: string }
     supported_parameters?: string[]
   }>
   error?: {
@@ -67,9 +84,22 @@ type ChatCompletionChunk = {
   choices?: Array<{
     delta?: {
       content?: string
+      tool_calls?: Array<{
+        index?: number
+        id?: string
+        type?: string
+        function?: {
+          name?: string
+          arguments?: string
+        }
+      }>
     }
     finish_reason?: string | null
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+  }
   error?: {
     message?: string
   }
@@ -185,7 +215,7 @@ export async function completeOpenRouterToolResponse(
   config: FurnaceConfig,
   messages: OpenRouterMessage[],
   tools: OpenRouterToolDefinition[],
-  options: { toolChoice?: OpenRouterToolChoice } = {},
+  options: { toolChoice?: OpenRouterToolChoice; onTextDelta?: (delta: string) => void } = {},
   signal?: AbortSignal,
 ): Promise<OpenRouterAssistantResponse> {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -203,23 +233,72 @@ export async function completeOpenRouterToolResponse(
       tools,
       tool_choice: options.toolChoice || "auto",
       ...requestOptions(config),
-      stream: false,
+      stream: true,
+      usage: { include: true },
     }),
   })
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "")
+  if (!response.ok || !response.body) {
+    const body = await Promise.resolve().then(() => (response as unknown as { text?: () => Promise<string> }).text?.()).catch(() => "") ?? ""
     throw new Error(`OpenRouter request failed (${response.status}): ${body || response.statusText}`)
   }
 
-  const parsed = (await response.json()) as ChatCompletionResponse
-  if (parsed.error?.message) throw new Error(parsed.error.message)
+  type PartialToolCall = { id: string; name: string; arguments: string }
+  const toolCallsAccum = new Map<number, PartialToolCall>()
+  let textContent = ""
+  let usageData: OpenRouterUsage | undefined
 
-  const message = parsed.choices?.[0]?.message
-  return {
-    content: message?.content?.trim() || "",
-    toolCalls: Array.isArray(message?.tool_calls) ? message.tool_calls : [],
+  const decoder = new TextDecoder()
+  let buffer = ""
+  const reader = response.body.getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() || ""
+      for (const rawLine of lines) {
+        const line = rawLine.trim()
+        if (!line || line.startsWith(":") || !line.startsWith("data:")) continue
+        const data = line.slice("data:".length).trim()
+        if (data === "[DONE]") break
+        const parsed = parseChunk(data)
+        if (parsed.error?.message) throw new Error(parsed.error.message)
+        const delta = parsed.choices?.[0]?.delta
+        if (parsed.usage?.prompt_tokens !== undefined) {
+          usageData = { promptTokens: parsed.usage.prompt_tokens ?? 0, completionTokens: parsed.usage.completion_tokens ?? 0 }
+        }
+        if (delta?.content) {
+          textContent += delta.content
+          options.onTextDelta?.(delta.content)
+        }
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const index = tc.index ?? 0
+            if (!toolCallsAccum.has(index)) {
+              toolCallsAccum.set(index, { id: tc.id || "", name: tc.function?.name || "", arguments: "" })
+            }
+            const entry = toolCallsAccum.get(index)!
+            if (tc.id && !entry.id) entry.id = tc.id
+            if (tc.function?.name) entry.name = entry.name || tc.function.name
+            entry.arguments += tc.function?.arguments || ""
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
   }
+
+  const toolCalls = [...toolCallsAccum.entries()]
+    .sort(([a], [b]) => a - b)
+    .flatMap(([, tc]) => {
+      if (!tc.id || !tc.name) return []
+      return [{ id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments } }]
+    })
+
+  return { content: textContent.trim(), toolCalls, usage: usageData }
 }
 
 export async function listOpenRouterModels(config: FurnaceConfig): Promise<OpenRouterModel[]> {
@@ -242,11 +321,19 @@ export async function listOpenRouterModels(config: FurnaceConfig): Promise<OpenR
   return (parsed.data || [])
     .flatMap((model) => {
       if (!model.id) return []
+      const pricingRaw = model.pricing
+      const pricing = pricingRaw
+        ? {
+            prompt: parseFloat(pricingRaw.prompt ?? "0") || 0,
+            completion: parseFloat(pricingRaw.completion ?? "0") || 0,
+          }
+        : undefined
       return [
         {
           id: model.id,
           name: model.name || model.id,
           contextLength: typeof model.context_length === "number" ? model.context_length : null,
+          pricing,
           supportedParameters: Array.isArray(model.supported_parameters) ? model.supported_parameters : [],
         },
       ]

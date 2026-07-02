@@ -14,7 +14,7 @@ export type ParsedPrompt = {
 export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/clear", description: "Clear the conversation display" },
   { name: "/new", description: "Start a fresh conversation" },
-  { name: "/history", aliases: ["/historu"], description: "Open saved conversations" },
+  { name: "/resume", aliases: ["/history"], description: "Open saved conversations" },
   { name: "/image", description: "Attach image to next message", insertText: "/image ", usage: "/image <path|url>" },
   { name: "/model", description: "Select model", usage: "/model" },
   { name: "/plan", description: "Switch to plan mode", insertText: "/plan ", usage: "/plan [prompt]" },
@@ -30,7 +30,15 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
-  { name: "/reset-perms", description: "Clear conversation approvals" },
+  { name: "/permissions", description: "Clear conversation approvals" },
+  { name: "/status", description: "Show session status (model, mode, context, cwd)" },
+  { name: "/export", description: "Export conversation to file", insertText: "/export ", usage: "/export [json] [path]" },
+  { name: "/diff", description: "Show diff of files changed this session" },
+  { name: "/undo", description: "Revert the most recent file-changing tool call" },
+  { name: "/copy", description: "Copy last assistant response to clipboard" },
+  { name: "/cost", description: "Show token and cost usage for this session" },
+  { name: "/editor", description: "Open $EDITOR to compose a message" },
+  { name: "/bug", description: "File a bug report", insertText: "/bug ", usage: "/bug [message]" },
   { name: "/exit", aliases: ["/quit"], description: "Exit Furnace" },
 ]
 
@@ -42,10 +50,24 @@ export function parseSlashCommand(prompt: string): ParsedPrompt {
   return { argument: rest.join(" ").trim(), name: `/${name.toLowerCase()}` }
 }
 
+const historyCommandNames = new Set(["/resume", "/history"])
+
 export function isHistoryCommand(command: string): boolean {
-  return command === "/history" || command === "/historu"
+  return historyCommandNames.has(command)
 }
 
 export function isKnownSlashCommand(command: string): boolean {
   return slashCommandNames.has(command)
+}
+
+export type AutocompleteScope = "history" | "model" | "theme"
+
+export function argumentScopeFor(value: string): AutocompleteScope | undefined {
+  if (!value.startsWith("/")) return undefined
+  const spaceIndex = value.indexOf(" ")
+  const head = (spaceIndex < 0 ? value : value.slice(0, spaceIndex)).toLowerCase()
+  if (isHistoryCommand(head)) return "history"
+  if (head === "/model") return "model"
+  if (head === "/theme") return "theme"
+  return undefined
 }

@@ -1,9 +1,13 @@
-import { Box, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Box, Newline, Static, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
-import type { PermissionDecision, PermissionRequest } from "../permissions.js"
+import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
@@ -11,11 +15,11 @@ import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import { truncateEnd } from "./utils.js"
 import { AppShell } from "./components/app-shell.js"
-import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem } from "./components/prompt-input.js"
+import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem, type PromptAutocompleteMatch } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
-import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
+import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
 import { ImageAttachments } from "./components/image-attachments.js"
 import type { ImageAttachment } from "../utils/images.js"
 
@@ -28,6 +32,7 @@ export type FurnaceTerminal = {
   stop(): void
   waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
+  setContextUsage(tokens: number, window: number): void
   setInputDraft(value: string): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
@@ -35,23 +40,24 @@ export type FurnaceTerminal = {
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
   setTasks(tasks: TaskRecord[]): void
-  showHistory(choices: HistoryChoice[], currentSessionId: string | null, onSelect: (sessionId: string) => void, onCancel: () => void): void
-  showModelPicker(
-    choices: ModelChoice[],
-    currentModel: string,
-    currentSettings: ModelSettings,
+  showModelEditor(
+    choice: ModelChoice,
+    settings: ModelSettings,
     onSelect: (model: string, settings: ModelSettings, done: boolean) => void,
     onCancel: () => void,
   ): void
-  showThemePicker(choices: ThemeChoice[], currentTheme: string, onSelect: (theme: string, done: boolean) => void, onCancel: () => void): void
+  showPermissions(grants: PermissionGrantSummary[], onRemove: (grant: PermissionGrantSummary) => void, onClearAll: () => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
-  setModel(model: string, settings: ModelSettings): void
-  setContextUsage(usage: ContextUsage): void
+  setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
   clearTranscriptDisplay(): void
+  setStreamingContent(text: string): void
+  setStatusNotice(content?: string): void
   setTranscript(transcript: TranscriptMessage[]): void
+  suspendForEditor(draft: string): Promise<string>
+  setPendingImage(image: import("../clipboard-image.js").ClipboardImage | undefined): void
   addImageAttachment(attachment: ImageAttachment): void
   removeImageAttachment(id: string): void
   clearImageAttachments(): void
@@ -103,23 +109,34 @@ type CreateFurnaceTerminalOptions = {
   onQueueRemove?: (id: string) => void
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
+  onInputChange?: (value: string) => void
+  inputMode?: "standard" | "vim"
+  onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onOpenEditor?: (draft: string) => Promise<string>
+  onCopy?: () => void
+  onImagePaste?: () => void
+  onInterrupt?: () => void
   themeName: string
   title: string
-  onSubmit: (text: string, images?: ImageAttachment[]) => void
+  onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
 }
 
 type UiScreen =
   | { kind: "chat" }
-  | { kind: "history"; choices: HistoryChoice[]; currentSessionId: string | null; onCancel: () => void; onSelect: (sessionId: string) => void }
   | {
-      kind: "model"
-      choices: ModelChoice[]
-      currentModel: string
+      kind: "modelEditor"
+      choice: ModelChoice
       onCancel: () => void
       onSelect: (model: string, settings: ModelSettings, done: boolean) => void
-      settingsByModel: Record<string, ModelSettings>
+      settings: ModelSettings
     }
-  | { kind: "theme"; choices: ThemeChoice[]; currentTheme: string; onCancel: () => void; onSelect: (theme: string, done: boolean) => void }
+  | {
+      kind: "permissions"
+      grants: PermissionGrantSummary[]
+      onCancel: () => void
+      onClearAll: () => void
+      onRemove: (grant: PermissionGrantSummary) => void
+    }
 
 type PlanActionState = {
   onSelect: (action: PlanAction) => void
@@ -139,7 +156,11 @@ type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks"
 type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
+  chatScrollOffset: number
   chatCanScrollUp: boolean
+  inputMode: "standard" | "vim"
+  contextTokens: number
+  contextWindowTokens: number
   contextUsage?: ContextUsage
   cwd: string
   focus: UiFocus
@@ -148,22 +169,26 @@ type UiState = {
   lofiEnabled: boolean
   mode: AgentMode
   model: string
+  modelDisplayName?: string
   modelSettings: ModelSettings
   planAction?: PlanActionState
   planPath?: string
+  pendingImage?: import("../clipboard-image.js").ClipboardImage
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
   slashCommandItems: PromptAutocompleteItem[]
+  statusNotice?: string
   theme: Theme
   themeName: string
   thinking: boolean
   thinkingMessage: string
   title: string
+  committedLines: TranscriptLineData[]
+  streamingContent: string
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
-  transcriptOffset: number
 }
 
 class UiStore {
@@ -181,6 +206,12 @@ class UiStore {
   readonly modeHandlers: {
     onCycle?: (direction: 1 | -1) => void
   }
+  readonly onInputChange?: (value: string) => void
+  readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  readonly onOpenEditor?: (draft: string) => Promise<string>
+  readonly onCopy?: () => void
+  readonly onImagePaste?: () => void
+  readonly onInterrupt?: () => void
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -195,10 +226,20 @@ class UiStore {
     this.modeHandlers = {
       onCycle: options.onModeCycle,
     }
+    this.onInputChange = options.onInputChange
+    this.onAutocompleteTab = options.onAutocompleteTab
+    this.onOpenEditor = options.onOpenEditor
+    this.onCopy = options.onCopy
+    this.onImagePaste = options.onImagePaste
+    this.onInterrupt = options.onInterrupt
     this.state = {
       approval: undefined,
       busy: false,
+      chatScrollOffset: 0,
       chatCanScrollUp: false,
+      inputMode: options.inputMode || "standard",
+      contextTokens: 0,
+      contextWindowTokens: 0,
       contextUsage: undefined,
       cwd: options.cwd,
       focus: "input",
@@ -207,6 +248,7 @@ class UiStore {
       lofiEnabled: false,
       mode: "agent",
       model: options.model,
+      modelDisplayName: undefined,
       modelSettings: options.modelSettings,
       planAction: undefined,
       planPath: undefined,
@@ -214,15 +256,17 @@ class UiStore {
       queuedPrompts: [],
       screen: { kind: "chat" },
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
+      statusNotice: undefined,
       theme: themeChoice.theme,
       themeName: themeChoice.name,
       thinking: false,
-      thinkingMessage: "thinking",
+      thinkingMessage: "Thinking",
       title: options.title,
+      committedLines: [],
+      streamingContent: "",
       tasks: [],
       toolActivities: [],
       transcript: [],
-      transcriptOffset: 0,
     }
   }
 
@@ -287,7 +331,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     requestQuestions(request) {
       return new Promise<AskQuestionResponse>((resolve) => {
-        store.update((state) => ({ ...state, focus: "input", question: { ...request, resolve } }))
+        store.update((state) => ({ ...state, focus: "question", question: { ...request, resolve } }))
       })
     },
     requestApproval(request) {
@@ -297,9 +341,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     run() {
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
-        alternateScreen: true,
+        alternateScreen: false,
         exitOnCtrlC: false,
-        incrementalRendering: true,
         maxFps: 30,
       })
       return instance.waitUntilExit().then(() => undefined)
@@ -311,6 +354,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setBusy(busy) {
       store.update({ busy })
     },
+    setContextUsage(tokens, window) {
+      store.update({ contextTokens: Math.max(0, tokens), contextWindowTokens: Math.max(0, window) })
+    },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
     },
@@ -320,7 +366,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setMode(mode, planPath) {
       store.update({ mode, planPath })
     },
-    setThinking(thinking, message = "thinking") {
+    setThinking(thinking, message = "Thinking") {
       store.update({ thinking, thinkingMessage: message })
     },
     setQueuedPrompts(prompts) {
@@ -332,34 +378,19 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setTasks(tasks) {
       store.update({ tasks: visibleTaskRecords(tasks) })
     },
-    showHistory(choices, currentSessionId, onSelect, onCancel) {
-      store.update({ screen: { kind: "history", choices, currentSessionId, onCancel, onSelect }, title: "History" })
+    showModelEditor(choice, settings, onSelect, onCancel) {
+      store.update({ screen: { kind: "modelEditor", choice, onCancel, onSelect, settings: normalizeModelSettings(settings, choice) } })
     },
-    showModelPicker(choices, currentModel, currentSettings, onSelect, onCancel) {
-      store.update({
-        screen: {
-          kind: "model",
-          choices,
-          currentModel,
-          onCancel,
-          onSelect,
-          settingsByModel: { [currentModel]: normalizeModelSettings(currentSettings, findModelChoice(choices, currentModel)) },
-        },
-        title: "Model",
-      })
-    },
-    showThemePicker(choices, currentTheme, onSelect, onCancel) {
-      store.update({ screen: { kind: "theme", choices, currentTheme, onCancel, onSelect }, title: "Theme" })
+    showPermissions(grants, onRemove, onClearAll, onCancel) {
+      store.update({ screen: { kind: "permissions", grants, onCancel, onClearAll, onRemove } })
     },
     showPlanActions(planPath, onSelect) {
       store.update((state) => ({ ...state, focus: "plan_actions", planAction: { onSelect, planPath } }))
     },
-    setModel(model, settings) {
-      store.update((state) => ({ ...state, model, modelSettings: settings }))
+    setModel(model, settings, displayName) {
+      store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
-    setContextUsage(usage) {
-      store.update({ contextUsage: usage })
-    },
+
     setTheme(themeName) {
       const choice = resolveTheme(themeName)
       store.update({ theme: choice.theme, themeName: choice.name })
@@ -371,10 +402,62 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ toolActivities: activities })
     },
     clearTranscriptDisplay() {
-      store.update((state) => ({ ...state, transcriptOffset: state.transcript.length }))
+      store.update((state) => ({ ...state, committedLines: [], chatScrollOffset: 0 }))
+    },
+    setStreamingContent(text) {
+      store.update({ streamingContent: text })
+    },
+    setStatusNotice(content) {
+      store.update({ statusNotice: content })
+    },
+    async suspendForEditor(draft) {
+      const editor = process.env.EDITOR || process.env.VISUAL
+      if (!editor) return draft
+      let tmpDir: string | undefined
+      let tmpFile: string | undefined
+      try {
+        tmpDir = mkdtempSync(join(tmpdir(), "furnace-editor-"))
+        tmpFile = join(tmpDir, "prompt.md")
+        writeFileSync(tmpFile, draft, "utf8")
+        if (typeof process.stdin.setRawMode === "function") process.stdin.setRawMode(false)
+        const result = spawnSync(editor, [tmpFile], { stdio: "inherit" })
+        if (typeof process.stdin.setRawMode === "function") process.stdin.setRawMode(true)
+        if (result.status !== 0) return draft
+        return readFileSync(tmpFile, "utf8")
+      } catch {
+        return draft
+      } finally {
+        try { if (tmpFile) unlinkSync(tmpFile) } catch { /* ignore */ }
+        try { if (tmpDir) { const { rmdirSync } = await import("node:fs"); rmdirSync(tmpDir) } } catch { /* ignore */ }
+      }
     },
     setTranscript(transcript) {
-      store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0 })
+      const width = Math.max(20, (process.stdout.columns || 80) - 4)
+      store.update((state) => {
+        const prev = state.transcript
+        const prefixMatches = prev.length <= transcript.length && prev.every((message, index) => transcript[index]?.role === message.role && transcript[index]?.content === message.content)
+        if (prefixMatches) {
+          const newMessages = transcript.slice(prev.length)
+          const toolLines = state.toolActivities.length > 0 ? toolActivitiesToLines(state.toolActivities, prev.length, width) : []
+          let messageLines = newMessages.flatMap((message, index) => messageToLines(message, prev.length + index, width))
+          // If tool lines already opened an "Assistant" block, drop the redundant
+          // role header at the start of the first new assistant message so the
+          // text narration flows directly under the tool activity lines.
+          if (toolLines.length > 0 && messageLines[0]?.kind === "role" && messageLines[0]?.role === "assistant") {
+            messageLines = messageLines.slice(1)
+          }
+          const appended = [...toolLines, ...messageLines]
+          if (appended.length === 0) {
+            return { ...state, screen: { kind: "chat" }, transcript, streamingContent: "" }
+          }
+          return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "", chatScrollOffset: 0 }
+        }
+        const allLines = transcript.flatMap((message, index) => messageToLines(message, index, width))
+        return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "", chatScrollOffset: 0 }
+      })
+    },
+    setPendingImage(image) {
+      store.update({ pendingImage: image })
     },
     addImageAttachment(attachment) {
       store.update((state) => ({
@@ -394,7 +477,17 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 }
 
-function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string) => void; store: UiStore }): React.ReactNode {
+function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void; store: UiStore }): React.ReactNode {
+  const state = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  return (
+    <ThemeProvider theme={state.theme}>
+      <FurnaceApp onExit={onExit} onSubmit={onSubmit} state={state} store={store} />
+    </ThemeProvider>
+  )
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function FurnaceRoot_DELETED({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string) => void; store: UiStore }): React.ReactNode {
   const state = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   return (
     <ThemeProvider theme={state.theme}>
@@ -410,11 +503,19 @@ function FurnaceApp({
   store,
 }: {
   onExit: () => void
-  onSubmit: (text: string, images?: ImageAttachment[]) => void
+  onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
   state: UiState
   store: UiStore
 }): React.ReactNode {
   const app = useApp()
+  const theme = useTheme()
+
+  React.useEffect(() => {
+    const title = state.title && state.title !== "New Chat" ? `Furnace — ${state.title}` : "Furnace"
+    process.stdout.write(`\x1b]0;${title}\x07`)
+    return () => { process.stdout.write("\x1b]0;Furnace\x07") }
+  }, [state.title])
+
   useInput((_input, key) => {
     if (key.ctrl && _input === "c") {
       onExit()
@@ -425,24 +526,12 @@ function FurnaceApp({
   const sentMessages = React.useMemo(
     () =>
       state.transcript
-        .filter((m) => m.role === "user" && m.content.trim())
-        .map((m) => m.content)
+        .filter((m) => m.role === "user" && (Array.isArray(m.content) ? m.content.some((b) => b.type === "text" && b.text.trim()) : (m.content as string).trim()))
+        .map((m) => (Array.isArray(m.content) ? (m.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined)?.text ?? "" : m.content as string))
         .reverse(),
     [state.transcript],
   )
   
-  const handleSubmit = React.useCallback(
-    (text: string) => {
-      const images = state.imageAttachments.length > 0 ? state.imageAttachments : undefined
-      console.log('[SUBMIT] Submitting with', images?.length || 0, 'images')
-      if (images) {
-        console.log('[SUBMIT] Image IDs:', images.map(i => i.id))
-      }
-      store.update({ imageAttachments: [] })
-      onSubmit(text, images)
-    },
-    [onSubmit, state.imageAttachments, store],
-  )
   
   const handleClipboardImage = React.useCallback(async () => {
     try {
@@ -480,59 +569,88 @@ function FurnaceApp({
     }
   }, [state.cwd, state.imageAttachments.length, store])
 
+  const { columns, rows } = useWindowSize()
+
   return (
-    <AppShell>
-      <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} status={headerStatus(state)} title={state.title} />
-      <AppShell.Content>
-        {state.screen.kind === "history" ? (
-          <HistoryScreen screen={state.screen} store={store} />
-        ) : state.screen.kind === "model" ? (
-          <ModelScreen model={state.model} screen={state.screen} store={store} />
-        ) : state.screen.kind === "theme" ? (
-          <ThemeScreen screen={state.screen} store={store} />
-        ) : (
-          <>
-            <ChatScreen
-              interactionActive={Boolean(state.approval) || state.focus === "plan_actions" || state.focus === "question" || state.focus === "queue" || state.focus === "tasks"}
-              onScrollStateChange={(canScrollUp) => {
-                if (store.getSnapshot().chatCanScrollUp !== canScrollUp) store.update({ chatCanScrollUp: canScrollUp })
-              }}
-              thinking={state.thinking}
-              thinkingMessage={state.thinkingMessage}
-              reservedRows={reservedInteractionRows(state)}
-              toolActivities={state.toolActivities}
-              transcript={state.transcript.slice(state.transcriptOffset)}
-            />
-            {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
-            {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
-            {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
-            {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
-            {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
-          </>
+    <>
+      <Box flexDirection="column" height={rows} width={columns} overflow="hidden">
+        <LiveChat
+          committedLines={state.committedLines}
+          flexGrow
+          scrollOffset={state.chatScrollOffset}
+          thinking={state.thinking}
+          thinkingMessage={state.thinkingMessage}
+          streamingContent={state.streamingContent}
+          toolActivities={state.toolActivities}
+        />
+        {state.lofiEnabled ? <LofiCorner /> : null}
+        {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
+        {state.busy && !state.thinking && (
+          <Box paddingX={1} flexShrink={0}>
+            <Spinner color={theme.colors.primary} />
+            <Text color={theme.colors.mutedForeground}>{" Thinking [Esc to stop]"}</Text>
+          </Box>
         )}
-      </AppShell.Content>
-      {state.lofiEnabled ? <LofiCorner /> : null}
-      <PromptInput
-        active={state.focus === "input"}
-        busy={state.busy}
-        disabled={inputDisabled(state)}
-        autocompleteItems={state.slashCommandItems}
-        historyItems={sentMessages}
-        imageAttachments={state.imageAttachments}
-        onClipboardImage={handleClipboardImage}
-        onChange={(value) => store.update({ inputDraft: value })}
-        onEmptyUp={() => {
-          if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
-        }}
-        onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
-        onSubmit={handleSubmit}
-        placeholder={promptPlaceholder(state)}
-        prefix={state.mode === "plan" ? "plan>" : ">"}
-        status={inputStatus(state)}
-        value={state.inputDraft}
-      />
-      <AppShell.Hints items={hintItemsForState(state)} />
-    </AppShell>
+        <Box flexShrink={0} flexDirection="column">
+          <PromptInput
+            active={state.focus === "input"}
+            busy={state.busy}
+            disabled={state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question)}
+            autocompleteItems={state.slashCommandItems}
+            historyItems={sentMessages}
+            inputOverride={
+              state.approval ? <ApprovalPrompt request={state.approval} store={store} /> :
+              state.question ? <QuestionPrompt request={state.question} store={store} /> :
+              state.planAction && !state.approval ? <PlanActionPanel action={state.planAction} store={store} /> :
+              state.screen.kind === "modelEditor" && !state.approval ? <ModelEditorPanel screen={state.screen} store={store} /> :
+              state.screen.kind === "permissions" && !state.approval ? <PermissionsPanel screen={state.screen} store={store} /> :
+              state.tasks.length > 0 && !state.approval ? <TaskPanel tasks={state.tasks} store={store} /> :
+              state.queuedPrompts.length > 0 && !state.approval ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> :
+              undefined
+            }
+            onChange={(value) => {
+              store.update({ inputDraft: value })
+              store.onInputChange?.(value)
+            }}
+            onEmptyUp={() => {
+              const hasContent = state.committedLines.length > 0 || state.toolActivities.length > 0
+              if (hasContent) {
+                store.update((s) => ({ ...s, chatScrollOffset: Math.min(s.chatScrollOffset + 5, s.committedLines.length) }))
+              } else {
+                focusPanelAboveInput(store, state)
+              }
+            }}
+            onEmptyDown={() => {
+              store.update((s) => ({ ...s, chatScrollOffset: Math.max(0, s.chatScrollOffset - 5) }))
+            }}
+            onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
+            onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
+            onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
+            onCopy={() => store.onCopy?.()}
+            onImagePaste={() => store.onImagePaste?.()}
+            imageAttachments={state.imageAttachments ?? []}
+            onClipboardImage={() => { void handleClipboardImage() }}
+            onInterrupt={() => store.onInterrupt?.()}
+            pendingImageAttachment={Boolean(state.pendingImage)}
+            onClearAttachment={() => store.update({ pendingImage: undefined })}
+            inputMode={state.inputMode}
+            onSubmit={(text) => { store.update({ chatScrollOffset: 0 }); onSubmit(text, state.pendingImage) }}
+            placeholder={promptPlaceholder(state)}
+            planMode={state.mode === "plan"}
+            prefix={state.mode === "plan" ? "plan>" : ">"}
+            splitMode
+            value={state.inputDraft}
+          />
+          <AppShell.Header
+            contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
+            cwd={shortenHome(state.cwd)}
+            model={state.modelDisplayName || state.model}
+            settings={`mode: ${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
+            title={state.title}
+          />
+        </Box>
+      </Box>
+    </>
   )
 
 }
@@ -549,35 +667,35 @@ function LofiCorner(): React.ReactNode {
 }
 
 function approvalHintItems(): string[] {
-  return ["up/down navigate", "enter select", "esc deny"]
+  return ["Up/down to navigate", "Enter to select", "Esc to deny"]
 }
 
 function questionHintItems(): string[] {
-  return ["left/right question", "up/down option", "enter select", "esc input"]
+  return ["Left/right to switch question", "Up/down to choose an option", "Enter to select", "Esc to return to input"]
 }
 
 function queueHintItems(): string[] {
-  return ["up/down select", "e edit", "d remove", "enter run next", "esc input"]
+  return ["Up/down to select", "E to edit", "D to remove", "Enter to run next", "Esc to return to input"]
 }
 
 function taskHintItems(state: UiState): string[] {
   const hasForeground = state.tasks.some((task) => task.status === "running")
   const hasBackground = state.tasks.some((task) => task.status === "backgrounded")
-  return ["up/down select", hasForeground ? "ctrl+b background" : hasBackground ? "working in background" : "task status", "esc input"]
+  return ["Up/down to select", hasForeground ? "Ctrl+b to background" : hasBackground ? "Working in background" : "Task status", "Esc to return to input"]
 }
 
 function hintItemsForState(state: UiState): string[] {
   if (state.approval) return approvalHintItems()
-  if (state.focus === "plan_actions" && state.planAction) return ["up/down select", "enter select", "esc stay"]
+  if (state.focus === "plan_actions" && state.planAction) return ["Up/down to select", "Enter to select", "Esc to stay"]
   if (state.focus === "question" && state.question) return questionHintItems()
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
   if (state.focus === "tasks" && state.tasks.length > 0) return taskHintItems(state)
   const extras: string[] = []
-  if (state.planAction) extras.push("up plan actions")
-  if (state.question) extras.push("up answer question")
-  if (state.tasks.some((task) => task.status === "running")) extras.push("up task status")
-  if (state.queuedPrompts.length > 0) extras.push("up manage queue")
-  return [...extras, ...hintItems(state.screen.kind)]
+  if (state.planAction) extras.push("Up for plan actions")
+  if (state.question) extras.push("Up to answer question")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("Up for task status")
+  if (state.queuedPrompts.length > 0) extras.push("Up to manage queue")
+  return [...extras, "Tab to switch mode", ...hintItems(state.screen.kind)]
 }
 
 function promptPlaceholder(state: UiState): string {
@@ -590,7 +708,7 @@ function promptPlaceholder(state: UiState): string {
 }
 
 function inputDisabled(state: UiState): boolean {
-  return state.screen.kind !== "chat" || Boolean(state.approval) || isCompacting(state)
+  return state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question) || isCompacting(state)
 }
 
 function inputStatus(state: UiState): string | undefined {
@@ -601,16 +719,6 @@ function isCompacting(state: UiState): boolean {
   return state.thinking && /compact/i.test(state.thinkingMessage)
 }
 
-function reservedInteractionRows(state: UiState): number {
-  if (state.approval) return 8
-  let rows = 0
-  if (state.planAction) rows += 6
-  if (state.question) rows += 9
-  if (state.tasks.length > 0) rows += taskPanelRows(state.tasks)
-  if (state.queuedPrompts.length > 0) rows += queuedPromptPanelRows(state.queuedPrompts)
-  if (slashCommandAutocompleteVisible(state)) rows += slashCommandAutocompleteRows(state)
-  return rows
-}
 
 function slashCommandAutocompleteVisible(state: UiState): boolean {
   return state.screen.kind === "chat" && state.focus === "input" && !state.approval && slashCommandAutocompleteRows(state) > 0
@@ -713,9 +821,9 @@ function PlanActionPanel({ action, store }: { action: PlanActionState; store: Ui
   const theme = useTheme()
   const active = store.getSnapshot().focus === "plan_actions"
   const items: Array<SelectListItem<PlanAction>> = [
-    { label: "Execute", value: "execute", description: "switch to agent mode and run the plan" },
-    { label: "Refine", value: "refine", description: "keep plan mode and edit the plan" },
-    { label: "Stay in plan mode", value: "stay", description: "dismiss this choice" },
+    { label: "Execute", value: "execute", description: "Switch to agent mode and run the plan" },
+    { label: "Refine", value: "refine", description: "Keep plan mode and edit the plan" },
+    { label: "Stay in plan mode", value: "stay", description: "Dismiss this choice" },
   ]
 
   const resolve = React.useCallback(
@@ -752,10 +860,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
   const [customDraft, setCustomDraft] = React.useState("")
   const active = store.getSnapshot().focus === "question"
   const questions = request.questions
-  const reviewIndex = questions.length
-  const isReview = questions.length > 1 && questionIndex === reviewIndex
-  const question = isReview ? undefined : questions[questionIndex]
-  const allAnswered = questions.every((item) => (answers[item.id]?.length ?? 0) > 0)
+  const question = questions[questionIndex]
   const choices = React.useMemo(() => question ? questionChoiceItems(question, answers[question.id] || []) : [], [answers, question])
 
   const resolve = React.useCallback(
@@ -766,31 +871,26 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     [request, store],
   )
 
-  const submitAnswers = React.useCallback(() => {
-    const flattened = questions.flatMap((item) => answers[item.id] || [])
-    resolve({ answers: flattened })
-  }, [answers, questions, resolve])
-
-  function moveQuestion(delta: number): void {
-    setCustomEditing(false)
-    setQuestionIndex((current) => {
-      const max = questions.length > 1 ? questions.length : questions.length - 1
-      return (current + delta + max + 1) % (max + 1)
-    })
+  // Advance to next question or auto-submit when all are answered.
+  // Takes the answer for the current question directly to avoid stale closure.
+  function advanceAfterAnswer(questionId: string, newAnswer: QuestionDraftAnswer[]): void {
+    const updatedAnswers = { ...answers, [questionId]: newAnswer }
+    const nextIndex = questionIndex + 1
+    if (nextIndex >= questions.length) {
+      const flattened = questions.flatMap((item) => updatedAnswers[item.id] || [])
+      resolve({ answers: flattened })
+    } else {
+      setAnswers(updatedAnswers)
+      setQuestionIndex(nextIndex)
+    }
   }
 
   function selectChoice(value: QuestionChoiceValue): void {
-    if (!question) {
-      if (value === "submit" && allAnswered) submitAnswers()
-      return
-    }
+    if (!question) return
     if (value === "continue") {
-      if ((answers[question.id]?.length ?? 0) === 0) return
-      if (questions.length === 1) {
-        resolve({ answers: answers[question.id] || [] })
-        return
-      }
-      advanceAfterAnswer()
+      const current = answers[question.id] || []
+      if (current.length === 0) return
+      advanceAfterAnswer(question.id, current)
       return
     }
     if (value === "custom") {
@@ -800,12 +900,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     }
     if (value === "refuse") {
       const answer = { answer: "Refuse to answer", kind: "refuse", label: "Refuse to answer", questionId: question.id } satisfies QuestionDraftAnswer
-      if (questions.length === 1) {
-        resolve({ answers: [answer] })
-        return
-      }
-      setQuestionAnswer(question, [answer])
-      advanceAfterAnswer()
+      advanceAfterAnswer(question.id, [answer])
       return
     }
     const index = Number(value.slice("option:".length))
@@ -823,20 +918,8 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
       })
       return
     }
-    if (questions.length === 1) {
-      resolve({ answers: [answer] })
-      return
-    }
-    setQuestionAnswer(question, [answer])
-    advanceAfterAnswer()
-  }
-
-  function setQuestionAnswer(question: AskQuestionItem, next: QuestionDraftAnswer[]): void {
-    setAnswers((current) => ({ ...current, [question.id]: next }))
-  }
-
-  function advanceAfterAnswer(): void {
-    setQuestionIndex((current) => Math.min(current + 1, reviewIndex))
+    // Single-select: immediately advance (auto-submits on last question)
+    advanceAfterAnswer(question.id, [answer])
   }
 
   useInput((input, key) => {
@@ -851,14 +934,13 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
         const trimmed = customDraft.trim()
         if (trimmed) {
           const answer = { answer: trimmed, kind: "custom", label: trimmed, questionId: question.id } satisfies QuestionDraftAnswer
-          if (!question.allowMultiple && questions.length === 1) {
-            resolve({ answers: [answer] })
-            return
-          }
-          setQuestionAnswer(question, question.allowMultiple ? [...(answers[question.id] || []).filter((item) => item.kind !== "custom"), answer] : [answer])
+          const existing = answers[question.id] || []
+          const merged = question.allowMultiple
+            ? [...existing.filter((item) => item.kind !== "custom"), answer]
+            : [answer]
           setCustomEditing(false)
           setCustomDraft("")
-          advanceAfterAnswer()
+          advanceAfterAnswer(question.id, merged)
         }
         return
       }
@@ -869,67 +951,37 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
       if (!key.ctrl && !key.meta && input) setCustomDraft((current) => current + input)
       return
     }
-
-    if (key.escape) {
-      store.update({ focus: "input" })
-      return
+    // Swallow escape — focus must stay on this panel while question is pending
+    if (key.escape) return
+    // Jump into custom-answer mode on printable input
+    if (question && !key.ctrl && !key.meta && input && input.trim()) {
+      setCustomEditing(true)
+      setCustomDraft(input)
     }
-    if (key.leftArrow) {
-      moveQuestion(-1)
-      return
-    }
-    if (key.rightArrow) {
-      moveQuestion(1)
-      return
-    }
-    if (isReview && key.return && allAnswered) submitAnswers()
   }, { isActive: active })
 
   return (
-    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1} flexGrow={1}>
       <Box justifyContent="space-between">
-        <Text color={theme.colors.primary} bold>Questions</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up to answer"}</Text>
+        <Text color={theme.colors.primary} bold>Question {questionIndex + 1}/{questions.length}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "↑↓ · Enter" : "Press up to focus"}</Text>
       </Box>
-      {questions.length > 1 ? (
-        <Text color={theme.colors.mutedForeground}>
-          {questions.map((item, index) => `${index === questionIndex ? ">" : answers[item.id]?.length ? "*" : "-"} ${item.id}`).join("  ")}
-          {`  ${isReview ? "> " : ""}review`}
-        </Text>
-      ) : null}
-      {isReview ? (
-        <Box flexDirection="column">
-          <Text color={theme.colors.foreground}>Review answers</Text>
-          {questions.map((item) => (
-            <Text key={item.id} color={answers[item.id]?.length ? theme.colors.foreground : theme.colors.error}>
-              {item.id}: {answers[item.id]?.map((answer) => answer.label).join(", ") || "(not answered)"}
-            </Text>
-          ))}
-          <SelectList
-            active={active && !customEditing}
-            items={[{ label: "Submit answers", value: "submit" as const, description: allAnswered ? "send to agent" : "answer all first", disabled: !allAnswered }]}
-            maxRows={1}
-            onBoundary={(direction) => focusAdjacentPanel(store, direction)}
-            onCancel={() => store.update({ focus: "input" })}
-            onSelect={(item) => selectChoice(item.value)}
-          />
-        </Box>
-      ) : question ? (
-        <Box flexDirection="column">
+      {question ? (
+        <Box flexDirection="column" flexGrow={1}>
           <Text color={theme.colors.foreground}>{question.prompt}{question.allowMultiple ? " (select all that apply)" : ""}</Text>
           {customEditing ? (
             <Box flexDirection="column">
               <Text color={theme.colors.mutedForeground}>Custom answer:</Text>
               <Text color={theme.colors.foreground}>{customDraft || " "}</Text>
-              <Text color={theme.colors.mutedForeground}>enter save · esc cancel</Text>
+              <Text color={theme.colors.mutedForeground}>Enter to save · Esc to cancel</Text>
             </Box>
           ) : (
             <SelectList
               active={active}
               items={choices}
               maxRows={6}
-              onBoundary={(direction) => focusAdjacentPanel(store, direction)}
-              onCancel={() => store.update({ focus: "input" })}
+              onBoundary={() => {}}
+              onCancel={() => {}}
               onSelect={(item) => selectChoice(item.value)}
             />
           )}
@@ -946,16 +998,16 @@ export function questionChoiceItems(question: AskQuestionItem, answers: AskQuest
     value: `option:${index}`,
     description: option.description,
   }))
-  if (question.allowCustom) items.push({ label: "Other / type your own answer", value: "custom", description: "custom answer" })
+  if (question.allowCustom) items.push({ label: "Other / type your own answer", value: "custom", description: "Custom answer" })
   if (question.allowMultiple) {
     items.push({
       label: "Continue",
       value: "continue",
-      description: answers.length > 0 ? "next question" : "select at least one",
+      description: answers.length > 0 ? "Next question" : "Select at least one",
       disabled: answers.length === 0,
     })
   }
-  items.push({ label: "Refuse to answer", value: "refuse", description: "continue without this answer" })
+  items.push({ label: "Refuse to answer", value: "refuse", description: "Continue without this answer" })
   return items
 }
 
@@ -1011,7 +1063,7 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Queued prompts</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up to manage"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up to manage"}</Text>
       </Box>
       {queuedPromptPreviewItems(prompts, selected).map((line) => (
         <Text key={line.id} color={line.selected ? theme.colors.primary : theme.colors.mutedForeground}>
@@ -1019,7 +1071,7 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
         </Text>
       ))}
       <Text color={theme.colors.mutedForeground}>
-        {active ? "up/down select · e edit · d remove · enter run next · esc input" : "press up from empty input to manage"}
+        {active ? "Up/down to select · E to edit · D to remove · Enter to run next · Esc to return to input" : "Press up from empty input to manage"}
       </Text>
     </Box>
   )
@@ -1070,7 +1122,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>{title}</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up for tasks"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up for tasks"}</Text>
       </Box>
       {taskPreviewItems(tasks, selected).map((line) => (
         <Text key={line.id} color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
@@ -1078,7 +1130,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
         </Text>
       ))}
       <Text color={theme.colors.mutedForeground}>
-        {active ? `up/down select · ${canBackground ? "ctrl+b background group" : hasBackgrounded ? "working in background" : "task status"} · esc input` : taskPanelSummary(tasks)}
+        {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
       </Text>
       {selectedTask?.error ? <Text color={theme.colors.error}>{truncateEnd(selectedTask.error, 100)}</Text> : null}
     </Box>
@@ -1116,7 +1168,7 @@ function taskPanelSummary(tasks: TaskRecord[]): string {
     running ? `${running} running` : "",
     backgrounded ? `${backgrounded} working in background` : "",
   ].filter(Boolean)
-  return parts.join(" · ") || "recent task history"
+  return parts.join(" · ") || "Recent task history"
 }
 
 export function queuedPromptPreviewItems(prompts: QueuedPrompt[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; text: string }> {
@@ -1136,10 +1188,10 @@ export function formatQueuedPromptPreview(text: string, max = 72): string {
 
 export function approvalChoiceItems(toolName: string): SelectListItem<PermissionDecision>[] {
   return [
-    { label: "Allow once", value: "allow_once", description: "only this call" },
-    { label: `Allow ${toolName} for conversation`, value: "allow_tool_session", description: "future calls of this tool" },
-    { label: "Allow all tools for conversation", value: "allow_all_session", description: "current conversation only" },
-    { label: "Deny", value: "deny", description: "only this call" },
+    { label: "Allow once", value: "allow_once", description: "Only this call" },
+    { label: `Allow ${toolName} for conversation`, value: "allow_tool_session", description: "Future calls of this tool" },
+    { label: "Allow all tools for conversation", value: "allow_all_session", description: "Current conversation only" },
+    { label: "Deny", value: "deny", description: "Only this call" },
   ]
 }
 
@@ -1154,104 +1206,95 @@ function formatApprovalArgs(args: string): string {
   } catch {
     // Fall through to raw argument preview.
   }
-  return args.replace(/\s+/g, " ").trim() || "no arguments"
+  return args.replace(/\s+/g, " ").trim() || "No arguments"
 }
 
 function hintItems(kind: UiScreen["kind"]): string[] {
-  if (kind === "model") return ["type to filter", "enter select", "tab edit", "esc cancel"]
-  if (kind === "theme") return ["up/down navigate", "enter preview", "esc cancel"]
-  if (kind === "history") return ["up/down navigate", "enter open", "esc cancel"]
-  return ["/new", "/history", "/model", "/theme", "/tasks", "/lofi", "/reset-perms", "/exit"]
+  if (kind === "modelEditor") return ["Up/down to navigate", "Enter to toggle", "Esc/Tab to apply"]
+  if (kind === "permissions") return ["Up/down to navigate", "Enter to remove", "c to clear all", "Esc to close"]
+  return ["/new", "/resume", "/model", "/theme", "/tasks", "/lofi", "/permissions", "/exit"]
 }
 
-function ChatScreen({
-  interactionActive,
-  onScrollStateChange,
+function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
+  return (
+    <Box paddingX={1}>
+      <TranscriptLine line={line} />
+    </Box>
+  )
+}
+
+function LiveChat({
+  committedLines = [],
+  flexGrow: grow,
+  scrollOffset = 0,
+  streamingContent,
   thinking,
   thinkingMessage,
-  reservedRows,
   toolActivities,
-  transcript,
 }: {
-  interactionActive?: boolean
-  onScrollStateChange?: (canScrollUp: boolean) => void
-  reservedRows?: number
+  committedLines?: TranscriptLineData[]
+  flexGrow?: boolean
+  scrollOffset?: number
+  streamingContent: string
   thinking: boolean
   thinkingMessage: string
   toolActivities: ToolActivity[]
-  transcript: TranscriptMessage[]
 }): React.ReactNode {
   const theme = useTheme()
-  const { columns, rows } = useWindowSize()
-  const [scrollOffset, setScrollOffset] = React.useState(0)
-  const viewportRows = chatViewportRows(rows, reservedRows || 0)
-  const activityKey = React.useMemo(
-    () => toolActivities.map((activity) => `${activity.id}:${activity.status}`).join("|"),
-    [toolActivities],
-  )
-  const transcriptLines = React.useMemo(
-    () => buildTranscriptLines(transcript, Math.max(20, columns - 4), toolActivities, thinking, thinkingMessage),
-    [columns, thinking, thinkingMessage, toolActivities, transcript],
-  )
-  const maxScrollOffset = Math.max(0, transcriptLines.length - viewportRows)
-  const pageScrollRows = Math.max(1, viewportRows - 2)
-  const end = Math.max(0, transcriptLines.length - Math.min(scrollOffset, maxScrollOffset))
-  const visibleLines = React.useMemo(
-    () => visibleTranscriptWindow(transcriptLines, Math.max(0, end - viewportRows), end, viewportRows),
-    [end, transcriptLines, viewportRows],
-  )
+  const { columns } = useWindowSize()
+  const width = Math.max(20, columns - 4)
+  const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
-  React.useEffect(() => {
-    setScrollOffset((current) => Math.min(current, maxScrollOffset))
-  }, [maxScrollOffset])
+  const allLines = [...committedLines, ...activeLines]
+  const hasLines = allLines.length > 0
+  // Virtual scroll: slice off the most-recent scrollOffset lines so the user sees history
+  const displayLines = scrollOffset > 0 ? allLines.slice(0, Math.max(0, allLines.length - scrollOffset)) : allLines
 
-  React.useEffect(() => {
-    setScrollOffset(0)
-  }, [transcript.length])
-
-  React.useEffect(() => {
-    if (thinking || toolActivities.length > 0) setScrollOffset(0)
-  }, [activityKey, thinking, thinkingMessage, toolActivities.length])
-
-  React.useEffect(() => {
-    onScrollStateChange?.(maxScrollOffset > scrollOffset)
-  }, [maxScrollOffset, onScrollStateChange, scrollOffset])
-
-  useInput((input, key) => {
-    if (interactionActive) return
-    if (key.pageUp || (key.ctrl && input === "u")) {
-      setScrollOffset((current) => Math.min(maxScrollOffset, current + pageScrollRows))
-      return
-    }
-    if (key.pageDown || (key.ctrl && input === "d")) {
-      setScrollOffset((current) => Math.max(0, current - pageScrollRows))
-      return
-    }
-    if (key.upArrow) {
-      setScrollOffset((current) => Math.min(maxScrollOffset, current + 1))
-      return
-    }
-    if (key.downArrow) {
-      setScrollOffset((current) => Math.max(0, current - 1))
-      return
-    }
-    if (key.end) setScrollOffset(0)
-    if (key.home) setScrollOffset(maxScrollOffset)
-  })
-
-  if (transcriptLines.length === 0) {
+  if (!hasLines) {
     return (
-      <Box flexGrow={1} alignItems="center" justifyContent="center">
-        <Text color={theme.colors.mutedForeground}>Start a conversation, or use /history, /model, and /theme.</Text>
+      <Box
+        flexDirection="column"
+        flexGrow={grow ? 1 : 0}
+        overflow="hidden"
+        justifyContent="center"
+        alignItems="center"
+        paddingX={1}
+      >
+        <Box flexDirection="column" alignItems="center">
+          {columns >= furnaceBannerWidth
+            ? furnaceAsciiBanner().map((row, index) => (
+                <Text key={index} color={theme.colors.primary} bold>
+                  {row}
+                </Text>
+              ))
+            : (
+                <Text color={theme.colors.primary} bold>
+                  FURNACE
+                </Text>
+              )}
+          <Newline />
+          <Text color={theme.colors.mutedForeground}>Welcome to Furnace. Let's turn up the heat.</Text>
+          <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
+        </Box>
       </Box>
     )
   }
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingX={1}>
-      {visibleLines.map((line, index) => (
+    <Box
+      flexDirection="column"
+      flexGrow={grow ? 1 : 0}
+      minHeight={5}
+      overflow="hidden"
+      justifyContent="flex-end"
+      paddingX={1}
+    >
+      {displayLines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
+      {scrollOffset > 0 && (
+        <Text color={theme.colors.mutedForeground}> ↓ {scrollOffset} more below · press ↓ on empty input to scroll</Text>
+      )}
     </Box>
   )
 }
@@ -1263,12 +1306,14 @@ export function chatViewportRows(windowRows: number, reservedRows = 0): number {
 }
 
 type TranscriptLineData = {
-  kind: "blank" | "content" | "plan" | "spinner" | "role" | "tool"
+  codeFenceOpen?: boolean
+  kind: "blank" | "code" | "code-fence" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
   plain?: boolean
   role?: TranscriptMessage["role"]
   status?: ToolActivity["status"]
+  tableTone?: "header" | "divider" | "row"
   text: string
   toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary" | "todoCurrent" | "todoDone" | "todoPending"
 }
@@ -1282,11 +1327,23 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     if (line.toolTone === "todoCurrent") return <Text color={theme.colors.primary} bold>{line.text}</Text>
     if (line.toolTone === "todoDone") return <Text color={theme.colors.success} strikethrough>{line.text}</Text>
     if (line.toolTone === "todoPending") return <Text color={theme.colors.foreground}>{line.text}</Text>
-    if (line.toolTone === "addition") return <Text color={theme.colors.success}>{line.text}</Text>
-    if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{line.text}</Text>
-    if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{line.text}</Text>
+    if (line.toolTone === "addition") return <Text color={theme.colors.success}>{"  "}{line.text}</Text>
+    if (line.toolTone === "deletion" || line.toolTone === "error") return <Text color={theme.colors.error}>{"  "}{line.text}</Text>
+    if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{"  "}{line.text}</Text>
     const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.primary
-    return <Text color={color} bold={line.toolTone === "summary"}>{line.text}</Text>
+    if (line.toolTone === "summary") {
+      return <Text><Text color={theme.colors.mutedForeground}>{"  │ "}</Text><Text color={color} bold>{line.text}</Text></Text>
+    }
+    return <Text color={color}>{"  "}{line.text}</Text>
+  }
+  if (line.kind === "code-fence") {
+    return <Text color={theme.colors.mutedForeground}>{line.codeFenceOpen ? `┌─${line.text ? ` ${line.text} ` : "─"}` : "└─"}</Text>
+  }
+  if (line.kind === "code") return <Text color={theme.colors.foreground}>{"│ "}{line.text || " "}</Text>
+  if (line.kind === "table") {
+    if (line.tableTone === "header") return <Text color={theme.colors.primary} bold>{line.text}</Text>
+    if (line.tableTone === "divider") return <Text color={theme.colors.border}>{line.text}</Text>
+    return <Text color={theme.colors.foreground}>{line.text}</Text>
   }
   if (line.kind === "plan") {
     if (line.planTone === "content") return <MarkdownLine text={line.text || " "} prefix="| " />
@@ -1302,29 +1359,37 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
 
 function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }): React.ReactNode {
   const theme = useTheme()
+
   const heading = text.match(/^(#{1,6})\s+(.+)$/)
   if (heading) {
+    const level = heading[1].length
     return (
-      <Text color={theme.colors.primary} bold>
+      <Text color={level <= 2 ? theme.colors.primary : theme.colors.foreground} bold>
         {prefix}{heading[2]}
       </Text>
     )
+  }
+
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(text.trim())) {
+    return <Text> </Text>
   }
 
   const quote = text.match(/^>\s?(.*)$/)
   if (quote) {
     return (
       <Text color={theme.colors.mutedForeground}>
-        {prefix}| <InlineMarkdown text={quote[1] || " "} />
+        {prefix}│ <InlineMarkdown text={quote[1] || " "} />
       </Text>
     )
   }
 
-  const unordered = text.match(/^(\s*)[-*]\s+(.+)$/)
+  const unordered = text.match(/^(\s*)[-*+]\s+(.+)$/)
   if (unordered) {
+    const indent = unordered[1]
+    const bullet = indent.length > 0 ? "◦" : "•"
     return (
       <Text color={theme.colors.foreground}>
-        {prefix}{unordered[1]}- <InlineMarkdown text={unordered[2]} />
+        {prefix}{indent}{bullet} <InlineMarkdown text={unordered[2]} />
       </Text>
     )
   }
@@ -1333,15 +1398,15 @@ function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }):
   if (ordered) {
     return (
       <Text color={theme.colors.foreground}>
-        {prefix}{ordered[1]}
-        {ordered[2]} <InlineMarkdown text={ordered[3]} />
+        {prefix}{ordered[1]}{ordered[2]} <InlineMarkdown text={ordered[3]} />
       </Text>
     )
   }
 
   const fence = text.match(/^```(.*)$/)
   if (fence) {
-    return <Text color={theme.colors.mutedForeground}>{prefix}{fence[1] ? `code ${fence[1]}` : "code"}</Text>
+    const lang = fence[1].trim()
+    return <Text color={theme.colors.mutedForeground}>{prefix}{lang ? `▸ ${lang}` : "▸"}</Text>
   }
 
   return (
@@ -1384,7 +1449,11 @@ function InlineMarkdown({ text }: { text: string }): React.ReactNode {
   )
 }
 
-function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string): TranscriptLineData[] {
+export function buildTranscriptLinesForTest(transcript: TranscriptMessage[], width: number): TranscriptLineData[] {
+  return buildTranscriptLines(transcript, width, [], false, "Thinking", "")
+}
+
+function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string, streamingContent = ""): TranscriptLineData[] {
   const lines: TranscriptLineData[] = []
   const hasToolActivities = toolActivities.length > 0
   const finalAssistantIndex = hasToolActivities && transcript[transcript.length - 1]?.role === "assistant" ? transcript.length - 1 : -1
@@ -1402,28 +1471,58 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
     appendMessageLines(lines, transcript[finalAssistantIndex], finalAssistantIndex, width)
   }
 
+  if (streamingContent && !thinking) {
+    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "Assistant" })
+    appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, transcript.length, width)
+    lines.push({ kind: "blank", messageIndex: transcript.length, role: "assistant", text: "" })
+  }
+
   if (thinking) {
-    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "assistant" })
+    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "Assistant" })
     lines.push({ kind: "spinner", messageIndex: transcript.length, role: "assistant", text: thinkingMessage })
+    lines.push({ kind: "blank", messageIndex: transcript.length, role: "assistant", text: "" })
+  }
+  return lines
+}
+
+function messageToLines(message: TranscriptMessage, messageIndex: number, width: number): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  appendMessageLines(lines, message, messageIndex, width)
+  return lines
+}
+
+function toolActivitiesToLines(toolActivities: ToolActivity[], messageIndex: number, width: number): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  appendToolLines(lines, toolActivities, messageIndex, width)
+  return lines
+}
+
+function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string, thinking: boolean, thinkingMessage: string, width: number): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  if (toolActivities.length > 0) {
+    appendToolLines(lines, toolActivities, 0, width)
+  }
+  if (streamingContent && !thinking) {
+    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
+    appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, 0, width)
+    lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
+  }
+  if (thinking) {
+    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
+    lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: `${thinkingMessage} [Esc to stop]` })
+    lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   }
   return lines
 }
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
-  lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "user" : "assistant" })
-  
-  // Show attached images for user messages
+  lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "User" : "Assistant" })
   if (message.role === "user" && message.imageCount && message.imageCount > 0) {
-    lines.push({
-      kind: "content",
-      messageIndex,
-      role: message.role,
-      text: `📎 ${message.imageCount} image${message.imageCount === 1 ? "" : "s"} attached`,
-    })
+    lines.push({ kind: "content", messageIndex, role: message.role, text: `📎 ${message.imageCount} image${message.imageCount === 1 ? "" : "s"} attached` })
   }
-  
+  const displayContent: string = typeof message.content === "string" ? message.content : ""
   if (message.role === "assistant") {
-    const planPreview = splitSavedPlanPreview(message.content)
+    const planPreview = splitSavedPlanPreview(displayContent)
     if (planPreview) {
       appendWrappedContentLines(lines, planPreview.before.join("\n") || " ", message, messageIndex, width)
       for (const line of planPreviewBoxLines(planPreview.path, planPreview.body.join("\n"), width)) {
@@ -1433,26 +1532,107 @@ function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMess
       return
     }
   }
-  appendWrappedContentLines(lines, message.content || " ", message, messageIndex, width)
+  appendWrappedContentLines(lines, displayContent || " ", message, messageIndex, width)
   lines.push({ kind: "blank", messageIndex, role: message.role, text: "" })
 }
 
 function appendWrappedContentLines(lines: TranscriptLineData[], content: string, message: TranscriptMessage, messageIndex: number, width: number): void {
-  let inFence = false
-  for (const sourceLine of content.replace(/\r\n/g, "\n").split("\n")) {
-    if (/^\s*```/.test(sourceLine)) {
-      inFence = !inFence
+  const sourceLines = content.split("\n")
+  let index = 0
+  let fenceLang: string | undefined
+  while (index < sourceLines.length) {
+    const line = sourceLines[index]
+    const fence = line.match(/^\s*```(.*)$/)
+
+    if (fence) {
+      const opening = fenceLang === undefined
+      fenceLang = opening ? fence[1].trim() : undefined
+      lines.push({ codeFenceOpen: opening, kind: "code-fence", messageIndex, role: message.role, text: opening ? fenceLang ?? "" : "" })
+      index += 1
       continue
     }
-    const wrapped = sourceLine ? wrapAnsi(sourceLine, width, { hard: false, wordWrap: true }).split("\n") : [""]
-    for (const wrappedLine of wrapped) {
-      lines.push({ kind: "content", messageIndex, plain: inFence, role: message.role, text: wrappedLine })
+
+    if (fenceLang !== undefined) {
+      for (const wrappedLine of wrapAnsi(line, Math.max(1, width - 2), { hard: true, wordWrap: false }).split("\n")) {
+        lines.push({ kind: "code", messageIndex, role: message.role, text: wrappedLine })
+      }
+      index += 1
+      continue
     }
+
+    if (isTableRow(line) && index + 1 < sourceLines.length && isTableSeparator(sourceLines[index + 1])) {
+      const block: string[] = []
+      while (index < sourceLines.length && isTableRow(sourceLines[index])) {
+        block.push(sourceLines[index])
+        index += 1
+      }
+      for (const rendered of formatMarkdownTable(block, width)) {
+        lines.push({ kind: "table", messageIndex, role: message.role, tableTone: rendered.tone, text: rendered.text })
+      }
+      continue
+    }
+
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      index += 1
+      continue
+    }
+
+    for (const wrappedLine of wrapAnsi(line, width, { hard: false, wordWrap: true }).split("\n")) {
+      lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
+    }
+    index += 1
+}
+}
+
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 1
+}
+
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim()
+  return /^\|[\s:|-]+\|$/.test(trimmed) && trimmed.includes("-")
+}
+
+function parseTableRow(line: string): string[] {
+  return line.trim().slice(1, -1).split("|").map((cell) => plainInlineText(cell.trim()))
+}
+
+function plainInlineText(text: string): string {
+  return parseInlineMarkdown(text).map((part) => part.text).join("")
+}
+
+function formatMarkdownTable(block: string[], width: number): Array<{ text: string; tone: "header" | "divider" | "row" }> {
+  const rows = block.map(parseTableRow)
+  const columnCount = Math.max(...rows.map((row) => row.length))
+  const dataRows = rows.filter((_, rowIndex) => rowIndex !== 1)
+
+  let widths: number[] = []
+  for (let column = 0; column < columnCount; column += 1) {
+    widths[column] = Math.max(3, ...dataRows.map((row) => (row[column] || "").length))
   }
+
+  const separatorWidth = (columnCount - 1) * 3
+  const maxContentWidth = Math.max(columnCount * 3, width - separatorWidth - 2)
+  const totalWidth = widths.reduce((sum, value) => sum + value, 0)
+  if (totalWidth > maxContentWidth) {
+    const scale = maxContentWidth / totalWidth
+    widths = widths.map((value) => Math.max(3, Math.floor(value * scale)))
+  }
+
+  const renderRow = (cells: string[]): string =>
+    widths.map((columnWidth, column) => truncateEnd(cells[column] || "", columnWidth).padEnd(columnWidth)).join(" │ ")
+
+  const result: Array<{ text: string; tone: "header" | "divider" | "row" }> = []
+  result.push({ text: renderRow(rows[0]), tone: "header" })
+  result.push({ text: widths.map((columnWidth) => "─".repeat(columnWidth)).join("─┼─"), tone: "divider" })
+  for (let rowIndex = 2; rowIndex < rows.length; rowIndex += 1) {
+    result.push({ text: renderRow(rows[rowIndex]), tone: "row" })
+  }
+  return result
 }
 
 function appendToolLines(lines: TranscriptLineData[], toolActivities: ToolActivity[], messageIndex: number, width: number): void {
-  lines.push({ kind: "role", messageIndex, role: "assistant", text: "tools" })
   for (const activity of latestTodoActivityOnly(toolActivities)) {
     for (const rendered of formatToolActivity(activity, width)) {
       lines.push({
@@ -1649,7 +1829,35 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (skillLines.length > 0) return skillLines
   }
 
+  if (activity.name === "skill") {
+    const skillName = parseJsonStringField(activity.args, "name")
+    if (skillName) {
+      return [{ text: `${statusSymbol(activity.status)} Used skill: ${skillName}`, tone: "summary" }]
+    }
+  }
+
   return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
+}
+
+function friendlyToolName(name: string): string {
+  const labels: Record<string, string> = {
+    read: "Read File",
+    write: "Write File",
+    edit: "Edit File",
+    ls: "List Directory",
+    find: "Find Files",
+    glob: "Glob Files",
+    grep: "Grep",
+    bash: "Run Command",
+    websearch: "Web Search",
+    webfetch: "Fetch URL",
+    skill: "Load Skill",
+    skill_manage: "Save Skill",
+    task: "Spawn Tasks",
+    task_status: "Task Status",
+    ask_question: "Ask Question",
+  }
+  return labels[name] ?? name
 }
 
 function formatEditActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
@@ -2003,9 +2211,9 @@ function todoTone(status: ReturnType<typeof normalizeTodoStatus>): TranscriptLin
 }
 
 function statusSymbol(status: ToolActivity["status"]): string {
-  if (status === "running") return ">"
-  if (status === "failed") return "x"
-  return "ok"
+  if (status === "running") return "◆"
+  if (status === "failed") return "✗"
+  return "✓"
 }
 
 function formatToolArgs(args: string, width: number): string {
@@ -2048,192 +2256,50 @@ function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end
       kind: "role",
       messageIndex: first.messageIndex,
       role: first.role,
-      text: `${first.role === "user" ? "user" : "assistant"} (continued)`,
+      text: `${first.role === "user" ? "User" : "Assistant"} (continued)`,
     })
   }
 
   return visible.slice(0, viewportRows)
 }
 
-function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "history" }>; store: UiStore }): React.ReactNode {
+function ModelEditorPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "modelEditor" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
-  const [filter, setFilter] = React.useState("")
-
-  const filteredChoices = React.useMemo(() => {
-    const normalized = filter.trim().toLowerCase()
-    if (!normalized) return screen.choices
-    return screen.choices.filter((c) => c.title.toLowerCase().includes(normalized))
-  }, [screen.choices, filter])
-
-  const items: Array<SelectListItem<string>> = React.useMemo(
-    () =>
-      filteredChoices.map((choice) => ({
-        description: formatRelativeTime(choice.updatedAt),
-        label: choice.title,
-        value: choice.id,
-      })),
-    [filteredChoices],
-  )
-
-  useInput((input, key) => {
-    if (key.escape) {
-      store.update({ screen: { kind: "chat" } })
-      screen.onCancel()
-      return
-    }
-    if (key.backspace || key.delete) {
-      setFilter((current) => current.slice(0, -1))
-      return
-    }
-    if (!key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && input) {
-      setFilter((current) => current + input)
-    }
-  })
-
-  return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text color={theme.colors.primary} bold>
-        Select a conversation
-      </Text>
-      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
-      <SelectList
-        items={items}
-        maxRows={12}
-        onCancel={() => {
-          store.update({ screen: { kind: "chat" } })
-          screen.onCancel()
-        }}
-        onSelect={(item) => {
-          store.update({ screen: { kind: "chat" } })
-          screen.onSelect(item.value)
-        }}
-        selectedValue={filter ? null : screen.currentSessionId}
-      />
-    </Box>
-  )
-}
-
-function ThemeScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "theme" }>; store: UiStore }): React.ReactNode {
-  const theme = useTheme()
-  const items: Array<SelectListItem<string>> = React.useMemo(
-    () =>
-      screen.choices.map((choice) => ({
-        description: choice.description,
-        label: choice.name,
-        value: choice.name,
-      })),
-    [screen.choices],
-  )
-  const previewTheme = React.useCallback(
-    (item: SelectListItem<string>) => {
-      const choice = resolveTheme(item.value)
-      store.update({ theme: choice.theme, themeName: choice.name })
-    },
-    [store],
-  )
-
-  return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text color={theme.colors.primary} bold>
-        Select a theme
-      </Text>
-      <SelectList
-        items={items}
-        maxRows={12}
-        onCancel={() => {
-          const choice = resolveTheme(screen.currentTheme)
-          store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
-          screen.onCancel()
-        }}
-        onHighlight={previewTheme}
-        onSelect={(item) => {
-          const choice = resolveTheme(item.value)
-          store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
-          screen.onSelect(choice.name, true)
-        }}
-        selectedValue={screen.currentTheme}
-      />
-    </Box>
-  )
-}
-
-function ModelScreen({ model, screen, store }: { model: string; screen: Extract<UiScreen, { kind: "model" }>; store: UiStore }): React.ReactNode {
-  const theme = useTheme()
-  const [filter, setFilter] = React.useState("")
-  const [activeIndex, setActiveIndex] = React.useState(0)
-  const [editing, setEditing] = React.useState<{ choice: ModelChoice; selectedIndex: number } | undefined>()
-  const filteredChoices = React.useMemo(() => filterModels(screen.choices, filter), [screen.choices, filter])
-  const selectedChoice = filteredChoices[activeIndex]
+  const [selectedIndex, setSelectedIndex] = React.useState(0)
+  const [settings, setSettings] = React.useState<ModelSettings>(screen.settings)
+  const rows = modelEditorRows(screen.choice, settings)
 
   React.useEffect(() => {
-    setActiveIndex((current) => Math.min(Math.max(0, current), Math.max(0, filteredChoices.length - 1)))
-  }, [filteredChoices.length])
+    setSelectedIndex((current) => Math.min(current, Math.max(0, rows.length - 1)))
+  }, [rows.length])
 
-  useInput((input, key) => {
-    if (editing) {
-      const rows = modelEditorRows(editing.choice, settingsForModel(screen, editing.choice.id))
-      if (key.escape || key.tab) {
-        setEditing(undefined)
-        return
-      }
-      if (key.upArrow) return setEditing({ ...editing, selectedIndex: Math.max(0, editing.selectedIndex - 1) })
-      if (key.downArrow) return setEditing({ ...editing, selectedIndex: Math.min(rows.length - 1, editing.selectedIndex + 1) })
-      if (key.return) {
-        const row = rows[editing.selectedIndex]
-        if (row && !row.disabled) applyModelEditorRow(store, screen, editing.choice, row)
-      }
-      return
-    }
-
-    if (key.escape) {
+  useInput((_input, key) => {
+    if (key.escape || key.tab) {
       store.update({ screen: { kind: "chat" } })
-      screen.onCancel()
+      screen.onSelect(screen.choice.id, settings, true)
       return
     }
-    if (key.upArrow) return setActiveIndex((current) => Math.max(0, current - 1))
-    if (key.downArrow) return setActiveIndex((current) => Math.min(filteredChoices.length - 1, current + 1))
-    if (key.tab) {
-      if (selectedChoice) setEditing({ choice: selectedChoice, selectedIndex: 0 })
-      return
-    }
+    if (key.upArrow) return setSelectedIndex((current) => Math.max(0, current - 1))
+    if (key.downArrow) return setSelectedIndex((current) => Math.min(rows.length - 1, current + 1))
     if (key.return) {
-      if (!selectedChoice) return
-      store.update({ screen: { kind: "chat" } })
-      screen.onSelect(selectedChoice.id, settingsForModel(screen, selectedChoice.id), true)
-      return
-    }
-    if (key.backspace || key.delete) {
-      setFilter((current) => current.slice(0, -1))
-      setActiveIndex(0)
-      return
-    }
-    if (!key.ctrl && !key.meta && input) {
-      setFilter((current) => `${current}${input}`)
-      setActiveIndex(0)
+      const row = rows[selectedIndex]
+      if (!row || row.disabled) return
+      const next =
+        row.kind === "context"
+          ? normalizeModelSettings({ ...settings, contextLength: row.value }, screen.choice)
+          : row.kind === "reasoning"
+            ? normalizeModelSettings({ ...settings, reasoningEffort: row.value }, screen.choice)
+            : normalizeModelSettings({ ...settings, fast: !settings.fast }, screen.choice)
+      setSettings(next)
+      store.update((state) => ({ ...state, model: screen.choice.id, modelSettings: next }))
+      screen.onSelect(screen.choice.id, next, false)
     }
   })
 
-  if (editing) return <ModelEditorScreen choice={editing.choice} selectedIndex={editing.selectedIndex} settings={settingsForModel(screen, editing.choice.id)} />
-
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Text color={theme.colors.primary} bold>
-        Available OpenRouter models
-      </Text>
-      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
-      {renderModelRows(filteredChoices, activeIndex, model)}
-    </Box>
-  )
-}
-
-function ModelEditorScreen({ choice, selectedIndex, settings }: { choice: ModelChoice; selectedIndex: number; settings: ModelSettings }): React.ReactNode {
-  const theme = useTheme()
-  const rows = modelEditorRows(choice, settings)
-
-  return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text color={theme.colors.primary} bold>
-        {choice.name} - Edit parameters
+        {screen.choice.name} - Edit parameters
       </Text>
       {rows.map((row, index) => (
         <Box key={`${row.kind}-${row.label}`} justifyContent="space-between">
@@ -2244,76 +2310,70 @@ function ModelEditorScreen({ choice, selectedIndex, settings }: { choice: ModelC
           <Text color={row.selected ? theme.colors.success : theme.colors.mutedForeground}>{row.selected ? "selected" : row.disabled ? "disabled" : ""}</Text>
         </Box>
       ))}
+      <Text color={theme.colors.mutedForeground}>Esc/Tab to apply and return to chat.</Text>
     </Box>
   )
 }
 
-function renderModelRows(choices: ModelChoice[], activeIndex: number, currentModel: string): React.ReactNode {
+function PermissionsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "permissions" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
-  const maxRows = 12
-  const half = Math.floor(maxRows / 2)
-  const maxOffset = Math.max(0, choices.length - maxRows)
-  const offset = Math.min(maxOffset, Math.max(0, activeIndex - half))
-  const visibleChoices = choices.slice(offset, offset + maxRows)
+  const [selectedIndex, setSelectedIndex] = React.useState(0)
 
-  if (choices.length === 0) return <Text color={theme.colors.mutedForeground}>No matching models.</Text>
+  React.useEffect(() => {
+    setSelectedIndex((current) => Math.min(current, Math.max(0, screen.grants.length - 1)))
+  }, [screen.grants.length])
+
+  useInput((input, key) => {
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.upArrow) return setSelectedIndex((current) => Math.max(0, current - 1))
+    if (key.downArrow) return setSelectedIndex((current) => Math.min(screen.grants.length - 1, current + 1))
+    if (key.return) {
+      const grant = screen.grants[selectedIndex]
+      if (grant) screen.onRemove(grant)
+      return
+    }
+    if (!key.ctrl && !key.meta && input.toLowerCase() === "c") {
+      screen.onClearAll()
+    }
+  })
 
   return (
-    <Box flexDirection="column">
-      {visibleChoices.map((choice, visibleIndex) => {
-        const index = offset + visibleIndex
-        const isActive = index === activeIndex
-        const isSelected = choice.id === currentModel
-        return (
-          <Box key={choice.id} justifyContent="space-between">
-            <Box>
-              <Text color={isActive ? theme.colors.primary : theme.colors.mutedForeground}>{isActive ? "› " : "  "}</Text>
-              <Text color={isActive ? theme.colors.primary : isSelected ? theme.colors.success : theme.colors.foreground} bold={isActive || isSelected}>
-                {isSelected ? "* " : ""}
-                {choice.name}
-              </Text>
-            </Box>
-            <Text color={theme.colors.mutedForeground}>
-              {formatContext(choice.contextLength)} {supportsReasoning(choice) ? "reasoning " : ""}
-              {choice.id}
-            </Text>
-          </Box>
-        )
-      })}
-      {choices.length > maxRows ? (
-        <Text color={theme.colors.mutedForeground}>
-          {offset + 1}-{Math.min(choices.length, offset + maxRows)} of {choices.length}
-        </Text>
-      ) : null}
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
+      <Text color={theme.colors.primary} bold>
+        Permission grants for this conversation
+      </Text>
+      {screen.grants.length === 0 ? (
+        <Text color={theme.colors.mutedForeground}>No permission grants for this conversation.</Text>
+      ) : (
+        screen.grants.map((grant, index) => (
+          <Text key={grantKey(grant, index)} color={index === selectedIndex ? theme.colors.primary : theme.colors.foreground}>
+            {index === selectedIndex ? "› " : "  "}
+            {formatPermissionGrant(grant)}
+          </Text>
+        ))
+      )}
+      <Text color={theme.colors.mutedForeground}>Enter to remove · c to clear all · Esc to close</Text>
     </Box>
   )
+}
+
+function grantKey(grant: PermissionGrantSummary, index: number): string {
+  return grant.kind === "allow_all" ? "allow_all" : `${index}-${grant.rule.permission}-${grant.rule.pattern}`
+}
+
+function formatPermissionGrant(grant: PermissionGrantSummary): string {
+  if (grant.kind === "allow_all") return "Allow all tools (this session)"
+  return `${grant.rule.action} ${grant.rule.permission}: ${grant.rule.pattern}`
 }
 
 type ModelEditorRow =
   | { kind: "context"; label: string; value: number; selected: boolean; disabled?: boolean }
   | { kind: "reasoning"; label: string; value: ReasoningEffort; selected: boolean; disabled?: boolean }
   | { kind: "fast"; label: string; selected: boolean; disabled?: boolean }
-
-function settingsForModel(screen: Extract<UiScreen, { kind: "model" }>, model: string): ModelSettings {
-  const choice = findModelChoice(screen.choices, model)
-  const normalized = normalizeModelSettings(screen.settingsByModel[model] || {}, choice)
-  screen.settingsByModel[model] = normalized
-  return normalized
-}
-
-function applyModelEditorRow(store: UiStore, screen: Extract<UiScreen, { kind: "model" }>, choice: ModelChoice, row: ModelEditorRow): void {
-  const current = settingsForModel(screen, choice.id)
-  const next =
-    row.kind === "context"
-      ? normalizeModelSettings({ ...current, contextLength: row.value }, choice)
-      : row.kind === "reasoning"
-        ? normalizeModelSettings({ ...current, reasoningEffort: row.value }, choice)
-        : normalizeModelSettings({ ...current, fast: !current.fast }, choice)
-
-  const nextScreen = { ...screen, currentModel: choice.id, settingsByModel: { ...screen.settingsByModel, [choice.id]: next } }
-  store.update((state) => ({ ...state, model: choice.id, modelSettings: next, screen: nextScreen }))
-  screen.onSelect(choice.id, next, false)
-}
 
 function modelEditorRows(choice: ModelChoice, settings: ModelSettings): ModelEditorRow[] {
   const rows: ModelEditorRow[] = []
@@ -2334,16 +2394,6 @@ function modelEditorRows(choice: ModelChoice, settings: ModelSettings): ModelEdi
   return rows
 }
 
-function filterModels(choices: ModelChoice[], filter: string): ModelChoice[] {
-  const normalized = filter.trim().toLowerCase()
-  if (!normalized) return choices
-  return choices.filter((choice) => `${choice.id} ${choice.name}`.toLowerCase().includes(normalized))
-}
-
-function findModelChoice(choices: ModelChoice[], model: string): ModelChoice | undefined {
-  return choices.find((choice) => choice.id === model)
-}
-
 function formatContext(contextLength: number | null | undefined): string {
   if (!contextLength) return "unknown"
   if (contextLength >= 1_000_000) return `${Math.round(contextLength / 1_000_000)}M`
@@ -2351,15 +2401,44 @@ function formatContext(contextLength: number | null | undefined): string {
   return String(contextLength)
 }
 
+const furnaceBannerWidth = 65
+
+function furnaceAsciiBanner(): string[] {
+  return [
+    "███████╗██╗   ██╗██████╗ ███╗   ██╗███████╗ ██████╗███████╗",
+    "██╔════╝██║   ██║██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
+    "█████╗  ██║   ██║██████╔╝██╔██╗ ██║███████╗██║     █████╗  ",
+    "██╔══╝  ██║   ██║██╔══██╗██║╚██╗██║██╔══██║██║     ██╔══╝  ",
+    "██║     ╚██████╔╝██║  ██║██║ ╚████║██║  ██║╚██████╗███████╗",
+    "╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝",
+  ]
+}
+
+function formatContextUsage(tokens: number, window: number): string {
+  return `${formatTokenCompact(tokens)}/${formatTokenCompact(window)}`
+}
+
+function formatTokenCompact(value: number): string {
+  const clamped = Math.max(0, value)
+  if (clamped >= 1_000_000) return formatCompactUnit(clamped / 1_000_000, "M")
+  if (clamped >= 1_000) return formatCompactUnit(clamped / 1_000, "K")
+  return String(Math.round(clamped))
+}
+
+function formatCompactUnit(value: number, unit: string): string {
+  const rounded = Math.round(value * 10) / 10
+  return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)}${unit}`
+}
+
 function formatFooterSettings(settings: ModelSettings): string {
-  const context = settings.contextLength ? formatContext(settings.contextLength) : "auto"
-  const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? settings.reasoningEffort : "auto"
-  const fast = settings.fast ? ", fast" : ""
-  return `${context} (${reasoning}${fast})`
+  const window = `window: ${settings.contextLength ? formatContext(settings.contextLength) : "auto"}`
+  const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? `reasoning: ${settings.reasoningEffort}` : undefined
+  const fast = settings.fast ? "fast" : undefined
+  return [window, reasoning, fast].filter(Boolean).join(" · ")
 }
 
 function modeLabel(state: UiState): string {
-  return state.mode === "plan" ? `plan${state.planPath ? ` ${state.planPath}` : ""}` : "agent"
+  return state.mode === "plan" ? "plan" : "agent"
 }
 
 function headerStatus(state: UiState): string {
@@ -2408,35 +2487,6 @@ function normalizeModelSettings(settings: ModelSettings, choice: ModelChoice | u
 
 function supportsFastContext(contextLength: number | undefined): boolean {
   return !contextLength || contextLength <= 300_000
-}
-
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now()
-  const diffMs = Math.max(0, now - timestamp)
-  const minute = 60 * 1000
-  const hour = 60 * minute
-  const day = 24 * hour
-
-  if (isYesterday(timestamp, now) && diffMs >= 15 * hour) return "yesterday"
-  if (diffMs < minute) return "just now"
-  if (diffMs < hour) {
-    const minutes = Math.max(1, Math.floor(diffMs / minute))
-    return `${minutes} min${minutes === 1 ? "" : "s"} ago`
-  }
-  if (diffMs < day) {
-    const hours = Math.max(1, Math.floor(diffMs / hour))
-    return `${hours} hour${hours === 1 ? "" : "s"} ago`
-  }
-
-  const days = Math.max(1, Math.floor(diffMs / day))
-  return `${days} day${days === 1 ? "" : "s"} ago`
-}
-
-function isYesterday(timestamp: number, now: number): boolean {
-  const date = new Date(timestamp)
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  return date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()
 }
 
 function shortenHome(path: string): string {

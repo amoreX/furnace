@@ -9,9 +9,10 @@ export type AppShellProps = {
 }
 
 export type AppShellHeaderProps = {
+  contextUsage?: string
   cwd: string
   model: string
-  status: string
+  status?: string
   settings: string
   title: string
 }
@@ -25,27 +26,29 @@ export type AppShellHintsProps = {
 }
 
 export function AppShell({ children }: AppShellProps): React.ReactNode {
-  const { columns, rows } = useWindowSize()
+  const { columns } = useWindowSize()
   return (
-    <Box flexDirection="column" height={rows} width={columns}>
+    <Box flexDirection="column" width={columns}>
       {children}
     </Box>
   )
 }
 
-function Header({ cwd, model, settings, status, title }: AppShellHeaderProps): React.ReactNode {
+function Header({ contextUsage, cwd, model, settings, status, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
+  const { columns } = useWindowSize()
+  const statusText = contextUsage ? `${contextUsage} · ${settings}` : truncateEnd(`${status ?? ""} · ${settings}`, 80)
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1} width={columns}>
       <Box justifyContent="space-between">
+        <Text color={theme.colors.mutedForeground}>{model}</Text>
         <Text color={theme.colors.primary} bold>
           Furnace
         </Text>
-        <Text color={theme.colors.mutedForeground}>{model}</Text>
       </Box>
       <Box justifyContent="space-between">
         <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
-        <Text color={theme.colors.mutedForeground}>{truncateEnd(`${status} · ${settings}`, 80)}</Text>
+        <Text color={theme.colors.mutedForeground}>{statusText}</Text>
       </Box>
     </Box>
   )
@@ -64,7 +67,7 @@ function Hints({ items }: AppShellHintsProps): React.ReactNode {
   const { columns } = useWindowSize()
   const text = truncateEnd(items.join("  ·  "), Math.max(1, columns - 4))
   return (
-    <Box borderStyle="single" borderColor={theme.colors.mutedForeground} paddingX={1}>
+    <Box borderStyle="single" borderColor={theme.colors.mutedForeground} paddingX={1} width={columns}>
       <Text color={theme.colors.mutedForeground}>{text}</Text>
     </Box>
   )

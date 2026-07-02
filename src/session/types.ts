@@ -28,6 +28,12 @@ export type EntryRecord<TData = unknown> = {
   data: TData
 }
 
+export type TurnUsage = {
+  completionTokens: number
+  costUsd: number | null
+  promptTokens: number
+}
+
 export type MessageEntryData = {
   content: string
   images?: Array<{
@@ -39,11 +45,23 @@ export type MessageEntryData = {
   hidden?: boolean
   model?: string
   source?: string
+  usage?: TurnUsage
+}
+
+export type MessageContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+
+export type FileSnapshot = {
+  existed: boolean
+  path: string
+  previousContent?: string
 }
 
 export type ToolCallEntryData = {
   arguments: string
   content?: string | null
+  fileSnapshot?: FileSnapshot
   name: string
   toolCallId: string
 }

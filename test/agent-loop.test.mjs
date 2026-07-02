@@ -30,10 +30,21 @@ test("agent turn compacts and retries once after context overflow", async () => 
           },
         }
       }
+      const sseData = 'data: {"choices":[{"delta":{"content":"done"},"finish_reason":null}]}\ndata: [DONE]\n'
+      let consumed = false
       return {
         ok: true,
-        async json() {
-          return { choices: [{ message: { content: "done" } }] }
+        body: {
+          getReader() {
+            return {
+              read() {
+                if (consumed) return Promise.resolve({ done: true, value: undefined })
+                consumed = true
+                return Promise.resolve({ done: false, value: new TextEncoder().encode(sseData) })
+              },
+              releaseLock() {},
+            }
+          },
         },
       }
     }

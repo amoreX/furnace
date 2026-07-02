@@ -30,6 +30,18 @@ test("termcn theme registry exposes all bundled themes", async () => {
     assert.equal(resolveTheme(name).name, name)
   }
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
+
+  const displayLabels = Object.fromEntries(themeChoices.map((theme) => [theme.name, theme.displayLabel]))
+  assert.deepEqual(displayLabels, {
+    flexoki: "Flexoki",
+    default: "Default",
+    dracula: "Dracula",
+    catppuccin: "Catppuccin",
+    "tokyo-night": "Tokyo Night",
+    nord: "Nord",
+    rosepine: "Rosé Pine",
+    gruvbox: "Gruvbox",
+  })
 })
 
 test("assistant markdown inline formatting is parsed for terminal rendering", async () => {
@@ -66,7 +78,7 @@ test("edit tool activity renders as a diff preview", async () => {
   )
 
   assert.deepEqual(lines.map((line) => line.tone), ["summary", "meta", "meta", "deletion", "addition", "context"])
-  assert.match(lines[0].text, /ok Edited docs\/design-choices\.md/)
+  assert.match(lines[0].text, /✓ Edited docs\/design-choices\.md/)
   assert.equal(lines[3].text.trim(), "-old line")
   assert.equal(lines[4].text.trim(), "+new line")
 })
@@ -107,7 +119,7 @@ test("ask_question tool activity renders questions and answers", async () => {
   )
 
   assert.deepEqual(lines.map((line) => line.tone), ["summary", "meta", "context", "addition"])
-  assert.equal(lines[0].text, "ok Asked 1 question")
+  assert.equal(lines[0].text, "✓ Asked 1 question")
   assert.match(lines[1].text, /What should the app be called/)
   assert.match(lines[2].text, /damn-bro-whatever/)
   assert.match(lines[3].text, /selected "damn-bro-whatever"/)
@@ -203,7 +215,7 @@ test("multi-select question prompt exposes a guarded continue choice", async () 
     ["option:0", "custom", "continue", "refuse"],
   )
   assert.equal(unanswered[2].disabled, true)
-  assert.equal(unanswered[2].description, "select at least one")
+  assert.equal(unanswered[2].description, "Select at least one")
 
   const answered = questionChoiceItems(
     {
@@ -217,7 +229,7 @@ test("multi-select question prompt exposes a guarded continue choice", async () 
   )
 
   assert.equal(answered[2].disabled, false)
-  assert.equal(answered[2].description, "next question")
+  assert.equal(answered[2].description, "Next question")
 })
 
 test("queued prompt previews truncate and track selected item", async () => {
@@ -267,12 +279,16 @@ test("slash autocomplete filters and inserts command text", async () => {
   const skillsView = slashAutocompleteMatches("/skills v", 9, items)
   assert.deepEqual(skillsView.map((item) => item.value), ["/skills view"])
   assert.equal(applySlashAutocomplete("/skills v", 9, skillsView[0]), "/skills view ")
+  assert.equal(isKnownSlashCommand("/resume"), true)
   assert.equal(isKnownSlashCommand("/history"), true)
   assert.equal(isKnownSlashCommand("/plan"), true)
   assert.equal(isKnownSlashCommand("/agent"), true)
   assert.equal(isKnownSlashCommand("/mode"), true)
   assert.equal(isKnownSlashCommand("/skills"), true)
   assert.equal(isKnownSlashCommand("/quit"), true)
+  assert.equal(isKnownSlashCommand("/permissions"), true)
+  assert.equal(isKnownSlashCommand("/reset-perms"), false)
+  assert.equal(isKnownSlashCommand("/historu"), false)
   assert.equal(isKnownSlashCommand("/not-real"), false)
 
   const manyItems = Array.from({ length: 12 }, (_, index) => ({
@@ -284,6 +300,60 @@ test("slash autocomplete filters and inserts command text", async () => {
   assert.equal(window.hiddenAbove > 0, true)
   assert.equal(window.visible.some((item) => item.value === "/command-10"), true)
   assert.equal(window.hiddenBelow, 0)
+})
+
+test("browsable autocomplete items support argument substring matching and stay open on exact match", async () => {
+  const { slashAutocompleteMatches } = await import("../dist/ui/components/prompt-input.js")
+
+  const themeItems = [
+    { browsable: true, label: "Tokyo Night", value: "/theme tokyo-night", description: "Cool blue night palette" },
+    { browsable: true, label: "Gruvbox", value: "/theme gruvbox", description: "Warm retro palette" },
+  ]
+  assert.deepEqual(
+    slashAutocompleteMatches("/theme", 6, themeItems).map((item) => item.value),
+    ["/theme tokyo-night", "/theme gruvbox"],
+  )
+  const exactBrowsable = slashAutocompleteMatches("/theme tokyo-night", 18, themeItems)
+  assert.deepEqual(exactBrowsable.map((item) => item.value), ["/theme tokyo-night"])
+
+  const modelItems = [
+    { browsable: true, label: "Claude 3.5 Sonnet", value: "/model anthropic/claude-3.5-sonnet", description: "" },
+    { browsable: true, label: "GPT-4o", value: "/model openai/gpt-4o", description: "" },
+  ]
+  const substringMatch = slashAutocompleteMatches("/model claude", 13, modelItems)
+  assert.deepEqual(substringMatch.map((item) => item.value), ["/model anthropic/claude-3.5-sonnet"])
+
+  const nonBrowsableExact = slashAutocompleteMatches("/theme", 6, [
+    { label: "/theme [name]", value: "/theme", insertText: "/theme ", description: "Select theme" },
+  ])
+  assert.deepEqual(nonBrowsableExact, [])
+})
+
+test("/resume is the primary history command name, with /history kept as an alias", async () => {
+  const { isHistoryCommand } = await import("../dist/commands.js")
+
+  assert.equal(isHistoryCommand("/resume"), true)
+  assert.equal(isHistoryCommand("/history"), true)
+  assert.equal(isHistoryCommand("/historu"), false)
+  assert.equal(isHistoryCommand("/model"), false)
+})
+
+test("argumentScopeFor detects bare and in-progress /theme, /model, /resume commands", async () => {
+  const { argumentScopeFor } = await import("../dist/commands.js")
+
+  assert.equal(argumentScopeFor("/theme"), "theme")
+  assert.equal(argumentScopeFor("/model"), "model")
+  assert.equal(argumentScopeFor("/resume"), "history")
+  assert.equal(argumentScopeFor("/history"), "history")
+
+  assert.equal(argumentScopeFor("/theme tokyo-night"), "theme")
+  assert.equal(argumentScopeFor("/model claude"), "model")
+  assert.equal(argumentScopeFor("/resume 2"), "history")
+
+  assert.equal(argumentScopeFor("/th"), undefined)
+  assert.equal(argumentScopeFor("hello"), undefined)
+  assert.equal(argumentScopeFor(""), undefined)
+  assert.equal(argumentScopeFor("/permissions"), undefined)
 })
 
 test("skill_manage tool activity renders proposed SKILL.md", async () => {
@@ -302,9 +372,67 @@ test("skill_manage tool activity renders proposed SKILL.md", async () => {
     100,
   )
 
-  assert.equal(lines[0].text, "> Create skill terminal-polish")
+  assert.equal(lines[0].text, "◆ Create skill terminal-polish")
   assert.match(lines[1].text, /\.furnace\/skills\/terminal-polish\/SKILL\.md/)
   assert.equal(lines.some((line) => line.text.includes("disable-model-invocation: true") && line.tone === "addition"), true)
+})
+
+test("skill tool activity renders a clean used-skill line", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-skill",
+      name: "skill",
+      status: "done",
+      args: JSON.stringify({ name: "ce-plan" }),
+      result: '<skill_content name="ce-plan">...</skill_content>',
+    },
+    100,
+  )
+
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].text, "✓ Used skill: ce-plan")
+  assert.equal(lines[0].tone, "summary")
+})
+
+test("markdown tables render with aligned columns and no horizontal rules", async () => {
+  const { buildTranscriptLinesForTest } = await import("../dist/ui/ink-terminal.js")
+  const content = "Intro line\n\n---\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |"
+  const lines = buildTranscriptLinesForTest([{ role: "assistant", content }], 80)
+
+  assert.equal(lines.some((line) => line.kind === "table" && line.tableTone === "header" && /Name/.test(line.text) && /Age/.test(line.text)), true)
+  assert.equal(lines.some((line) => line.kind === "table" && line.tableTone === "divider" && line.text.includes("┼")), true)
+  assert.equal(lines.some((line) => line.kind === "table" && line.tableTone === "row" && /Alice/.test(line.text)), true)
+  assert.equal(lines.some((line) => /^-{3,}$/.test(line.text.trim())), false)
+})
+
+test("fenced code blocks render as distinct lines without inline markdown parsing", async () => {
+  const { buildTranscriptLinesForTest } = await import("../dist/ui/ink-terminal.js")
+  const content = "Before text\n\n```ts\nconst x = *not italic*\nfunction f() {}\n```\n\nAfter text"
+  const lines = buildTranscriptLinesForTest([{ role: "assistant", content }], 80)
+
+  const openFence = lines.find((line) => line.kind === "code-fence" && line.codeFenceOpen)
+  const closeFence = lines.find((line) => line.kind === "code-fence" && !line.codeFenceOpen)
+  assert.ok(openFence)
+  assert.ok(closeFence)
+  assert.equal(openFence.text, "ts")
+
+  const codeLines = lines.filter((line) => line.kind === "code")
+  assert.equal(codeLines.length, 2)
+  assert.equal(codeLines[0].text, "const x = *not italic*")
+  assert.equal(codeLines[1].text, "function f() {}")
+
+  assert.equal(lines.some((line) => line.kind === "content" && line.text === "Before text"), true)
+  assert.equal(lines.some((line) => line.kind === "content" && line.text === "After text"), true)
+})
+
+test("unclosed fenced code blocks still render remaining lines as code", async () => {
+  const { buildTranscriptLinesForTest } = await import("../dist/ui/ink-terminal.js")
+  const content = "```python\nprint('hi')"
+  const lines = buildTranscriptLinesForTest([{ role: "assistant", content }], 80)
+
+  assert.equal(lines.some((line) => line.kind === "code-fence" && line.codeFenceOpen && line.text === "python"), true)
+  assert.equal(lines.some((line) => line.kind === "code" && line.text === "print('hi')"), true)
 })
 
 test("task previews hide child session ids", async () => {

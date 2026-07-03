@@ -65,6 +65,16 @@ export class TaskManager implements TaskRunner {
     return true
   }
 
+  recordToolActivity(childSessionId: string, toolName: string): void {
+    for (const group of this.groups.values()) {
+      const record = group.records.find((candidate) => candidate.childSessionId === childSessionId)
+      if (!record) continue
+      record.lastToolName = toolName
+      this.publish(group.parentSessionId)
+      return
+    }
+  }
+
   status(parentSessionId: string): TaskStatusSnapshot {
     const active = [...this.groups.values()].filter((group) => group.parentSessionId === parentSessionId)
     const recent = this.recent.get(parentSessionId) || []

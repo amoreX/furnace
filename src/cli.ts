@@ -161,7 +161,7 @@ async function runInteractive(input: {
   let transientStatusToken = 0
   const initialSession = input.store.getSession(sessionId)
   let terminal!: FurnaceTerminal
-  const taskManager = new TaskManager({
+  const taskManager: TaskManager = new TaskManager({
     createChildTask: ({ description, parentSessionId, prompt }) => {
       const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
       permissions.inheritSession(child.id, parentSessionId)
@@ -177,7 +177,7 @@ async function runInteractive(input: {
         status: "running",
       } satisfies TaskRecord
     },
-    executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal }),
+    executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager, terminal }),
     onGroupComplete: ({ backgrounded, parentSessionId, records }) => {
       if (!backgrounded) return
       const pendingRecords = [...(pendingBackgroundRecords.get(parentSessionId) || []), ...records]
@@ -1347,7 +1347,7 @@ async function runSingleTurn(input: {
   terminal?: FurnaceTerminal
 }): Promise<void> {
   const permissions = input.permissions || new SessionPermissionStore()
-  const taskRunner =
+  const taskRunner: TaskManager =
     input.taskRunner ||
     new TaskManager({
       createChildTask: ({ description, parentSessionId, prompt }) => {
@@ -1374,7 +1374,7 @@ async function runSingleTurn(input: {
           status: "running",
         } satisfies TaskRecord
       },
-      executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal: input.terminal }),
+      executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager: taskRunner, terminal: input.terminal }),
     })
 
   const clipImage = input.image
@@ -1548,6 +1548,7 @@ async function runSubagentTask(input: {
   record: TaskRecord
   signal: AbortSignal
   store: SessionStore
+  taskManager?: TaskManager
   terminal?: FurnaceTerminal
 }): Promise<string> {
   const prompt = formatSubagentPrompt(input.record)
@@ -1615,6 +1616,7 @@ async function runSubagentTask(input: {
         name: call.name,
         toolCallId: call.id,
       })
+      input.taskManager?.recordToolActivity(input.record.childSessionId, call.name)
     },
     onToolResult: (call, content) => {
       input.store.appendToolResult(input.record.childSessionId, {

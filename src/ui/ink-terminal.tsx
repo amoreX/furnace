@@ -552,7 +552,7 @@ function FurnaceApp({
       store.update({ sidebarEnabled: next })
       store.onSidebarToggle?.(next)
     }
-    if (key.ctrl && _input === "t") {
+    if (key.ctrl && (_input === "t" || _input === "k")) {
       if (state.tasks.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "tasks" ? "input" : "tasks" }))
     }
@@ -719,7 +719,7 @@ function hintItemsForState(state: UiState): string[] {
   const extras: string[] = []
   if (state.planAction) extras.push("Up for plan actions")
   if (state.question) extras.push("Up to answer question")
-  if (state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+T tasks")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+K tasks")
   if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
   return [...extras, "Tab to switch mode", "Ctrl+b sidebar", ...hintItems(state.screen.kind)]
 }
@@ -1156,7 +1156,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
       store.taskHandlers.onBackground?.()
       store.update({ focus: "input" })
     }
-    if (key.ctrl && input === "t") {
+    if (key.ctrl && (input === "t" || input === "k")) {
       store.update({ focus: "input" })
     }
   }, { isActive: active })
@@ -1168,9 +1168,12 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
         <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up for tasks"}</Text>
       </Box>
       {taskPreviewItems(tasks, selected).map((line) => (
-        <Text key={line.id} color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
-          {line.selected ? "› " : "  "}{line.text}
-        </Text>
+        <Box key={line.id} justifyContent="space-between">
+          <Text color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
+            {line.selected ? "› " : "  "}{line.text}
+          </Text>
+          {line.lastToolName ? <Text color={theme.colors.mutedForeground}>{line.lastToolName}</Text> : null}
+        </Box>
       ))}
       <Text color={theme.colors.mutedForeground}>
         {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
@@ -1180,11 +1183,12 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
   )
 }
 
-export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
+export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; lastToolName?: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
   const clamped = Math.min(Math.max(0, selected), Math.max(0, tasks.length - 1))
   const start = Math.min(Math.max(0, tasks.length - maxItems), Math.max(0, clamped - Math.floor(maxItems / 2)))
   return tasks.slice(start, start + maxItems).map((task, index) => ({
     id: task.id,
+    lastToolName: task.status === "running" ? task.lastToolName : undefined,
     selected: start + index === clamped,
     status: task.status,
     text: formatTaskPreviewText(task),

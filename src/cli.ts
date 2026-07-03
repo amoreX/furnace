@@ -1360,7 +1360,11 @@ async function runSingleTurn(input: {
       executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager: taskRunner, terminal: input.terminal }),
     })
 
-  const referencedImages = (input.images ?? []).filter((img) => img.label && input.prompt.includes(`[Image #${img.label}]`))
+  const referencedImages = (input.images ?? []).filter((img) => {
+    if (!img.label || !input.prompt.includes(`[Image #${img.label}]`)) return false
+    if (img.source.type === "base64" && !img.source.data) return false
+    return true
+  })
   input.store.appendMessage(input.sessionId, "user", input.prompt, {
     ...(input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : {}),
     ...(referencedImages.length > 0 ? { images: referencedImages } : {}),

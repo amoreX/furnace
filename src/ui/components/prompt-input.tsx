@@ -20,7 +20,7 @@ export type PromptInputProps = {
   onEmptyDown?: () => void
   onInterrupt?: () => void
   onEmptyUp?: () => void
-  onImageAttach?: () => Promise<{ label: string } | undefined>
+  onImageAttach?: () => { label: string } | undefined
   onModeCycle?: (direction: 1 | -1) => void
   onOpenEditor?: (draft: string) => Promise<string>
   onSubmit: (value: string) => void
@@ -112,24 +112,15 @@ export function PromptInput({
 
   const cursorOffsetRef = React.useRef(cursorOffset)
   cursorOffsetRef.current = cursorOffset
-  // Bumped on every submit so an image attach that resolves after the user
-  // already sent the current draft doesn't splice its token into whatever
-  // message comes next (the attach's own store-side registration is harmless
-  // in that case — the send path only keeps images whose token is present in
-  // the submitted text).
-  const submitGenerationRef = React.useRef(0)
 
   const triggerImageAttach = React.useCallback(() => {
     if (!onImageAttach) return
-    const generationAtStart = submitGenerationRef.current
-    void onImageAttach().then((resolved) => {
-      if (!resolved) return
-      if (submitGenerationRef.current !== generationAtStart) return
-      const token = `[Image #${resolved.label}] `
-      const insertAt = cursorOffsetRef.current
-      setValue((current) => current.slice(0, insertAt) + token + current.slice(insertAt))
-      setCursorOffset(insertAt + token.length)
-    })
+    const resolved = onImageAttach()
+    if (!resolved) return
+    const token = `[Image #${resolved.label}] `
+    const insertAt = cursorOffsetRef.current
+    setValue((current) => current.slice(0, insertAt) + token + current.slice(insertAt))
+    setCursorOffset(insertAt + token.length)
   }, [onImageAttach, setValue])
 
   React.useEffect(() => {
@@ -336,7 +327,6 @@ export function PromptInput({
           setValue("")
           setCursorOffset(0)
           setBrowsableAnchor(undefined)
-          submitGenerationRef.current += 1
           onSubmit(next.trim())
           return
         }
@@ -404,7 +394,6 @@ export function PromptInput({
       historySavedDraft.current = ""
       setValue("")
       setCursorOffset(0)
-      submitGenerationRef.current += 1
       onSubmit(submitted)
       return
     }

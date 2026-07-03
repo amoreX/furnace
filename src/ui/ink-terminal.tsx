@@ -563,41 +563,67 @@ function FurnaceApp({
   )
   
   
-  const attachClipboardImage = React.useCallback(async (): Promise<{ label: string } | undefined> => {
-    try {
-      const { saveClipboardImage } = await import("../utils/clipboard.js")
-      const { loadImageAsBase64 } = await import("../utils/images.js")
+  // Label -> in-flight background load, so submit can wait for a load that
+  // hasn't finished yet without blocking the paste gesture itself.
+  const pendingAttachLoads = React.useRef(new Map<string, Promise<void>>())
 
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
-      const unique = Math.random().toString(36).slice(2, 8)
-      const furnaceDir = state.cwd + "/.furnace/images"
-      const imagePath = `${furnaceDir}/clip_${timestamp}_${unique}.png`
-
-      const success = await saveClipboardImage(imagePath)
-      if (!success) return undefined
-
-      const result = await loadImageAsBase64(imagePath)
-      if (!result.success) return undefined
-
-      let assignedLabel: string | undefined
-      store.update((s) => {
-        const label = String(s.nextImageLabel)
-        assignedLabel = label
-        const attachment = createImageAttachment(result.source, {
-          displayName: `Image ${label}`,
-          size: result.size,
-          label,
-        })
-        return {
-          ...s,
-          pastedImages: [...s.pastedImages, attachment],
-          nextImageLabel: s.nextImageLabel + 1,
-        }
+  // Inserts the [Image #N] token immediately (synchronous — no visible delay
+  // on paste) and captures the actual clipboard image in the background.
+  // `attachment` is a plain mutable object shared by reference between the
+  // store's pastedImages array and any already-submitted snapshot of it, so
+  // filling in its `source`/`size` later is visible wherever that reference
+  // is held, even after the store's own array has moved on.
+  const attachClipboardImage = React.useCallback((): { label: string } | undefined => {
+    let assignedLabel: string | undefined
+    let attachment: ImageAttachment | undefined
+    store.update((s) => {
+      const label = String(s.nextImageLabel)
+      assignedLabel = label
+      attachment = createImageAttachment({ type: "base64", media_type: "image/png", data: "" }, {
+        displayName: `Image ${label}`,
+        label,
       })
-      return assignedLabel ? { label: assignedLabel } : undefined
-    } catch {
-      return undefined
-    }
+      return {
+        ...s,
+        pastedImages: [...s.pastedImages, attachment],
+        nextImageLabel: s.nextImageLabel + 1,
+      }
+    })
+    if (!assignedLabel || !attachment) return undefined
+    const label = assignedLabel
+    const pending = attachment
+    const cwd = state.cwd
+
+    const load = (async () => {
+      try {
+        const { saveClipboardImage } = await import("../utils/clipboard.js")
+        const { loadImageAsBase64 } = await import("../utils/images.js")
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+        const unique = Math.random().toString(36).slice(2, 8)
+        const imagePath = `${cwd}/.furnace/images/clip_${timestamp}_${unique}.png`
+
+        const success = await saveClipboardImage(imagePath)
+        if (!success) throw new Error("No image found in clipboard")
+
+        const result = await loadImageAsBase64(imagePath)
+        if (!result.success) throw new Error(result.error)
+
+        pending.source = result.source
+        pending.size = result.size
+      } catch {
+        // Drop the unresolved attachment if it's still pending (i.e. not
+        // already snapshotted into a submitted message) and let the user know.
+        store.update((s) => ({
+          ...s,
+          pastedImages: s.pastedImages.filter((img) => img !== pending),
+          statusNotice: "No image found in clipboard. Copy an image first, then paste.",
+        }))
+      } finally {
+        pendingAttachLoads.current.delete(label)
+      }
+    })()
+    pendingAttachLoads.current.set(label, load)
+    return { label }
   }, [state.cwd, store])
 
   const { columns } = useWindowSize()
@@ -654,7 +680,15 @@ function FurnaceApp({
             onSubmit={(text) => {
               const images = store.getSnapshot().pastedImages
               store.update({ pastedImages: [] })
-              onSubmit(text, images)
+              const pending = images
+                .filter((img) => img.label && text.includes(`[Image #${img.label}]`))
+                .map((img) => pendingAttachLoads.current.get(img.label as string))
+                .filter((load): load is Promise<void> => Boolean(load))
+              if (pending.length === 0) {
+                onSubmit(text, images)
+                return
+              }
+              void Promise.all(pending).then(() => onSubmit(text, images))
             }}
             placeholder={promptPlaceholder(state)}
             planMode={state.mode === "plan"}
@@ -1560,9 +1594,6 @@ function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
   lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "User" : "Assistant" })
-  if (message.role === "user" && message.imageCount && message.imageCount > 0) {
-    lines.push({ kind: "content", messageIndex, role: message.role, text: `📎 ${message.imageCount} image${message.imageCount === 1 ? "" : "s"} attached` })
-  }
   const displayContent: string = typeof message.content === "string" ? message.content : ""
   if (message.role === "assistant") {
     const planPreview = splitSavedPlanPreview(displayContent)

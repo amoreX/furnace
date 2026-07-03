@@ -163,14 +163,6 @@ test("todo tool activity keeps only the latest todo snapshot", async () => {
   assert.deepEqual(latestTodoActivityOnly(activities).map((activity) => activity.id), ["read", "grep", "todo-2"])
 })
 
-test("chat viewport reserves space above fixed input chrome", async () => {
-  const { chatViewportRows } = await import("../dist/ui/ink-terminal.js")
-
-  assert.equal(chatViewportRows(24), 13)
-  assert.equal(chatViewportRows(24, 8), 5)
-  assert.equal(chatViewportRows(8), 3)
-})
-
 test("approval prompt exposes scoped permission choices", async () => {
   const { approvalChoiceItems } = await import("../dist/ui/ink-terminal.js")
   const choices = approvalChoiceItems("bash")

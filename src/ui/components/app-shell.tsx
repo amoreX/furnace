@@ -12,6 +12,7 @@ export type AppShellHeaderProps = {
   contextUsage?: string
   cwd: string
   model: string
+  subtitle?: string
   status?: string
   settings: string
   title: string
@@ -34,7 +35,7 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
   )
 }
 
-function Header({ contextUsage, cwd, model, settings, status, title }: AppShellHeaderProps): React.ReactNode {
+function Header({ contextUsage, cwd, model, settings, status, subtitle, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
   const { columns } = useWindowSize()
   const modelText = truncateMiddle(model, Math.max(1, columns - "Furnace".length - 8))
@@ -51,6 +52,7 @@ function Header({ contextUsage, cwd, model, settings, status, title }: AppShellH
         <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
         <Text color={theme.colors.mutedForeground}>{statusText}</Text>
       </Box>
+      {subtitle ? <Text color={theme.colors.warning}>{truncateMiddle(subtitle, 96)}</Text> : null}
     </Box>
   )
 }

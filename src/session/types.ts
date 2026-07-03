@@ -3,16 +3,20 @@ export type SessionRecord = {
   title: string
   cwd: string
   activeLeafId: string | null
-  // Set only when this session is a new conversation forked from another session.
-  // Same-session branching should move activeLeafId instead.
+  // Parent conversation for relationship-linked sessions. Check relationType
+  // before interpreting this field; forks and subagents both use it.
   parentSessionId: string | null
   // Entry id in the parent session where the fork begins. Fork creation should
   // copy/replay only the root-to-this-entry path from the parent session.
   forkedFromEntryId: string | null
+  relationType: SessionRelationType
+  rootSessionId: string | null
   createdAt: number
   updatedAt: number
   archivedAt: number | null
 }
+
+export type SessionRelationType = "fork" | "subagent" | "delegation" | "compression" | "tool" | null
 
 export type EntryType = "message" | "tool_call" | "tool_result" | "compaction" | "branch_summary" | "model_change" | "custom"
 

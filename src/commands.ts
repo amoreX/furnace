@@ -16,6 +16,8 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/new", description: "Start a fresh conversation" },
   { name: "/resume", aliases: ["/history"], description: "Open saved conversations" },
   { name: "/image", description: "Attach image to next message", insertText: "/image ", usage: "/image <path|url>" },
+  { name: "/fork", description: "Fork from current point or a prior user prompt", insertText: "/fork ", usage: "/fork [current|prompt-preview]" },
+  { name: "/clone", description: "Fork from the current conversation tip" },
   { name: "/model", description: "Select model", usage: "/model" },
   { name: "/plan", description: "Switch to plan mode", insertText: "/plan ", usage: "/plan [prompt]" },
   { name: "/agent", description: "Switch to normal agent mode" },
@@ -61,13 +63,14 @@ export function isKnownSlashCommand(command: string): boolean {
   return slashCommandNames.has(command)
 }
 
-export type AutocompleteScope = "history" | "model" | "theme"
+export type AutocompleteScope = "fork" | "history" | "model" | "theme"
 
 export function argumentScopeFor(value: string): AutocompleteScope | undefined {
   if (!value.startsWith("/")) return undefined
   const spaceIndex = value.indexOf(" ")
   const head = (spaceIndex < 0 ? value : value.slice(0, spaceIndex)).toLowerCase()
   if (isHistoryCommand(head)) return "history"
+  if (head === "/fork") return "fork"
   if (head === "/model") return "model"
   if (head === "/theme") return "theme"
   return undefined

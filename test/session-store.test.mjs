@@ -12,7 +12,6 @@ test("session store appends entries as a Pi-style active leaf chain", async () =
   try {
     const store = SessionStore.open(dir)
     const session = store.createSession({ cwd: dir, title: "Test session" })
-
     const first = store.appendMessage(session.id, "user", "hello")
     const second = store.appendToolCall(session.id, { arguments: "{\"path\":\"notes.txt\"}", name: "read", toolCallId: "call_1" })
     const third = store.appendToolResult(session.id, { content: "1|hello", name: "read", toolCallId: "call_1" })
@@ -29,6 +28,105 @@ test("session store appends entries as a Pi-style active leaf chain", async () =
     )
     assert.equal(path.map((entry) => entry.type).join(","), "message,tool_call,tool_result,message")
     assert.equal(store.getSession(session.id).activeLeafId, fourth.id)
+
+    store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("session store only exposes fork points after actual conversation has happened", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+
+  try {
+    const store = SessionStore.open(dir)
+    const session = store.createSession({ cwd: dir, title: "Fork guards" })
+
+    assert.throws(() => store.forkSession({ sourceSessionId: session.id }), /empty session/)
+
+    store.appendMessage(session.id, "user", "first prompt")
+    assert.equal(store.listForkPoints(session.id).length, 0)
+    assert.throws(() => store.forkSession({ sourceSessionId: session.id }), /actual conversation/)
+
+    store.appendMessage(session.id, "assistant", "first answer")
+    const second = store.appendMessage(session.id, "user", "second prompt")
+    assert.deepEqual(store.listForkPoints(session.id).map((point) => point.entry.id), [second.id])
+
+    store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("session store blocks forking from fork sessions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+
+  try {
+    const store = SessionStore.open(dir)
+    const parent = store.createSession({ cwd: dir, title: "Parent" })
+    store.appendMessage(parent.id, "user", "first prompt")
+    store.appendMessage(parent.id, "assistant", "first answer")
+    const second = store.appendMessage(parent.id, "user", "second prompt")
+
+    const fork = store.forkSession({ position: "before", sourceEntryId: second.id, sourceSessionId: parent.id }).forkedSession
+    assert.equal(store.listForkPoints(fork.id).length, 0)
+    assert.throws(() => store.forkSession({ sourceSessionId: fork.id }), /Forking from a fork is not supported/)
+
+    store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("session store forks before a user prompt and returns the selected prompt metadata", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+
+  try {
+    const store = SessionStore.open(dir)
+    const parent = store.createSession({ cwd: dir, title: "Main work" })
+    const first = store.appendMessage(parent.id, "user", "first prompt")
+    store.appendMessage(parent.id, "assistant", "first answer")
+    const selected = store.appendMessage(parent.id, "user", "try sqlite instead")
+    store.appendMessage(parent.id, "assistant", "sqlite answer")
+
+    const result = store.forkSession({ position: "before", sourceEntryId: selected.id, sourceSessionId: parent.id })
+    const fork = store.getSession(result.forkedSession.id)
+    const forkPath = store.getActivePath(fork.id)
+
+    assert.equal(fork.parentSessionId, parent.id)
+    assert.equal(fork.relationType, "fork")
+    assert.equal(fork.rootSessionId, parent.id)
+    assert.equal(fork.forkedFromEntryId, selected.id)
+    assert.equal(result.prefillPrompt, "try sqlite instead")
+    assert.equal(fork.title, "Fork: try sqlite instead")
+    assert.deepEqual(forkPath.map((entry) => entry.data.content), ["first prompt", "first answer"])
+    assert.equal(forkPath[0].parentEntryId, null)
+    assert.notEqual(forkPath[0].id, first.id)
+    assert.deepEqual(store.listForkChildren(parent.id).map((session) => session.id), [fork.id])
+
+    store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("session store lists history with forks but hides subagents", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+
+  try {
+    const store = SessionStore.open(dir)
+    const parent = store.createSession({ cwd: dir, title: "Parent" })
+    store.appendMessage(parent.id, "user", "prefix")
+    store.appendMessage(parent.id, "assistant", "prefix answer")
+    const prompt = store.appendMessage(parent.id, "user", "branch me")
+    const fork = store.forkSession({ position: "before", sourceEntryId: prompt.id, sourceSessionId: parent.id }).forkedSession
+    const subagent = store.createSession({ cwd: dir, title: "Worker", parentSessionId: parent.id, relationType: "subagent", rootSessionId: parent.id })
+    store.appendMessage(subagent.id, "user", "hidden worker")
+
+    const history = store.listHistorySessions(dir).map((session) => session.id)
+    assert.ok(history.includes(parent.id))
+    assert.ok(history.includes(fork.id))
+    assert.ok(!history.includes(subagent.id))
 
     store.close()
   } finally {
@@ -94,10 +192,12 @@ test("session store records parent-linked child sessions", async () => {
   try {
     const store = SessionStore.open(dir)
     const parent = store.createSession({ cwd: dir, title: "Parent" })
-    const child = store.createSession({ cwd: dir, title: "Child", parentSessionId: parent.id })
+    const child = store.createSession({ cwd: dir, title: "Child", parentSessionId: parent.id, relationType: "subagent", rootSessionId: parent.id })
 
     assert.equal(store.getSession(child.id).parentSessionId, parent.id)
     assert.equal(store.getSession(child.id).forkedFromEntryId, null)
+    assert.equal(store.getSession(child.id).relationType, "subagent")
+    assert.equal(store.getSession(child.id).rootSessionId, parent.id)
 
     store.close()
   } finally {

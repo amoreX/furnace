@@ -7,11 +7,12 @@
     "furnace": "./dist/cli.js"
   },
   "scripts": {
-    "dev": "tsx src/cli.ts",
-    "build": "tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js='import { createRequire } from \"node:module\";const require = createRequire(import.meta.url);' --external:better-sqlite3 --external:react-devtools-core",
-    "start": "node dist/cli.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test"
+    "check-node": "./scripts/with-node22.sh node scripts/ensure-node-version.mjs",
+    "dev": "./scripts/with-node22.sh tsx src/cli.ts",
+    "build": "./scripts/with-node22.sh sh -c 'tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --external:react-devtools-core'",
+    "start": "./scripts/with-node22.sh node dist/cli.js",
+    "typecheck": "./scripts/with-node22.sh tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && ./scripts/with-node22.sh node --test"
   },
   "keywords": [
     "ai",
@@ -43,6 +44,6 @@
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0 <23"
   }
 }

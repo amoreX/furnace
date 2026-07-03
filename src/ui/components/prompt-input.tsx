@@ -39,6 +39,7 @@ export type PromptAutocompleteItem = {
   description?: string
   insertText?: string
   label: string
+  relatedValue?: string
   value: string
 }
 
@@ -563,6 +564,7 @@ export function PromptInput({
     const safeIndex = Math.max(0, Math.min(selectedAutocompleteIndex, sidebarItems.length - 1))
     const windowBegin = Math.max(0, Math.min(safeIndex - Math.floor(SIDEBAR_VISIBLE_ITEMS / 2), sidebarItems.length - SIDEBAR_VISIBLE_ITEMS))
     const visibleSidebarItems = sidebarItems.slice(windowBegin, windowBegin + SIDEBAR_VISIBLE_ITEMS)
+    const selectedRelatedValue = sidebarItems[safeIndex]?.relatedValue
     const indent = " ".repeat(prefixCols)
 
     // ── ghost-text suggestion ─────────────────────────────────────────────────
@@ -692,6 +694,7 @@ export function PromptInput({
                 {visibleSidebarItems.map((item, i) => {
                   const absIdx = windowBegin + i
                   const isSelected = absIdx === safeIndex
+                  const isRelated = !isSelected && selectedRelatedValue !== undefined && item.value === selectedRelatedValue
                   // Inner content width: total - 2 borders - 2 paddingX
                   const innerWidth = SIDEBAR_WIDTH - 4
                   // 2 prefix + 1 separator = 3 overhead; split remainder 50/50
@@ -702,14 +705,14 @@ export function PromptInput({
                     // Single Text with wrap=truncate ensures the row never exceeds one line
                     <Text key={item.value} wrap="truncate">
                       <Text
-                        color={isSelected ? theme.colors.primary : theme.colors.foreground}
-                        bold={isSelected}
+                        color={isSelected ? theme.colors.primary : isRelated ? theme.colors.warning : theme.colors.foreground}
+                        bold={isSelected || isRelated}
                       >
-                        {isSelected ? "› " : "  "}
+                        {isSelected ? "› " : isRelated ? "↳ " : "  "}
                         {truncateSidebar(item.label, labelWidth)}
                       </Text>
                       {item.description ? (
-                        <Text color={theme.colors.mutedForeground}>
+                        <Text color={isRelated ? theme.colors.warning : theme.colors.mutedForeground}>
                           {" "}{truncateSidebar(item.description, descWidth)}
                         </Text>
                       ) : null}
@@ -804,6 +807,7 @@ export function PromptInput({
 function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] }): React.ReactNode {
   const theme = useTheme()
   const window = autocompleteWindow(items)
+  const selectedRelatedValue = items.find((item) => item.selected)?.relatedValue
   return (
     <Box borderStyle="round" borderColor={theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
@@ -811,20 +815,23 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
         <Text color={theme.colors.mutedForeground}>tab/enter complete</Text>
       </Box>
       {window.hiddenAbove > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenAbove} more above</Text> : null}
-      {window.visible.map((item) => (
+      {window.visible.map((item) => {
+        const isRelated = !item.selected && selectedRelatedValue !== undefined && item.value === selectedRelatedValue
+        return (
         <Box key={item.value}>
           <Box flexShrink={0} minWidth={28}>
-            <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected} wrap="truncate">
-              {item.selected ? "› " : "  "}{item.label}
+            <Text color={item.selected ? theme.colors.primary : isRelated ? theme.colors.warning : theme.colors.foreground} bold={item.selected || isRelated} wrap="truncate">
+              {item.selected ? "› " : isRelated ? "↳ " : "  "}{item.label}
             </Text>
           </Box>
           {item.description ? (
-            <Text color={theme.colors.mutedForeground} wrap="truncate">
+            <Text color={isRelated ? theme.colors.warning : theme.colors.mutedForeground} wrap="truncate">
               {"  "}{item.description}
             </Text>
           ) : null}
         </Box>
-      ))}
+        )
+      })}
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>
   )

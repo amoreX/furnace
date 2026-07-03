@@ -162,7 +162,7 @@ async function runInteractive(input: {
   let terminal!: FurnaceTerminal
   const taskManager: TaskManager = new TaskManager({
     createChildTask: ({ description, parentSessionId, prompt }) => {
-      const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
+      const child = input.store.createSession({ cwd: input.cwd, parentSessionId, relationType: "subagent", rootSessionId: parentSessionId, title: `${description} (subagent)` })
       permissions.inheritSession(child.id, parentSessionId)
       inheritPlanMode(parentSessionId, child.id)
       return {
@@ -245,7 +245,9 @@ async function runInteractive(input: {
       if (scope === "theme") {
         terminal.setSlashCommandItems(themeAutocompleteItems())
       } else if (scope === "history") {
-        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listSessions(input.cwd)))
+        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listHistorySessions(input.cwd)))
+      } else if (scope === "fork") {
+        terminal.setSlashCommandItems(forkAutocompleteItems())
       } else {
         void modelListCache.promise.then((models) => {
           if (currentAutocompleteScope === "model") terminal.setSlashCommandItems(modelAutocompleteItems(models))
@@ -369,6 +371,10 @@ async function runInteractive(input: {
         showTransientStatus("/compact is available after the current turn finishes.")
         return
       }
+      if (command.name === "/fork" || command.name === "/clone") {
+        showTransientStatus(`${command.name} is available after the current turn finishes.`)
+        return
+      }
       if (command.name === "/plan" || command.name === "/agent" || command.name === "/mode") {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)
         return
@@ -452,6 +458,14 @@ async function runInteractive(input: {
     }
     if (command.name === "/compact") {
       await compactCurrentSession(command.argument)
+      return
+    }
+    if (command.name === "/fork") {
+      await handleForkCommand(command.argument)
+      return
+    }
+    if (command.name === "/clone") {
+      await handleForkCommand("current")
       return
     }
     if (command.name === "/model") {
@@ -589,26 +603,57 @@ async function runInteractive(input: {
   }
 
   function resumeAutocompleteItems(sessions: ReturnType<SessionStore["listSessions"]>): PromptAutocompleteItem[] {
-    return sessions.map((session, index) => ({
-      browsable: true,
-      description: formatRelativeTime(session.updatedAt),
-      label: session.title,
-      value: `/resume ${index + 1}`,
-    }))
+    return sessions.map((session, index) => {
+      const parentIndex = session.parentSessionId ? sessions.findIndex((candidate) => candidate.id === session.parentSessionId) : -1
+      return {
+        browsable: true,
+        description: session.relationType === "fork" && session.parentSessionId
+          ? `${formatRelativeTime(session.updatedAt)} · fork of ${sessionTitleById(input.store, session.parentSessionId)}`
+          : formatRelativeTime(session.updatedAt),
+        label: session.title,
+        relatedValue: parentIndex >= 0 ? `/resume ${parentIndex + 1}` : undefined,
+        value: `/resume ${index + 1}`,
+      }
+    })
+  }
+
+  function forkAutocompleteItems(): PromptAutocompleteItem[] {
+    const current = input.store.getSession(sessionId)
+    const points = input.store.listForkPoints(sessionId)
+    const items: PromptAutocompleteItem[] = []
+    if (hasConversationMessages(input.store.getActivePath(sessionId))) {
+      items.push({
+        browsable: true,
+        description: "Fork through the current active leaf",
+        label: `current · ${current.title}`,
+        value: "/fork current",
+      })
+    }
+    items.push(
+      ...points.map(({ entry, forkCount }) => {
+        const preview = firstLine((entry.data as { content: string }).content)
+        return {
+          browsable: true,
+          description: `${formatRelativeTime(entry.createdAt)}${forkCount > 0 ? ` · ${forkCount} fork${forkCount === 1 ? "" : "s"}` : ""}`,
+          label: preview,
+          value: `/fork ${preview}`,
+        }
+      }),
+    )
+    return items
   }
 
   function showHistoryHint(): void {
-    const sessions = input.store.listSessions(input.cwd)
+    const sessions = input.store.listHistorySessions(input.cwd)
     if (sessions.length === 0) {
       showTransientStatus("No saved conversations yet.")
       return
     }
-    const lines = sessions.slice(0, 10).map((session, index) => `${index + 1}. ${session.title} (${formatRelativeTime(session.updatedAt)})`)
-    showTransientStatus(`Type /resume <number> to switch, or type /resume and browse with the arrow keys.\n${lines.join("\n")}`)
+    showTransientStatus(`Type /resume <number> to switch, or type /resume and browse with the arrow keys.\n${formatHistoryOverview(input.store, input.cwd, sessions).join("\n")}`)
   }
 
   function resumeSessionByToken(argument: string): void {
-    const sessions = input.store.listSessions(input.cwd)
+    const sessions = input.store.listHistorySessions(input.cwd)
     const index = Number.parseInt(argument.trim(), 10)
     const target = Number.isInteger(index) ? sessions[index - 1] : undefined
     if (!target) {
@@ -616,6 +661,7 @@ async function runInteractive(input: {
       return
     }
     sessionId = target.id
+    terminal.clearTranscriptDisplay()
     refreshCurrentSession()
     flushPendingBackgroundPrompts()
   }
@@ -645,6 +691,60 @@ async function runInteractive(input: {
       })
     }
     refreshCurrentSession()
+  }
+
+  async function handleForkCommand(argument: string): Promise<void> {
+    const activePath = input.store.getActivePath(sessionId)
+    if (activePath.length === 0) {
+      showTransientStatus("Nothing to fork yet.")
+      return
+    }
+    const currentSession = input.store.getSession(sessionId)
+    if (currentSession.relationType === "fork") {
+      showTransientStatus("Forking from a fork is not supported yet. Resume the original conversation to create another level-one fork.", 8000)
+      return
+    }
+    const trimmed = argument.trim()
+    if (!trimmed) {
+      if (input.store.listForkPoints(sessionId).length === 0) {
+        showTransientStatus("No forkable prompts yet. Forking needs an earlier user prompt after at least one assistant response.", 8000)
+        return
+      }
+      terminal.setInputDraft("/fork ")
+      terminal.setSlashCommandItems(forkAutocompleteItems())
+      showTransientStatus("Choose a fork point with arrow keys, then press Enter. Use /fork current to fork the tip.", 6000)
+      return
+    }
+    const isCurrent = ["current", "tip", "head"].includes(trimmed.toLowerCase())
+    const sourceEntryId = isCurrent ? undefined : resolveForkEntryId(trimmed)
+    if (!isCurrent && !sourceEntryId) {
+      showTransientStatus(`Unknown fork point: ${trimmed}. Type /fork and pick a prompt.`)
+      return
+    }
+    try {
+      const result = input.store.forkSession({
+        position: isCurrent ? "at" : "before",
+        sourceEntryId,
+        sourceSessionId: sessionId,
+      })
+      sessionId = result.forkedSession.id
+      terminal.setInputDraft("")
+      terminal.clearTranscriptDisplay()
+      refreshCurrentSession()
+      flushPendingBackgroundPrompts()
+      showTransientStatus(`Forked into ${result.forkedSession.title}.`, 6000)
+    } catch (error) {
+      showTransientStatus(formatError(error), 8000)
+    }
+  }
+
+  function resolveForkEntryId(token: string): string | undefined {
+    const points = input.store.listForkPoints(sessionId)
+    const normalized = token.trim().toLowerCase()
+    return points.find(({ entry }) => {
+      const content = firstLine((entry.data as { content: string }).content)
+      return entry.id === token || shortEntryId(entry.id) === token || entry.id.startsWith(token) || content.toLowerCase() === normalized || content.toLowerCase().startsWith(normalized)
+    })?.entry.id
   }
 
   async function setThemeByName(name: string): Promise<void> {
@@ -1139,7 +1239,8 @@ function refreshInteractive(terminal: FurnaceTerminal, store: SessionStore, sess
   const session = store.getSession(sessionId)
   const activePath = store.getActivePath(sessionId)
   const transcript = entriesToTranscript(activePath)
-  terminal.setTitle(session.title)
+  const forkParentTitle = session.relationType === "fork" && session.parentSessionId ? sessionTitleById(store, session.parentSessionId) : undefined
+  terminal.setSessionMeta({ forkParentTitle, title: session.title })
   terminal.clearToolActivities()
   terminal.setTranscript(transcript)
 }
@@ -1220,9 +1321,34 @@ async function runPiped(input: {
       continue
     }
     if (isHistoryCommand(command.name)) {
-      for (const [index, session] of input.store.listSessions(process.cwd()).entries()) {
-        process.stdout.write(`${index + 1}. ${session.title} (${formatRelativeTime(session.updatedAt)})\n`)
+      process.stdout.write(`${formatHistoryOverview(input.store, process.cwd()).join("\n")}\n`)
+      continue
+    }
+    if (command.name === "/fork" || command.name === "/clone") {
+      const arg = command.name === "/clone" ? "current" : command.argument.trim()
+      if (!arg) {
+        const points = input.store.listForkPoints(sessionId)
+        if (hasConversationMessages(input.store.getActivePath(sessionId))) process.stdout.write(`current - ${input.store.getSession(sessionId).title}\n`)
+        for (const { entry, forkCount } of points) {
+          process.stdout.write(`${firstLine(entry.data.content)} - ${formatRelativeTime(entry.createdAt)}${forkCount > 0 ? ` - ${forkCount} fork${forkCount === 1 ? "" : "s"}` : ""}\n`)
+        }
+        process.stdout.write("Use /fork current or /fork <prompt preview>.\n")
+        continue
       }
+      const points = input.store.listForkPoints(sessionId)
+      const isCurrent = ["current", "tip", "head"].includes(arg.toLowerCase())
+      const normalized = arg.toLowerCase()
+      const sourceEntryId = isCurrent ? undefined : points.find(({ entry }) => {
+        const preview = firstLine(entry.data.content).toLowerCase()
+        return entry.id === arg || shortEntryId(entry.id) === arg || entry.id.startsWith(arg) || preview === normalized || preview.startsWith(normalized)
+      })?.entry.id
+      if (!isCurrent && !sourceEntryId) {
+        process.stdout.write(`Unknown fork point: ${arg}\n`)
+        continue
+      }
+      const result = input.store.forkSession({ position: isCurrent ? "at" : "before", sourceEntryId, sourceSessionId: sessionId })
+      sessionId = result.forkedSession.id
+      process.stdout.write(`Forked: ${result.forkedSession.title}\n`)
       continue
     }
     if (command.name === "/model") {
@@ -1334,7 +1460,7 @@ async function runSingleTurn(input: {
     input.taskRunner ||
     new TaskManager({
       createChildTask: ({ description, parentSessionId, prompt }) => {
-        const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
+        const child = input.store.createSession({ cwd: input.cwd, parentSessionId, relationType: "subagent", rootSessionId: parentSessionId, title: `${description} (subagent)` })
         permissions.inheritSession(child.id, parentSessionId)
         const parentPlanState = currentPlanModeState(input.store.getActivePath(parentSessionId))
         if (parentPlanState.mode === "plan") {
@@ -1784,6 +1910,50 @@ function slashAutocompleteItems(skills: Skill[], customCmds: CustomCommand[] = [
       },
     ]),
   ]
+}
+
+function shortEntryId(id: string): string {
+  const suffix = id.includes("_") ? id.split("_").pop() || id : id
+  return suffix.slice(0, 8)
+}
+
+function firstLine(value: string, max = 72): string {
+  const line = value.replace(/\s+/g, " ").trim().split("\n")[0] || "(empty prompt)"
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
+}
+
+function hasConversationMessages(entries: ReturnType<SessionStore["getActivePath"]>): boolean {
+  const hasUser = entries.some((entry) => entry.type === "message" && entry.role === "user" && typeof (entry.data as { content?: unknown }).content === "string" && (entry.data as { content: string }).content.trim())
+  const hasAssistant = entries.some((entry) => entry.type === "message" && entry.role === "assistant" && typeof (entry.data as { content?: unknown }).content === "string" && (entry.data as { content: string }).content.trim())
+  return hasUser && hasAssistant
+}
+
+function sessionTitleById(store: SessionStore, sessionId: string): string {
+  try {
+    return store.getSession(sessionId).title
+  } catch {
+    return sessionId
+  }
+}
+
+function formatHistoryOverview(store: SessionStore, cwd: string, sessions = store.listHistorySessions(cwd)): string[] {
+  const recent = sessions.slice(0, 10).map((session, index) => {
+    const forkLabel = session.relationType === "fork" && session.parentSessionId ? `      fork of ${sessionTitleById(store, session.parentSessionId)}` : ""
+    return `${index + 1}. ${session.title} (${formatRelativeTime(session.updatedAt)})${forkLabel}`
+  })
+  const roots = sessions.filter((session) => session.relationType !== "fork")
+  const branchLines: string[] = []
+  for (const root of roots) {
+    const children = store.listForkChildren(root.id)
+    if (children.length === 0) continue
+    branchLines.push(root.title)
+    children.slice(0, 6).forEach((child, index) => {
+      const stem = index === Math.min(children.length, 6) - 1 ? "└─" : "├─"
+      branchLines.push(`${stem} ${child.title} (${formatRelativeTime(child.updatedAt)})`)
+    })
+  }
+  if (branchLines.length === 0) return ["Recent", ...recent]
+  return ["Recent", ...recent, "", "Branches", ...branchLines]
 }
 
 function formatSkillsList(skills: Skill[]): string {

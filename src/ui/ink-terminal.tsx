@@ -33,6 +33,7 @@ export type FurnaceTerminal = {
   setBusy(busy: boolean): void
   setContextUsage(tokens: number, window: number): void
   setInputDraft(value: string): void
+  setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
   setThinking(thinking: boolean, message?: string): void
@@ -188,6 +189,7 @@ type UiState = {
   thinking: boolean
   thinkingMessage: string
   title: string
+  forkParentTitle?: string
   committedLines: TranscriptLineData[]
   transcriptGeneration: number
   streamingContent: string
@@ -267,6 +269,7 @@ class UiStore {
       thinking: false,
       thinkingMessage: "Thinking",
       title: options.title,
+      forkParentTitle: undefined,
       committedLines: [],
       transcriptGeneration: 0,
       streamingContent: "",
@@ -365,6 +368,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
+    },
+    setSessionMeta(meta) {
+      store.update({ forkParentTitle: meta.forkParentTitle, title: meta.title })
     },
     setLofi(enabled) {
       store.update({ lofiEnabled: enabled })
@@ -641,6 +647,11 @@ function FurnaceApp({
           toolActivities={state.toolActivities}
         />
         {state.lofiEnabled ? <LofiCorner /> : null}
+        {state.forkParentTitle ? (
+          <Box paddingX={1}>
+            <Text color={theme.colors.warning}>Fork of: {state.forkParentTitle}</Text>
+          </Box>
+        ) : null}
         {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
         {state.busy && !state.thinking && (
           <Box paddingX={1} flexShrink={0}>
@@ -701,6 +712,7 @@ function FurnaceApp({
             cwd={shortenHome(state.cwd)}
             model={state.modelDisplayName || state.model}
             settings={[`mode: ${modeLabel(state)}`, formatFooterSettings(state.modelSettings), `theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`].filter(Boolean).join(" · ")}
+            subtitle={state.forkParentTitle ? `Fork of: ${state.forkParentTitle}` : undefined}
             title={state.title}
           />
         </Box>

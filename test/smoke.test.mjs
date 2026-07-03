@@ -9,7 +9,7 @@ test("project exposes the expected phase 0 commands", async () => {
   assert.match(packageJson.scripts.build, /\btsc -p tsconfig\.json\b/)
   assert.match(packageJson.scripts.build, /\besbuild src\/cli\.ts\b/)
   assert.match(packageJson.scripts.build, /--outfile=dist\/cli\.js/)
-  assert.equal(packageJson.scripts.typecheck, "tsc -p tsconfig.json --noEmit")
+  assert.match(packageJson.scripts.typecheck, /tsc -p tsconfig\.json --noEmit/)
 })
 
 test("local secrets are ignored", async () => {
@@ -145,7 +145,7 @@ test("todo tool activity renders a todo summary", async () => {
   )
 
   assert.deepEqual(lines.map((line) => line.tone), ["summary", "todoDone", "todoCurrent", "todoPending"])
-  assert.equal(lines[0].text, "ok Updated todos • Working on 1 to-do • 1 done")
+  assert.equal(lines[0].text, "✓ Updated todos • Working on 1 to-do • 1 done")
   assert.match(lines[1].text, /✓ Inspect implementation/)
   assert.match(lines[2].text, /◐ Run verification/)
   assert.match(lines[3].text, /○ Report results/)

@@ -342,3 +342,33 @@ Current implementation:
 - `src/cli.ts` wires child session creation, inherited permissions, child `runAgentTurn()` execution, and background completion prompts.
 - `src/ui/ink-terminal.tsx` renders the subagent panel and background-promotion hints.
 - `src/prompts/subagent-system.md` is the child system prompt.
+
+## Forking And Branch-Aware History
+
+Furnace supports new-session forks from the current conversation tip or from a prior user prompt.
+
+Reasoning:
+
+Forking should preserve the shared prefix and make alternate attempts easy to resume without making branch lineage invisible. The user-facing mental model is: pick a previous prompt, fork before it, then edit/resubmit that prompt in a new chat.
+
+Harness provenance:
+
+- Pi influenced the core storage model: append-only entry trees, parent-linked entries, active-leaf paths, and the distinction between same-session tree navigation and new-session forks.
+- OpenCode influenced the `/fork` UX: list prior user prompts, fork before the selected prompt, and restore that prompt into the composer for editing.
+- Hermes Agent influenced branch-aware presentation: forks should show under their parent conversation while still being resumable as normal recent sessions.
+
+Local adaptation:
+
+- Furnace stores explicit `relationType` metadata on sessions. Manual forks use `relationType: "fork"`; subagents use `relationType: "subagent"`.
+- This avoids overloading `parentSessionId` for unrelated child-session meanings.
+- `/fork` with no argument opens a picker. `/fork current` and `/clone` fork through the current active leaf.
+- `/history` and `/resume` show forks both in the normal recent list and under a `Branches` grouping with parent lineage labels.
+- Fork boundaries are resolved from the active path and entry parent pointers, not lexicographic ids.
+
+Current implementation:
+
+- `src/session/store.ts` owns transactional `forkSession()`, `listForkPoints()`, `listForkChildren()`, and branch-aware `listHistorySessions()`.
+- `src/session/types.ts` defines `SessionRelationType`.
+- `src/commands.ts` registers `/fork` and `/clone`.
+- `src/cli.ts` wires the interactive fork picker, direct fork commands, composer prefill, subagent relation typing, and branch-aware history output.
+- `docs/forking-and-branching.md` documents behavior and current scope.

@@ -166,8 +166,6 @@ type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks" | "sett
 type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
-  chatScrollOffset: number
-  chatCanScrollUp: boolean
   inputMode: "standard" | "vim"
   sidebarEnabled: boolean
   contextTokens: number
@@ -196,6 +194,7 @@ type UiState = {
   thinkingMessage: string
   title: string
   committedLines: TranscriptLineData[]
+  transcriptGeneration: number
   streamingContent: string
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
@@ -248,8 +247,6 @@ class UiStore {
     this.state = {
       approval: undefined,
       busy: false,
-      chatScrollOffset: 0,
-      chatCanScrollUp: false,
       inputMode: options.inputMode || "standard",
       sidebarEnabled: options.sidebarEnabled !== false,
       contextTokens: 0,
@@ -277,6 +274,7 @@ class UiStore {
       thinkingMessage: "Thinking",
       title: options.title,
       committedLines: [],
+      transcriptGeneration: 0,
       streamingContent: "",
       tasks: [],
       toolActivities: [],
@@ -422,7 +420,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ toolActivities: activities })
     },
     clearTranscriptDisplay() {
-      store.update((state) => ({ ...state, committedLines: [], chatScrollOffset: 0 }))
+      // Bump transcriptGeneration so the Static-backed history remounts fresh —
+      // Static only ever appends to the real terminal output and never
+      // retracts previously flushed lines, so a shrinking items array needs a
+      // new component identity to start a visually clean history.
+      store.update((state) => ({ ...state, committedLines: [], transcriptGeneration: state.transcriptGeneration + 1 }))
     },
     setStreamingContent(text) {
       store.update({ streamingContent: text })
@@ -470,10 +472,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           if (appended.length === 0) {
             return { ...state, screen: { kind: "chat" }, transcript, streamingContent: "" }
           }
-          return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "", chatScrollOffset: 0 }
+          return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "" }
         }
         const allLines = transcript.flatMap((message, index) => messageToLines(message, index, width))
-        return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "", chatScrollOffset: 0 }
+        return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "" }
       })
     },
     setPendingImage(image) {
@@ -550,7 +552,7 @@ function FurnaceApp({
       store.update({ sidebarEnabled: next })
       store.onSidebarToggle?.(next)
     }
-    if (key.ctrl && _input === "t") {
+    if (key.ctrl && (_input === "t" || _input === "k")) {
       if (state.tasks.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "tasks" ? "input" : "tasks" }))
     }
@@ -602,15 +604,15 @@ function FurnaceApp({
     }
   }, [state.cwd, state.imageAttachments.length, store])
 
-  const { columns, rows } = useWindowSize()
+  const { columns } = useWindowSize()
 
   return (
     <>
-      <Box flexDirection="column" height={rows} width={columns} overflow="hidden">
+      <Box flexDirection="column" width={columns}>
         <LiveChat
+          key={state.transcriptGeneration}
           committedLines={state.committedLines}
           flexGrow
-          scrollOffset={state.chatScrollOffset}
           thinking={state.thinking}
           thinkingMessage={state.thinkingMessage}
           streamingContent={state.streamingContent}
@@ -645,17 +647,7 @@ function FurnaceApp({
               store.update({ inputDraft: value })
               store.onInputChange?.(value)
             }}
-            onEmptyUp={() => {
-              const hasContent = state.committedLines.length > 0 || state.toolActivities.length > 0
-              if (hasContent) {
-                store.update((s) => ({ ...s, chatScrollOffset: Math.min(s.chatScrollOffset + 5, s.committedLines.length) }))
-              } else {
-                focusPanelAboveInput(store, state)
-              }
-            }}
-            onEmptyDown={() => {
-              store.update((s) => ({ ...s, chatScrollOffset: Math.max(0, s.chatScrollOffset - 5) }))
-            }}
+            onEmptyUp={() => focusPanelAboveInput(store, state)}
             onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
             onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
@@ -667,7 +659,7 @@ function FurnaceApp({
             pendingImageAttachment={Boolean(state.pendingImage)}
             onClearAttachment={() => store.update({ pendingImage: undefined })}
             inputMode={state.inputMode}
-            onSubmit={(text) => { store.update({ chatScrollOffset: 0 }); onSubmit(text, state.pendingImage) }}
+            onSubmit={(text) => onSubmit(text, state.pendingImage)}
             placeholder={promptPlaceholder(state)}
             planMode={state.mode === "plan"}
             prefix={state.mode === "plan" ? "plan>" : ">"}
@@ -727,7 +719,7 @@ function hintItemsForState(state: UiState): string[] {
   const extras: string[] = []
   if (state.planAction) extras.push("Up for plan actions")
   if (state.question) extras.push("Up to answer question")
-  if (state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+T tasks")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+K tasks")
   if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
   return [...extras, "Tab to switch mode", "Ctrl+b sidebar", ...hintItems(state.screen.kind)]
 }
@@ -1164,7 +1156,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
       store.taskHandlers.onBackground?.()
       store.update({ focus: "input" })
     }
-    if (key.ctrl && input === "t") {
+    if (key.ctrl && (input === "t" || input === "k")) {
       store.update({ focus: "input" })
     }
   }, { isActive: active })
@@ -1173,12 +1165,15 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>{title}</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up for tasks"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Ctrl+K to focus"}</Text>
       </Box>
       {taskPreviewItems(tasks, selected).map((line) => (
-        <Text key={line.id} color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
-          {line.selected ? "› " : "  "}{line.text}
-        </Text>
+        <Box key={line.id} justifyContent="space-between">
+          <Text color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
+            {line.selected ? "› " : "  "}{line.text}
+          </Text>
+          {line.lastToolName ? <Text color={theme.colors.mutedForeground}>{line.lastToolName}</Text> : null}
+        </Box>
       ))}
       <Text color={theme.colors.mutedForeground}>
         {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
@@ -1188,11 +1183,12 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
   )
 }
 
-export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
+export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; lastToolName?: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
   const clamped = Math.min(Math.max(0, selected), Math.max(0, tasks.length - 1))
   const start = Math.min(Math.max(0, tasks.length - maxItems), Math.max(0, clamped - Math.floor(maxItems / 2)))
   return tasks.slice(start, start + maxItems).map((task, index) => ({
     id: task.id,
+    lastToolName: task.status === "running" ? task.lastToolName : undefined,
     selected: start + index === clamped,
     status: task.status,
     text: formatTaskPreviewText(task),
@@ -1277,7 +1273,6 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 function LiveChat({
   committedLines = [],
   flexGrow: grow,
-  scrollOffset = 0,
   streamingContent,
   thinking,
   thinkingMessage,
@@ -1285,7 +1280,6 @@ function LiveChat({
 }: {
   committedLines?: TranscriptLineData[]
   flexGrow?: boolean
-  scrollOffset?: number
   streamingContent: string
   thinking: boolean
   thinkingMessage: string
@@ -1294,24 +1288,16 @@ function LiveChat({
   const theme = useTheme()
   const { columns, rows } = useWindowSize()
   const width = Math.max(20, columns - 4)
-  const viewportRows = chatViewportRows(rows)
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
-  const allLines = [...committedLines, ...activeLines]
-  const hasLines = allLines.length > 0
-  // Explicit viewport window: only render the lines that fit on screen.
-  // Relying on Ink's justifyContent="flex-end" + overflow="hidden" to clip thousands
-  // of accumulated lines causes layout bugs where the view gets stuck.
-  const endIndex = Math.max(0, allLines.length - scrollOffset)
-  const startIndex = Math.max(0, endIndex - viewportRows)
-  const displayLines = visibleTranscriptWindow(allLines, startIndex, endIndex, viewportRows)
+  const hasLines = committedLines.length > 0 || activeLines.length > 0
 
   if (!hasLines) {
     return (
       <Box
         flexDirection="column"
         flexGrow={grow ? 1 : 0}
-        overflow="hidden"
+        minHeight={Math.max(20, rows - 10)}
         justifyContent="center"
         alignItems="center"
         paddingX={1}
@@ -1337,28 +1323,23 @@ function LiveChat({
   }
 
   return (
-    <Box
-      flexDirection="column"
-      flexGrow={grow ? 1 : 0}
-      minHeight={5}
-      overflow="hidden"
-      justifyContent="flex-end"
-      paddingX={1}
-    >
-      {displayLines.map((line, index) => (
-        <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
-      ))}
-      {scrollOffset > 0 && (
-        <Text color={theme.colors.mutedForeground}> ↓ {scrollOffset} more below · press ↓ on empty input to scroll</Text>
-      )}
-    </Box>
+    <>
+      {/*
+        Finished lines are flushed to the terminal exactly once via Static, so the
+        terminal's own scrollback (mouse wheel, trackpad, Shift+PageUp) can scroll
+        back through full chat history — matching Pi's differential renderer, which
+        never clips history into a fixed-height viewport.
+      */}
+      <Static items={committedLines}>
+        {(line, index) => <StaticLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />}
+      </Static>
+      <Box flexDirection="column" flexGrow={grow ? 1 : 0} paddingX={1}>
+        {activeLines.map((line, index) => (
+          <TranscriptLine key={`live-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
+        ))}
+      </Box>
+    </>
   )
-}
-
-export function chatViewportRows(windowRows: number, reservedRows = 0): number {
-  // Header, prompt, and hints use fixed bordered rows; keep one spare row so
-  // Ink never clips the final assistant spinner behind the input box.
-  return Math.max(3, windowRows - 11 - reservedRows)
 }
 
 type TranscriptLineData = {
@@ -2064,19 +2045,36 @@ function formatTaskActivity(activity: ToolActivity, width: number): RenderedTool
   const tasks = parseTaskArgs(activity.args)
   if (tasks.length === 0) return []
   const backgrounded = /backgrounded/i.test(activity.result || "")
+  const statuses = parseTaskResultStatuses(activity.result)
+  const doneCount = statuses.filter((entry) => entry.status === "completed").length
+  const failedCount = statuses.filter((entry) => entry.status === "failed" || entry.status === "cancelled").length
+  const headerSuffix = !backgrounded && activity.status !== "running" && failedCount > 0 ? ` (${doneCount} done, ${failedCount} failed)` : ""
   const lines: RenderedToolLine[] = [
     {
-      text: `${statusSymbol(activity.status)} ${backgrounded ? "Backgrounded" : activity.status === "running" ? "Running" : "Finished"} ${tasks.length} subagent${tasks.length === 1 ? "" : "s"}`,
+      text: `${statusSymbol(activity.status)} ${backgrounded ? "Backgrounded" : activity.status === "running" ? "Running" : "Finished"} ${tasks.length} subagent${tasks.length === 1 ? "" : "s"}${headerSuffix}`,
       tone: "summary",
     },
   ]
-  for (const task of tasks.slice(0, 4)) {
-    lines.push({ text: `  - ${truncateEnd(task.description || task.prompt, Math.max(24, width - 6))}`, tone: "meta" })
+  for (const [index, task] of tasks.slice(0, 4).entries()) {
+    const taskStatus = statuses[index]?.status
+    const glyph = taskStatus === "completed" ? "✓" : taskStatus === "failed" ? "✗" : taskStatus === "cancelled" ? "⊘" : "◐"
+    const tone: RenderedToolLine["tone"] = taskStatus === "completed" ? "addition" : taskStatus === "failed" || taskStatus === "cancelled" ? "error" : "context"
+    lines.push({ text: `  ${glyph} ${truncateEnd(task.description || task.prompt, Math.max(24, width - 6))}`, tone })
   }
   if (tasks.length > 4) lines.push({ text: `  ... ${tasks.length - 4} more subagent${tasks.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
-  const firstResult = activity.result?.split(/\r?\n/).find((line) => /^Task group /.test(line))
-  if (firstResult) lines.push({ text: `  ${truncateEnd(firstResult, Math.max(24, width - 4))}`, tone: backgrounded ? "context" : "addition" })
+  if (backgrounded) lines.push({ text: "  Running in the background — you'll be notified when it finishes", tone: "context" })
   return lines
+}
+
+function parseTaskResultStatuses(result: string | undefined): Array<{ error?: string; status?: string }> {
+  if (!result) return []
+  return result
+    .split(/\n(?=Task \d+: )/)
+    .filter((block) => /^Task \d+: /.test(block))
+    .map((block) => ({
+      error: block.match(/^- error: (.*)$/m)?.[1],
+      status: block.match(/^- status: (\w+)/m)?.[1],
+    }))
 }
 
 function formatTodoActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
@@ -2367,23 +2365,6 @@ function compactToolArgs(args: string): string {
   } catch {
     return args.trim()
   }
-}
-
-function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end: number, viewportRows: number): TranscriptLineData[] {
-  const visible = lines.slice(start, end)
-  while (visible[0]?.kind === "blank") visible.shift()
-
-  const first = visible[0]
-  if (first && first.kind !== "role" && first.role) {
-    visible.unshift({
-      kind: "role",
-      messageIndex: first.messageIndex,
-      role: first.role,
-      text: `${first.role === "user" ? "User" : "Assistant"} (continued)`,
-    })
-  }
-
-  return visible.slice(0, viewportRows)
 }
 
 function ModelEditorPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "modelEditor" }>; store: UiStore }): React.ReactNode {

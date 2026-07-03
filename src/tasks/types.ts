@@ -21,6 +21,7 @@ export type TaskRecord = {
   description: string
   error?: string
   id: string
+  lastToolName?: string
   parentSessionId: string
   prompt: string
   result?: string

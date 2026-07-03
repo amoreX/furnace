@@ -3,6 +3,8 @@ import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
 
+export type TypingIndicatorStyle = "block" | "underscore" | "bar"
+
 function truncateSidebar(str: string, max: number): string {
   return str.length > max ? str.slice(0, max - 1) + "…" : str
 }
@@ -15,6 +17,7 @@ export type PromptInputProps = {
   historyItems?: string[]
   inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   onChange?: (value: string) => void
   onCopy?: () => void
   onEmptyDown?: () => void
@@ -31,6 +34,8 @@ export type PromptInputProps = {
   sidebarOverride?: React.ReactNode
   splitMode?: boolean
   status?: string
+  typingIndicatorBlink?: boolean
+  typingIndicator?: TypingIndicatorStyle
   value?: string
 }
 
@@ -55,6 +60,7 @@ export function PromptInput({
   historyItems = [],
   inputMode = "standard",
   onAutocompleteTab,
+  onAutocompleteHover,
   onChange,
   onCopy,
   onEmptyDown,
@@ -71,6 +77,8 @@ export function PromptInput({
   sidebarOverride,
   splitMode = false,
   status,
+  typingIndicatorBlink = false,
+  typingIndicator = "block",
   value: controlledValue,
 }: PromptInputProps): React.ReactNode {
   const theme = useTheme()
@@ -83,6 +91,7 @@ export function PromptInput({
   const [historySearchQuery, setHistorySearchQuery] = React.useState("")
   const [historySearchIndex, setHistorySearchIndex] = React.useState(0)
   const [vimMode, setVimMode] = React.useState<"normal" | "insert">("insert")
+  const [blinkOn, setBlinkOn] = React.useState(true)
   const lastKeyRef = React.useRef<string>("")
   const historySavedDraft = React.useRef("")
   const historySearchSavedDraft = React.useRef("")
@@ -102,6 +111,12 @@ export function PromptInput({
     ? (autocompleteActive ? autocompleteMatches : [...autocompleteItems].sort((a, b) => a.label.localeCompare(b.label)))
     : []
 
+  React.useEffect(() => {
+    if (!onAutocompleteHover) return
+    const item = splitMode ? sidebarItems[selectedAutocompleteIndex] : autocompleteMatches[selectedAutocompleteIndex]
+    onAutocompleteHover(item)
+  }, [autocompleteMatches, onAutocompleteHover, selectedAutocompleteIndex, sidebarItems, splitMode])
+
   const setValue = React.useCallback(
     (next: string | ((current: string) => string)) => {
       const resolved = typeof next === "function" ? next(value) : next
@@ -110,6 +125,12 @@ export function PromptInput({
     },
     [controlledValue, onChange, value],
   )
+
+  React.useEffect(() => {
+    if (!typingIndicatorBlink) return
+    const timer = setInterval(() => setBlinkOn((current) => !current), 500)
+    return () => clearInterval(timer)
+  }, [typingIndicatorBlink])
 
   const cursorOffsetRef = React.useRef(cursorOffset)
   cursorOffsetRef.current = cursorOffset
@@ -637,16 +658,19 @@ export function PromptInput({
                       // suggestion appears to start at the cursor position.
                       const cursorChar = (atEnd && showGhost) ? ghostSuffix[0] : (line.text[cursorVisCol] ?? " ")
                       const ghostRest = (atEnd && showGhost) ? ghostSuffix.slice(1) : ""
-                      return (
-                        <Text color={theme.colors.foreground}>
-                          {line.text.slice(0, cursorVisCol)}
-                          <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                            {cursorChar}
-                          </Text>
-                          {line.text.slice(cursorVisCol + 1)}
-                          {ghostRest ? <Text color={theme.colors.mutedForeground}>{ghostRest}</Text> : null}
-                        </Text>
-                      )
+                      return renderCursorText({
+                        after: line.text.slice(cursorVisCol + 1),
+                        before: line.text.slice(0, cursorVisCol),
+                        blinkOn,
+                        cursorChar,
+                        foreground: theme.colors.foreground,
+                        ghostRest,
+                        mutedForeground: theme.colors.mutedForeground,
+                        selection: theme.colors.selection,
+                        selectionForeground: theme.colors.selectionForeground,
+                        style: typingIndicator,
+                        blink: typingIndicatorBlink,
+                      })
                     })() : (
                       <Text color={theme.colors.foreground}>{line.text}</Text>
                     )}
@@ -765,13 +789,18 @@ export function PromptInput({
                 )}
                 <Box flexGrow={1}>
                   {hasCursor ? (
-                    <Text color={theme.colors.foreground}>
-                      {line.slice(0, cursorColIdx)}
-                      <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                        {line[cursorColIdx] ?? " "}
-                      </Text>
-                      {line.slice(cursorColIdx + 1)}
-                    </Text>
+                    renderCursorText({
+                      after: line.slice(cursorColIdx + 1),
+                      before: line.slice(0, cursorColIdx),
+                      blinkOn,
+                      cursorChar: line[cursorColIdx] ?? " ",
+                      foreground: theme.colors.foreground,
+                      mutedForeground: theme.colors.mutedForeground,
+                      selection: theme.colors.selection,
+                      selectionForeground: theme.colors.selectionForeground,
+                      style: typingIndicator,
+                      blink: typingIndicatorBlink,
+                    })
                   ) : (
                     <Text color={theme.colors.foreground}>{line}</Text>
                   )}
@@ -790,12 +819,18 @@ export function PromptInput({
               {prefix}{" "}
             </Text>
             <Box flexGrow={1}>
-              <Text color={theme.colors.mutedForeground}>
-                <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                  {display[0] ?? " "}
-                </Text>
-                {display.slice(1)}
-              </Text>
+              {renderCursorText({
+                after: display.slice(1),
+                before: "",
+                blinkOn,
+                cursorChar: display[0] ?? " ",
+                foreground: theme.colors.mutedForeground,
+                mutedForeground: theme.colors.mutedForeground,
+                selection: theme.colors.selection,
+                selectionForeground: theme.colors.selectionForeground,
+                style: typingIndicator,
+                blink: typingIndicatorBlink,
+              })}
             </Box>
           </Box>
         )}
@@ -856,6 +891,72 @@ function HistorySearchMenu({ items, query }: { items: PromptAutocompleteMatch[];
       ))}
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>
+  )
+}
+
+function renderCursorText(input: {
+  after: string
+  before: string
+  blink: boolean
+  blinkOn: boolean
+  cursorChar: string
+  foreground: string
+  ghostRest?: string
+  mutedForeground: string
+  selection: string
+  selectionForeground: string
+  style: TypingIndicatorStyle
+}): React.ReactNode {
+  const ghost = input.ghostRest ? <Text color={input.mutedForeground}>{input.ghostRest}</Text> : null
+  if (input.blink && !input.blinkOn) {
+    if (input.style === "bar") {
+      return (
+        <Text color={input.foreground}>
+          {input.before}
+          <Text color={input.foreground}> </Text>
+          {input.cursorChar === " " ? "" : input.cursorChar}
+          {input.after}
+          {ghost}
+        </Text>
+      )
+    }
+    return (
+      <Text color={input.foreground}>
+        {input.before}
+        {input.cursorChar}
+        {input.after}
+        {ghost}
+      </Text>
+    )
+  }
+  if (input.style === "underscore") {
+    return (
+      <Text color={input.foreground}>
+        {input.before}
+        <Text color={input.selection} underline>{input.cursorChar}</Text>
+        {input.after}
+        {ghost}
+      </Text>
+    )
+  }
+  if (input.style === "bar") {
+    return (
+      <Text color={input.foreground}>
+        {input.before}
+        <Text color={input.selection}>│</Text>
+        {input.cursorChar === " " ? "" : input.cursorChar}
+        {input.after}
+        {ghost}
+      </Text>
+    )
+  }
+  return (
+    <Text color={input.foreground}>
+      {input.before}
+      <Text color={input.selectionForeground} backgroundColor={input.selection}>{input.cursorChar}</Text>
+      {input.after}
+      {ghost}
+    </Text>
   )
 }
 

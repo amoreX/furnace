@@ -9,13 +9,13 @@ import wrapAnsi from "wrap-ansi"
 import { slashCommandDefinitions } from "../commands.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
-import type { ModelSettings, ReasoningEffort } from "../preferences.js"
+import type { ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import { truncateEnd } from "./utils.js"
 import { AppShell } from "./components/app-shell.js"
-import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem, type PromptAutocompleteMatch } from "./components/prompt-input.js"
+import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem, type PromptAutocompleteMatch, type TypingIndicatorStyle } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
@@ -33,6 +33,8 @@ export type FurnaceTerminal = {
   setBusy(busy: boolean): void
   setContextUsage(tokens: number, window: number): void
   setInputDraft(value: string): void
+  setInputDisabled(disabled: boolean): void
+  setStatusLinePreferences(preferences: StatusLinePreferences): void
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
@@ -112,12 +114,16 @@ type CreateFurnaceTerminalOptions = {
   onInputChange?: (value: string) => void
   inputMode?: "standard" | "vim"
   sidebarEnabled?: boolean
+  statusLine?: StatusLinePreferences
   onSidebarToggle?: (enabled: boolean) => void
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
   onInterrupt?: () => void
   themeName: string
+  typingIndicatorBlink?: boolean
+  typingIndicator?: TypingIndicatorStyle
   title: string
   onSubmit: (text: string, images?: ImageAttachment[]) => void
 }
@@ -172,6 +178,7 @@ type UiState = {
   pastedImages: ImageAttachment[]
   nextImageLabel: number
   inputDraft: string
+  inputDisabled: boolean
   lofiEnabled: boolean
   mode: AgentMode
   model: string
@@ -184,8 +191,11 @@ type UiState = {
   screen: UiScreen
   slashCommandItems: PromptAutocompleteItem[]
   statusNotice?: string
+  statusLine: StatusLinePreferences
   theme: Theme
   themeName: string
+  typingIndicatorBlink: boolean
+  typingIndicator: TypingIndicatorStyle
   thinking: boolean
   thinkingMessage: string
   title: string
@@ -215,6 +225,7 @@ class UiStore {
   }
   readonly onInputChange?: (value: string) => void
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  readonly onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   readonly onOpenEditor?: (draft: string) => Promise<string>
   readonly onCopy?: () => void
   readonly onInterrupt?: () => void
@@ -235,6 +246,7 @@ class UiStore {
     }
     this.onInputChange = options.onInputChange
     this.onAutocompleteTab = options.onAutocompleteTab
+    this.onAutocompleteHover = options.onAutocompleteHover
     this.onOpenEditor = options.onOpenEditor
     this.onCopy = options.onCopy
     this.onInterrupt = options.onInterrupt
@@ -252,6 +264,7 @@ class UiStore {
       pastedImages: [],
       nextImageLabel: 1,
       inputDraft: "",
+      inputDisabled: false,
       lofiEnabled: false,
       mode: "agent",
       model: options.model,
@@ -264,8 +277,11 @@ class UiStore {
       screen: { kind: "chat" },
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
       statusNotice: undefined,
+      statusLine: options.statusLine || {},
       theme: themeChoice.theme,
       themeName: themeChoice.name,
+      typingIndicatorBlink: options.typingIndicatorBlink === true,
+      typingIndicator: options.typingIndicator || "block",
       thinking: false,
       thinkingMessage: "Thinking",
       title: options.title,
@@ -368,6 +384,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
+    },
+    setInputDisabled(disabled) {
+      store.update({ inputDisabled: disabled })
+    },
+    setStatusLinePreferences(preferences) {
+      store.update({ statusLine: preferences })
     },
     setSessionMeta(meta) {
       store.update({ forkParentTitle: meta.forkParentTitle, title: meta.title })
@@ -507,6 +529,24 @@ function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit
       <FurnaceApp onExit={onExit} onSubmit={onSubmit} state={state} store={store} />
     </ThemeProvider>
   )
+}
+
+function statusLinePreferencesFromPrefs(prefs: import("../preferences.js").FurnacePreferences): StatusLinePreferences {
+  return {
+    statusShowAppName: prefs.statusShowAppName,
+    statusShowContext: prefs.statusShowContext,
+    statusShowContextPercent: prefs.statusShowContextPercent,
+    statusContextMode: prefs.statusContextMode,
+    statusShowCwd: prefs.statusShowCwd,
+    statusShowFast: prefs.statusShowFast,
+    statusShowForkParent: prefs.statusShowForkParent,
+    statusShowMode: prefs.statusShowMode,
+    statusShowModel: prefs.statusShowModel,
+    statusShowReasoning: prefs.statusShowReasoning,
+    statusShowTheme: prefs.statusShowTheme,
+    statusShowTitle: prefs.statusShowTitle,
+    statusShowWindow: prefs.statusShowWindow,
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -672,7 +712,7 @@ function FurnaceApp({
           <PromptInput
             active={state.focus === "input"}
             busy={state.busy}
-            disabled={state.screen.kind !== "chat" || Boolean(state.question)}
+            disabled={state.inputDisabled || state.screen.kind !== "chat" || Boolean(state.question)}
             autocompleteItems={state.slashCommandItems}
             historyItems={sentMessages}
             inputOverride={state.question ? <QuestionPrompt request={state.question} store={store} /> : undefined}
@@ -683,6 +723,7 @@ function FurnaceApp({
             onEmptyUp={() => focusPanelAboveInput(store, state)}
             onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
             onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
+            onAutocompleteHover={(match) => store.onAutocompleteHover?.(match)}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
             onImageAttach={attachClipboardImage}
@@ -705,15 +746,18 @@ function FurnaceApp({
             planMode={state.mode === "plan"}
             prefix={state.mode === "plan" ? "plan>" : ">"}
             splitMode={state.sidebarEnabled}
+            typingIndicatorBlink={state.typingIndicatorBlink}
+            typingIndicator={state.typingIndicator}
             value={state.inputDraft}
           />
           <AppShell.Header
-            contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
-            cwd={shortenHome(state.cwd)}
-            model={state.modelDisplayName || state.model}
-            settings={[`mode: ${modeLabel(state)}`, formatFooterSettings(state.modelSettings), `theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`].filter(Boolean).join(" · ")}
-            subtitle={state.forkParentTitle ? `Fork of: ${state.forkParentTitle}` : undefined}
-            title={state.title}
+            appName={showStatusPart(state.statusLine, "statusShowAppName") ? "Furnace" : undefined}
+            contextUsage={showContextStatus(state.statusLine) ? formatContextUsage(state.contextTokens, state.contextWindowTokens, state.statusLine) : undefined}
+            cwd={showStatusPart(state.statusLine, "statusShowCwd") ? shortenHome(state.cwd) : ""}
+            model={showStatusPart(state.statusLine, "statusShowModel") ? state.modelDisplayName || state.model : ""}
+            settings={formatHeaderSettings(state)}
+            subtitle={showStatusPart(state.statusLine, "statusShowForkParent") && state.forkParentTitle ? `Fork of: ${state.forkParentTitle}` : undefined}
+            title={showStatusPart(state.statusLine, "statusShowTitle") ? state.title : ""}
           />
         </Box>
       </Box>
@@ -2511,13 +2555,34 @@ const SETTINGS_ROWS: Array<{
 }> = [
   { label: "Sidebar", prefKey: "sidebarEnabled", options: ["on", "off"] },
   { label: "Input mode", prefKey: "inputMode", options: ["standard", "vim"] },
+  { label: "Typing indicator", prefKey: "typingIndicator", options: ["block", "underscore", "bar"] },
+  { label: "Typing blink", prefKey: "typingIndicatorBlink", options: ["off", "on"] },
   { label: "Notifications", prefKey: "notifications", options: ["off", "on"] },
+  { label: "App name", prefKey: "statusShowAppName", options: ["on", "off"] },
+  { label: "Cwd", prefKey: "statusShowCwd", options: ["on", "off"] },
+  { label: "Title", prefKey: "statusShowTitle", options: ["on", "off"] },
+  { label: "Context", prefKey: "statusShowContext", options: ["on", "percent", "percent only", "off"] },
+  { label: "Mode", prefKey: "statusShowMode", options: ["on", "off"] },
+  { label: "Window", prefKey: "statusShowWindow", options: ["on", "off"] },
+  { label: "Theme", prefKey: "statusShowTheme", options: ["on", "off"] },
+  { label: "Model", prefKey: "statusShowModel", options: ["on", "off"] },
+  { label: "Reasoning", prefKey: "statusShowReasoning", options: ["on", "off"] },
+  { label: "Fast routing", prefKey: "statusShowFast", options: ["on", "off"] },
+  { label: "Fork parent", prefKey: "statusShowForkParent", options: ["on", "off"] },
 ]
 
 function settingDisplayValue(row: typeof SETTINGS_ROWS[number], prefs: import("../preferences.js").FurnacePreferences): string {
   const val = prefs[row.prefKey]
   if (row.prefKey === "sidebarEnabled") return val === false ? "off" : "on"
   if (row.prefKey === "notifications") return val === true ? "on" : "off"
+  if (row.prefKey === "typingIndicatorBlink") return val === true ? "on" : "off"
+  if (row.prefKey === "statusShowContext") {
+    if (prefs.statusContextMode === "off" || val === false) return "off"
+    if (prefs.statusContextMode === "percent") return "percent only"
+    if (prefs.statusContextMode === "tokens-percent" || prefs.statusShowContextPercent === true) return "percent"
+    return "on"
+  }
+  if (row.prefKey.startsWith("statusShow")) return val === false ? "off" : val === true ? "on" : row.options[0] ?? "on"
   return (val as string) ?? row.options[0] ?? ""
 }
 
@@ -2527,6 +2592,14 @@ function nextSettingValue(row: typeof SETTINGS_ROWS[number], prefs: import("../p
   const next = row.options[(idx + 1) % row.options.length] ?? row.options[0]
   if (row.prefKey === "sidebarEnabled") return { ...prefs, sidebarEnabled: next === "on" }
   if (row.prefKey === "notifications") return { ...prefs, notifications: next === "on" }
+  if (row.prefKey === "typingIndicatorBlink") return { ...prefs, typingIndicatorBlink: next === "on" }
+  if (row.prefKey === "statusShowContext") return {
+    ...prefs,
+    statusContextMode: next === "off" ? "off" : next === "percent only" ? "percent" : next === "percent" ? "tokens-percent" : "tokens",
+    statusShowContext: next !== "off",
+    statusShowContextPercent: next === "percent",
+  }
+  if (row.prefKey.startsWith("statusShow")) return { ...prefs, [row.prefKey]: next === "on" }
   return { ...prefs, [row.prefKey]: next }
 }
 
@@ -2535,6 +2608,9 @@ function SettingsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "s
   const active = store.getSnapshot().focus === "settings"
   const [selectedIndex, setSelectedIndex] = React.useState(0)
   const [prefs, setPrefs] = React.useState(screen.prefs)
+  const appRows = SETTINGS_ROWS.filter((row) => !row.prefKey.startsWith("statusShow"))
+  const statusRows = SETTINGS_ROWS.filter((row) => row.prefKey.startsWith("statusShow"))
+  const visibleRows = [...appRows, ...statusRows]
 
   useInput((_input, key) => {
     if (!active) return
@@ -2543,20 +2619,23 @@ function SettingsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "s
       return
     }
     if (key.upArrow) {
-      setSelectedIndex((current) => (current <= 0 ? SETTINGS_ROWS.length - 1 : current - 1))
+      setSelectedIndex((current) => (current <= 0 ? visibleRows.length - 1 : current - 1))
       return
     }
     if (key.downArrow) {
-      setSelectedIndex((current) => (current >= SETTINGS_ROWS.length - 1 ? 0 : current + 1))
+      setSelectedIndex((current) => (current >= visibleRows.length - 1 ? 0 : current + 1))
       return
     }
-    if (key.return) {
-      const row = SETTINGS_ROWS[selectedIndex]
+    if (key.return || key.tab) {
+      const row = visibleRows[selectedIndex]
       if (!row) return
       const updated = nextSettingValue(row, prefs)
       setPrefs(updated)
       if (row.prefKey === "sidebarEnabled") store.update({ sidebarEnabled: updated.sidebarEnabled !== false })
       if (row.prefKey === "inputMode") store.update({ inputMode: (updated.inputMode as "standard" | "vim") ?? "standard" })
+      if (row.prefKey === "typingIndicator") store.update({ typingIndicator: (updated.typingIndicator as TypingIndicatorStyle) || "block" })
+      if (row.prefKey === "typingIndicatorBlink") store.update({ typingIndicatorBlink: updated.typingIndicatorBlink === true })
+      if (row.prefKey.startsWith("statusShow")) store.update({ statusLine: statusLinePreferencesFromPrefs(updated) })
       screen.onSave(updated)
     }
   }, { isActive: active })
@@ -2565,18 +2644,26 @@ function SettingsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "s
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Settings</Text>
-        <Text color={theme.colors.mutedForeground}>↑↓ select · Enter toggle · Esc to close</Text>
+        <Text color={theme.colors.mutedForeground}>↑↓ select · Tab/Enter change · Esc to close</Text>
       </Box>
-      {SETTINGS_ROWS.map((row, index) => (
-        <Box key={row.prefKey} justifyContent="space-between">
-          <Text color={index === selectedIndex && active ? theme.colors.primary : theme.colors.foreground}>
-            {index === selectedIndex && active ? "› " : "  "}{row.label}
-          </Text>
-          <Text color={index === selectedIndex && active ? theme.colors.primary : theme.colors.mutedForeground}>
-            [{settingDisplayValue(row, prefs)}]
-          </Text>
-        </Box>
-      ))}
+      {appRows.map((row, index) => <SettingsRow key={row.prefKey} row={row} index={index} selectedIndex={selectedIndex} active={active} prefs={prefs} />)}
+      <Text color={theme.colors.primary} bold>Status line</Text>
+      {statusRows.map((row, index) => <SettingsRow key={row.prefKey} row={row} index={appRows.length + index} selectedIndex={selectedIndex} active={active} prefs={prefs} />)}
+    </Box>
+  )
+}
+
+function SettingsRow({ active, index, prefs, row, selectedIndex }: { active: boolean; index: number; prefs: import("../preferences.js").FurnacePreferences; row: typeof SETTINGS_ROWS[number]; selectedIndex: number }): React.ReactNode {
+  const theme = useTheme()
+  const selected = index === selectedIndex && active
+  return (
+    <Box justifyContent="space-between">
+      <Text color={selected ? theme.colors.primary : theme.colors.foreground}>
+        {selected ? "› " : "  "}{row.label}
+      </Text>
+      <Text color={selected ? theme.colors.primary : theme.colors.mutedForeground}>
+        [{settingDisplayValue(row, prefs)}]
+      </Text>
     </Box>
   )
 }
@@ -2634,8 +2721,13 @@ function furnaceAsciiBanner(): string[] {
   ]
 }
 
-function formatContextUsage(tokens: number, window: number): string {
-  return `${formatTokenCompact(tokens)}/${formatTokenCompact(window)}`
+function formatContextUsage(tokens: number, window: number, preferences: StatusLinePreferences = {}): string {
+  const mode = preferences.statusContextMode || (preferences.statusShowContext === false ? "off" : preferences.statusShowContextPercent === true ? "tokens-percent" : "tokens")
+  const percent = window > 0 ? Math.min(999, Math.max(0, (tokens / window) * 100)) : 0
+  if (mode === "percent") return window > 0 ? `${percent.toFixed(1)}%` : "unknown"
+  const base = `${formatTokenCompact(tokens)}/${formatTokenCompact(window)}`
+  if (mode !== "tokens-percent" || window <= 0) return base
+  return `${base} (${percent.toFixed(1)}%)`
 }
 
 function formatTokenCompact(value: number): string {
@@ -2655,6 +2747,27 @@ function formatFooterSettings(settings: ModelSettings): string {
   const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? `reasoning: ${settings.reasoningEffort}` : undefined
   const fast = settings.fast ? "fast" : undefined
   return [window, reasoning, fast].filter(Boolean).join(" · ")
+}
+
+function formatHeaderSettings(state: UiState): string {
+  const parts = [
+    showStatusPart(state.statusLine, "statusShowMode") ? `mode: ${modeLabel(state)}` : undefined,
+    showStatusPart(state.statusLine, "statusShowWindow") && state.modelSettings.contextLength ? `window: ${formatContext(state.modelSettings.contextLength)}` : undefined,
+    showStatusPart(state.statusLine, "statusShowReasoning") ? `reasoning: ${state.modelSettings.reasoningEffort || "none"}` : undefined,
+    showStatusPart(state.statusLine, "statusShowFast") && state.modelSettings.fast ? "fast" : undefined,
+    showStatusPart(state.statusLine, "statusShowTheme") ? `theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}` : undefined,
+  ]
+  return parts.filter(Boolean).join(" · ")
+}
+
+function showStatusPart(preferences: StatusLinePreferences, key: keyof StatusLinePreferences): boolean {
+  if (key === "statusShowContextPercent") return preferences[key] === true
+  return preferences[key] !== false
+}
+
+function showContextStatus(preferences: StatusLinePreferences): boolean {
+  if (preferences.statusContextMode === "off") return false
+  return preferences.statusShowContext !== false
 }
 
 function modeLabel(state: UiState): string {

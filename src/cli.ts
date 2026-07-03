@@ -14,7 +14,7 @@ import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
-import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, type ModelSettings } from "./preferences.js"
+import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, type FurnacePreferences, type ModelSettings, type StatusLinePreferences } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
@@ -153,6 +153,7 @@ async function runInteractive(input: {
   let customCommands: CustomCommand[] = await loadCustomCommands(input.cwd)
   let baseAutocompleteItems: PromptAutocompleteItem[] = []
   let currentAutocompleteScope: ReturnType<typeof argumentScopeFor> | undefined
+  let previewedTheme: string | undefined
   let queueCounter = 0
   let running = false
   let activeAbortController: AbortController | undefined
@@ -201,6 +202,7 @@ async function runInteractive(input: {
     cwd: input.cwd,
     inputMode: input.config.inputMode,
     sidebarEnabled: input.config.sidebarEnabled,
+    statusLine: input.config.statusLine,
     onSidebarToggle: (enabled) => {
       void saveGlobalPreferences({ sidebarEnabled: enabled }).catch(() => {})
     },
@@ -235,12 +237,16 @@ async function runInteractive(input: {
       const scope = argumentScopeFor(value)
       if (!scope) {
         if (currentAutocompleteScope !== undefined) {
+          if (currentAutocompleteScope === "theme" && previewedTheme && previewedTheme !== input.config.theme) terminal.setTheme(input.config.theme)
+          previewedTheme = undefined
           currentAutocompleteScope = undefined
           terminal.setSlashCommandItems(baseAutocompleteItems)
         }
         return
       }
       if (currentAutocompleteScope === scope) return
+      if (currentAutocompleteScope === "theme" && previewedTheme && previewedTheme !== input.config.theme) terminal.setTheme(input.config.theme)
+      previewedTheme = undefined
       currentAutocompleteScope = scope
       if (scope === "theme") {
         terminal.setSlashCommandItems(themeAutocompleteItems())
@@ -277,6 +283,15 @@ async function runInteractive(input: {
       })
       return true
     },
+    onAutocompleteHover: (match) => {
+      if (currentAutocompleteScope !== "theme") return
+      const value = match?.value || ""
+      const themeName = value.startsWith("/theme ") ? value.slice("/theme ".length).trim() : ""
+      const choice = themeName ? findTheme(themeName) : undefined
+      if (!choice || previewedTheme === choice.name) return
+      previewedTheme = choice.name
+      terminal.setTheme(choice.name)
+    },
     onOpenEditor: (draft) => {
       if (running) {
         showTransientStatus("Editor is available after the current turn finishes.")
@@ -296,6 +311,8 @@ async function runInteractive(input: {
       showTransientStatus("Copied to clipboard.")
     },
     themeName: input.config.theme,
+    typingIndicatorBlink: input.config.typingIndicatorBlink,
+    typingIndicator: input.config.typingIndicator,
     title: initialSession.title,
     onSubmit: (prompt, images) => {
       void handleInteractiveSubmit(prompt, images).catch((error) => {
@@ -422,20 +439,27 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/settings" || command.name === "/prefs") {
-      const currentPrefs: import("./preferences.js").FurnacePreferences = {
+      const currentPrefs: FurnacePreferences = {
         sidebarEnabled: input.config.sidebarEnabled,
         inputMode: input.config.inputMode,
+        typingIndicator: input.config.typingIndicator,
+        typingIndicatorBlink: input.config.typingIndicatorBlink,
         notifications: input.config.notifications,
         model: input.config.model,
         theme: input.config.theme,
         modelSettings: input.config.modelSettings,
+        ...input.config.statusLine,
       }
       terminal.showSettings(currentPrefs, async (updated) => {
         Object.assign(input.config, {
           sidebarEnabled: updated.sidebarEnabled !== false,
           inputMode: updated.inputMode ?? input.config.inputMode,
+          typingIndicator: updated.typingIndicator ?? input.config.typingIndicator,
+          typingIndicatorBlink: updated.typingIndicatorBlink === true,
           notifications: updated.notifications === true,
+          statusLine: statusLinePreferencesFromPrefs(updated),
         })
+        terminal.setStatusLinePreferences(input.config.statusLine)
         await saveGlobalPreferences(updated).catch(() => {})
       })
       return
@@ -900,6 +924,9 @@ async function runInteractive(input: {
 
   async function compactCurrentSession(focus: string): Promise<void> {
     clearTransientStatus()
+    running = true
+    terminal.setBusy(true)
+    terminal.setInputDisabled(true)
     terminal.setThinking(true, "Compacting context")
     try {
       const activePath = input.store.getActivePath(sessionId)
@@ -924,8 +951,12 @@ async function runInteractive(input: {
         : `Compaction skipped: ${formatCompactionSkip(result.skipped)}.`
       showTransientStatus(message, 6000)
     } catch (error) {
-      terminal.setThinking(false)
       showTransientStatus(`Compaction failed: ${formatError(error)}`, 6000)
+    } finally {
+      terminal.setThinking(false)
+      terminal.setInputDisabled(false)
+      terminal.setBusy(false)
+      running = false
     }
   }
 
@@ -1933,6 +1964,24 @@ function sessionTitleById(store: SessionStore, sessionId: string): string {
     return store.getSession(sessionId).title
   } catch {
     return sessionId
+  }
+}
+
+function statusLinePreferencesFromPrefs(prefs: FurnacePreferences): StatusLinePreferences {
+  return {
+    statusShowAppName: prefs.statusShowAppName,
+    statusShowContext: prefs.statusShowContext,
+    statusShowContextPercent: prefs.statusShowContextPercent,
+    statusContextMode: prefs.statusContextMode,
+    statusShowCwd: prefs.statusShowCwd,
+    statusShowFast: prefs.statusShowFast,
+    statusShowForkParent: prefs.statusShowForkParent,
+    statusShowMode: prefs.statusShowMode,
+    statusShowModel: prefs.statusShowModel,
+    statusShowReasoning: prefs.statusShowReasoning,
+    statusShowTheme: prefs.statusShowTheme,
+    statusShowTitle: prefs.statusShowTitle,
+    statusShowWindow: prefs.statusShowWindow,
   }
 }
 

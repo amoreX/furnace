@@ -2,6 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
+export type TypingIndicatorStyle = "block" | "underscore" | "bar"
+
 export type FurnacePreferences = {
   inputMode?: "standard" | "vim"
   model?: string
@@ -9,8 +11,39 @@ export type FurnacePreferences = {
   notifications?: boolean
   sidebarEnabled?: boolean
   skillPaths?: string[]
+  statusShowAppName?: boolean
+  statusShowContext?: boolean
+  statusShowContextPercent?: boolean
+  statusContextMode?: "off" | "tokens" | "tokens-percent" | "percent"
+  statusShowCwd?: boolean
+  statusShowFast?: boolean
+  statusShowForkParent?: boolean
+  statusShowMode?: boolean
+  statusShowModel?: boolean
+  statusShowReasoning?: boolean
+  statusShowTheme?: boolean
+  statusShowTitle?: boolean
+  statusShowWindow?: boolean
   theme?: string
+  typingIndicatorBlink?: boolean
+  typingIndicator?: TypingIndicatorStyle
 }
+
+export type StatusLinePreferences = Pick<FurnacePreferences,
+  | "statusShowAppName"
+  | "statusShowContext"
+  | "statusShowContextPercent"
+  | "statusContextMode"
+  | "statusShowCwd"
+  | "statusShowFast"
+  | "statusShowForkParent"
+  | "statusShowMode"
+  | "statusShowModel"
+  | "statusShowReasoning"
+  | "statusShowTheme"
+  | "statusShowTitle"
+  | "statusShowWindow"
+>
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh"
 

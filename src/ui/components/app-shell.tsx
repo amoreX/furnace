@@ -9,6 +9,7 @@ export type AppShellProps = {
 }
 
 export type AppShellHeaderProps = {
+  appName?: string
   contextUsage?: string
   cwd: string
   model: string
@@ -35,23 +36,28 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
   )
 }
 
-function Header({ contextUsage, cwd, model, settings, status, subtitle, title }: AppShellHeaderProps): React.ReactNode {
+function Header({ appName, contextUsage, cwd, model, settings, status, subtitle, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
   const { columns } = useWindowSize()
-  const modelText = truncateMiddle(model, Math.max(1, columns - "Furnace".length - 8))
-  const statusText = contextUsage ? `${contextUsage} · ${settings}` : truncateEnd(`${status ?? ""} · ${settings}`, 80)
+  const leftHeader = appName ?? ""
+  const modelText = model ? truncateMiddle(model, Math.max(1, columns - leftHeader.length - 8)) : ""
+  const statusParts = [contextUsage, settings].filter(Boolean)
+  const statusText = statusParts.length > 0 ? statusParts.join(" · ") : truncateEnd(status ?? "", 80)
+  const locationText = [cwd, title].filter(Boolean).join(" · ")
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1} width={columns}>
-      <Box justifyContent="space-between">
-        <Text color={theme.colors.primary} bold>
-          Furnace
-        </Text>
-        <Text color={theme.colors.mutedForeground}>{modelText}</Text>
-      </Box>
-      <Box justifyContent="space-between">
-        <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
-        <Text color={theme.colors.mutedForeground}>{statusText}</Text>
-      </Box>
+      {(leftHeader || modelText) ? (
+        <Box justifyContent="space-between">
+          <Text color={theme.colors.primary} bold>{leftHeader}</Text>
+          <Text color={theme.colors.mutedForeground}>{modelText}</Text>
+        </Box>
+      ) : null}
+      {(locationText || statusText) ? (
+        <Box justifyContent="space-between">
+          <Text color={theme.colors.foreground}>{truncateMiddle(locationText, 96)}</Text>
+          <Text color={theme.colors.mutedForeground}>{statusText}</Text>
+        </Box>
+      ) : null}
       {subtitle ? <Text color={theme.colors.warning}>{truncateMiddle(subtitle, 96)}</Text> : null}
     </Box>
   )

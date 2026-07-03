@@ -1,66 +1,91 @@
 # Agent Instructions
 
-This repository is building Furnace, a terminal-first agentic coding harness. Treat the project as a layered runtime with a reusable agent loop, typed tools, session persistence, and an Ink terminal UI; do not treat it as only a chat wrapper around an LLM.
+This repository builds Furnace, a terminal-first agentic coding harness. Treat it as a layered local agent runtime with typed tools, permissions, SQLite sessions, compaction, skills, subagents, and an Ink TUI. Do not treat it as only a chat wrapper around an LLM.
 
 ## Product Direction
 
 - Build a practical coding-agent harness with interactive TUI, headless prompt mode, resumable sessions, tool calls, permissions, and local state.
-- Keep agent/runtime concerns separate from the terminal UI so future JSON, RPC, SDK, and editor surfaces can reuse the same engine.
+- Keep agent/runtime concerns separate from terminal UI concerns so future JSON, RPC, SDK, and editor surfaces can reuse the same engine.
 - Prefer small, testable layers over large monolithic CLI changes.
 - Make extensions, skills, custom slash commands, and custom tools possible without requiring forks.
-- Preserve local-first behavior: SQLite sessions, local preferences, local skills, local context artifacts, and no infrastructure dependency beyond the selected model/search providers.
+- Preserve local-first behavior: SQLite sessions, local preferences, local skills, local context artifacts, and no infrastructure dependency beyond selected model/search providers.
+
+## Required Commands
+
+Use the pinned Node 22 scripts. Do not run plain `node`, `tsx`, or `tsc` directly unless you intentionally use `./scripts/with-node22.sh`.
+
+```bash
+npm run check-node
+npm run typecheck
+npm test
+npm run build
+npm run dev
+npm run dev -- -p "Reply with exactly: ok"
+```
+
+If `better-sqlite3` reports a `NODE_MODULE_VERSION` mismatch, run:
+
+```bash
+nvm use
+./scripts/with-node22.sh npm rebuild better-sqlite3
+```
 
 ## Current Technical Defaults
 
 - Language: TypeScript.
-- Runtime: Node.js 22.19+.
+- Runtime: Node.js 22.x only; repo pins `22.22.3` through `.nvmrc` and `.node-version`.
 - CLI parser: Commander.
-- TUI: Ink React, with local components under `src/ui/components/`.
+- TUI: Ink React with local components under `src/ui/components/`.
 - Storage: local SQLite at `.furnace/furnace.sqlite` using `better-sqlite3`.
 - Provider: OpenRouter chat completions and model listing.
-- Build: `tsc` plus `esbuild` bundling to `dist/cli.js`; prompt markdown files are copied by `scripts/copy-prompts.mjs`.
+- Build: `tsc` plus `esbuild` to `dist/cli.js`; prompt markdown is copied by `scripts/copy-prompts.mjs`.
 - Tests: Node test runner after `npm run build`.
 
-## Current Implementation
+## Current Implementation Map
 
-- `src/cli.ts` is the main orchestration layer. It wires Commander options, OpenRouter config, the session store, the Ink terminal, slash commands, plan mode, permissions, prompt queueing, subagent tasks, compaction, and headless/piped execution.
-- `src/agent/loop.ts` contains the reusable agent turn loop. It streams through OpenRouter, handles tool-call iterations, asks the permission store before gated tools run, records tool activity callbacks, and can force web search for non-local current-info requests.
-- `src/openrouter.ts` contains streaming/completion/model-list OpenRouter calls.
+- `src/cli.ts` is the main orchestration layer. It wires Commander options, OpenRouter config, the session store, the Ink terminal, slash commands, plan mode, permissions, prompt queueing, subagent tasks, compaction, preferences, and headless/piped execution.
+- `src/agent/loop.ts` contains the reusable streamed agent turn loop. It handles tool-call iterations, asks the permission store before gated tools run, records callbacks, and can force web search for non-local current-info requests.
+- `src/openrouter.ts` contains streaming/completion/model-list OpenRouter calls, model settings, reasoning, context length, and fast routing payloads.
 - `src/tools/registry.ts` defines built-in tools and handlers:
-  - file and search tools: `read`, `ls`, `find`, `glob`, `grep`, `write`, `edit`;
-  - execution and interaction tools: `bash`, `ask_question`;
-  - skill tools: `skill`, `skill_manage`;
-  - subagent tools: `task`, `task_status`;
-  - planning helpers: `todoread`, `todowrite`;
-  - web tools: `websearch`, `webfetch`;
-  - compression artifact retrieval: `context_retrieve`.
-- `src/permissions.ts` enforces default permission behavior. Read/search/question/skill/task/todo/web tools are allowed by default; write/edit/bash/skill management ask by default. Plan mode denies most mutations except writing/editing the active plan artifact and safe read-only shell commands.
-- `src/session/store.ts` persists sessions and entries in SQLite using a Pi-style active-leaf tree. It records messages, tool calls/results, compactions, todo state, image attachments, and file-read receipts/snapshots for stale-write warnings.
-- `src/session/context.ts` converts active session entries into model messages and user-visible transcript rows.
+  - file/search: `read`, `ls`, `find`, `glob`, `grep`, `write`, `edit`;
+  - execution/interaction: `bash`, `ask_question`;
+  - skills: `skill`, `skill_manage`;
+  - subagents: `task`, `task_status`;
+  - planning: `todoread`, `todowrite`;
+  - web: `websearch`, `webfetch`;
+  - compression retrieval: `context_retrieve`.
+- `src/permissions.ts` enforces default permissions. Read/search/question/skill/task/todo/web tools are allowed by default; write/edit/bash/skill management ask by default. Plan mode denies most mutations except writing/editing the active plan artifact and safe read-only shell commands.
+- `src/session/store.ts` persists sessions and entries in SQLite using a Pi-style active-leaf tree. It records messages, tool calls/results, compactions, todo state, image attachments, branch/fork metadata, and file-read receipts/snapshots for stale-write warnings.
+- `src/session/context.ts` converts active session entries into model messages and user-visible transcript rows, including image blocks and compacted context references.
 - `src/session/compaction.ts` implements model-assisted session compaction with deterministic fallback, `firstKeptEntryId` semantics, file details, secret redaction, and file-read-state clearing after compaction.
 - `src/compression/*` implements Headroom-lite tool-output compression and request-local compression transforms. Full originals are stored under `.furnace/context-store/` and retrieved by `context_retrieve`.
-- `src/ui/ink-terminal.tsx` and `src/ui/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, and optional sidebar.
-- `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/image`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
+- `src/ui/ink-terminal.tsx` and `src/ui/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, status line, and optional sidebar.
+- `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
 - `src/plan-mode.ts` supports agent/plan modes, creates plan artifact paths under `.furnace/plans/`, injects plan-mode system guidance, and renders saved plan artifacts/actions.
 - `src/tasks/manager.ts` runs delegated subagent task groups in parallel, supports foreground/background promotion, records recent task status, and propagates task updates to the UI.
 - `src/skills/*` discovers skills from project/user/plugin roots, renders skill guidance, loads explicit skills, and can create managed project/user skill files.
-- `src/custom-commands/*` loads reusable slash-command templates.
-- `src/preferences.ts` loads/saves global and project preferences for model, model settings, theme, input mode, notifications, sidebar, and skill paths.
+- `src/custom-commands/*` loads reusable slash-command templates from `.furnace/commands` and `~/.furnace/commands`; project commands override global commands.
+- `src/preferences.ts` loads/saves global and project preferences for model, model settings, theme, input mode, typing indicator style/blink, notifications, sidebar, status line, and skill paths.
 - `src/utils/images.ts` supports local/remote image attachments for multimodal user messages.
-- Documentation currently lives in `docs/`, especially `docs/tools.md`, `docs/skills.md`, `docs/session-management.md`, `docs/compaction.md`, `docs/headroom-lite.md`, `docs/image-support.md`, `docs/delegation-subagents.md`, `docs/interaction-model.md`, and `docs/design-choices.md`.
 
 ## Current CLI / UX Surface
 
 - Headless prompt mode: `furnace -p "prompt"` or positional prompt arguments.
 - Piped stdin mode when stdin is not a TTY.
 - Interactive Ink TUI by default.
-- Session controls: start new sessions by default, `--continue`, `--session <id>`, `/new`, `/resume`, `/history`.
+- Session controls: new sessions by default, `--continue`, `--session <id>`, `/new`, `/resume`, `/history`.
+- Forking: `/fork`, `/fork current`, `/clone`; forks appear under their parent in history while subagents stay hidden from normal recents.
 - Output mode option: `--output-format text|json` for headless mode.
 - Shell completion command: `furnace completion <bash|zsh|fish>`.
-- Interactive model/theme/settings controls through slash commands and UI panels.
+- Interactive model picker with context, reasoning, and fast-routing settings.
+- Theme picker previews hovered themes and restores the saved theme if browsing is abandoned.
+- `/settings` supports sidebar, input mode, typing indicator, typing blink, notifications, and status line fields.
+- Status context display supports tokens, tokens+percent, percent-only, and off.
 - Prompt queueing while an agent turn is running.
+- Manual `/compact` disables input while compaction runs.
 - Interrupt support through the TUI abort controller.
 - Subagent task groups can run in the foreground or be promoted/backgrounded.
+- Multiple images can be attached to one prompt with `[Image #N]` tokens.
 
 ## Coding Standards
 
@@ -69,11 +94,13 @@ This repository is building Furnace, a terminal-first agentic coding harness. Tr
 - Do not let tools bypass the permission engine.
 - Treat session entries as append-only; branch/fork features should move active leaves or create forked sessions, not rewrite old entries.
 - Preserve assistant tool-call and tool-result pairings when changing transcript/model-message transforms.
+- Preserve multimodal ordering for `[Image #N]` tokens and image blocks.
 - Keep context compression deterministic and reversible: compress model-facing output, but store the full original under `.furnace/context-store/` when content is omitted.
 - Keep empty placeholder sessions out of user-visible history.
+- Keep subagent sessions out of normal history unless a feature explicitly surfaces them.
 - Keep user-facing terminal output concise.
 - Use structured file tools and `edit` patches for repository changes where possible.
-- Add or update tests around agent loop behavior, tool execution, permission decisions, transcript replay, compaction, skills, plan mode, and UI-adjacent command behavior when changing those areas.
+- Add or update tests around agent loop behavior, tool execution, permission decisions, transcript replay, compaction, skills, plan mode, sessions/forks, and UI-adjacent command behavior when changing those areas.
 
 ## Safety Defaults
 
@@ -83,20 +110,42 @@ This repository is building Furnace, a terminal-first agentic coding harness. Tr
 - Never run destructive git or filesystem commands without explicit approval.
 - Compress large command/tool outputs before model replay and preserve full originals separately under `.furnace/context-store/`.
 - In plan mode, keep implementation locked down: only the active plan artifact can be written/edited, and only safe read-only shell commands are allowed.
+- Do not request or print secrets.
+- Do not modify `.git/`, secret files, or local SQLite stores unless the user explicitly asks for that exact operation.
 
-## Lagging Behind / Watch List
+## Documentation Expectations
 
-- `README.md` still contains older planning language: it references deleted root roadmap/planning docs, describes some first-milestone items that are already implemented, and lists an older planned stack. Update it before treating the public docs as authoritative.
-- The runtime is only partially separated from the UI: `runAgentTurn` is reusable, but `src/cli.ts` still owns a large amount of orchestration for modes, tasks, permissions, compaction, slash commands, preferences, and UI callbacks. Extracting a runtime/controller layer remains an important architecture cleanup.
-- Provider support is OpenRouter-first. Anthropic/OpenAI-native adapters and a provider abstraction beyond the current OpenRouter module are still not implemented.
-- Sandboxing is still permission-gate based. There is no OS/container sandbox adapter yet.
-- JSON/headless output exists, but the event stream is not yet exposed as a stable public JSON/RPC/SDK interface.
-- The Ink UI has grown featureful; keep watching for regressions around focus management, autocomplete scopes, queue controls, settings panels, task panels, and sidebar layout.
+- Keep `README.md` narrative and user-facing.
+- Keep `AGENTS.md` imperative and agent-facing.
+- Update docs in the same change that introduces or changes user-visible behavior.
+- Prefer exact commands over vague descriptions.
+- Do not reference deleted docs or planned features as current.
+- Important docs currently live in:
+  - `docs/tools.md`
+  - `docs/skills.md`
+  - `docs/session-management.md`
+  - `docs/forking-and-branching.md`
+  - `docs/compaction.md`
+  - `docs/headroom-lite.md`
+  - `docs/image-support.md`
+  - `docs/clipboard-paste-images.md`
+  - `docs/delegation-subagents.md`
+  - `docs/interaction-model.md`
+  - `docs/plan.md`
+  - `docs/design-choices.md`
+
+## Watch List
+
 - `src/cli.ts` is the biggest risk area by size and responsibility. Prefer extracting focused modules rather than adding more nested command/orchestration logic there.
-- Web search/fetch are MCP-style HTTP integrations with bounded output, but provider configuration, error surfacing, and tests should stay current as those services change.
-- Skills are loaded from many local/plugin roots. Be careful about duplicate names, disabled model invocation, and not treating managed/plugin cache skill roots as writable.
+- The runtime is only partially separated from the UI: `runAgentTurn` is reusable, but `src/cli.ts` still owns a large amount of orchestration for modes, tasks, permissions, compaction, slash commands, preferences, and UI callbacks.
+- Provider support is OpenRouter-first. Anthropic/OpenAI-native adapters and a provider abstraction beyond the current OpenRouter module are not implemented.
+- Sandboxing is permission-gate based. There is no OS/container sandbox adapter yet.
+- JSON/headless output exists, but the event stream is not yet exposed as a stable public JSON/RPC/SDK interface.
+- The Ink UI is featureful; watch for regressions around focus management, autocomplete scopes, queue controls, settings panels, task panels, and sidebar layout.
+- Web search/fetch are MCP-style HTTP integrations with bounded output; provider configuration, error surfacing, and tests should stay current as those services change.
+- Skills load from many local/plugin roots. Be careful about duplicate names, disabled model invocation, and never treating managed/plugin cache skill roots as writable.
 - File stale-write protection depends on read receipts/snapshots. Preserve this when changing `read`, `write`, `edit`, or session persistence.
-- Plan artifacts now live under `.furnace/plans/`; historical docs under `docs/plans/` are implementation notes, not the active roadmap.
+- Plan artifacts live under `.furnace/plans/`; historical docs under `docs/plans/` are implementation notes, not the active roadmap.
 
 ## Useful Comparisons
 
@@ -108,10 +157,4 @@ This repository is building Furnace, a terminal-first agentic coding harness. Tr
 
 When adopting or adapting behavior from another harness, including Pi, OpenCode, Hermes Agent, Codex CLI, or Claude Code, document the source and Furnace-specific adaptation in `docs/design-choices.md`.
 
-When researching Pi, OpenCode, or Headroom behavior, use the local reference clones rather than relying on memory:
-
-- Pi: `/Users/nihal/code/test-repos/pi`
-- OpenCode: `/Users/nihal/code/test-repos/opencode`
-- Headroom: `/Users/nihal/code/test-repos/headroom`
-
-Before writing comparison notes, run `git pull --ff-only` in each reference repo so the research reflects the latest checked-out source. Record the inspected commit hashes in reports.
+When researching local reference repos, prefer the checked-out clones over memory and record inspected commit hashes in reports. Pull with `git pull --ff-only` first when practical.

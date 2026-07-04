@@ -23,10 +23,13 @@ import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./termi
 import { createImageAttachment, type ImageAttachment, type ImageSource } from "../utils/images.js"
 
 export type FurnaceTerminal = {
+  clearInteractionPrompts(): void
   clearToolActivities(): void
   clearPlanActions(): void
   requestQuestions(request: AskQuestionRequest): Promise<AskQuestionResponse>
   requestApproval(request: PermissionRequest): Promise<PermissionDecision>
+  showQuestionPrompt(request: AskQuestionRequest, resolve: (response: AskQuestionResponse) => void): void
+  showApprovalPrompt(request: PermissionRequest, resolve: (decision: PermissionDecision) => void): void
   run(): Promise<void>
   stop(): void
   waitForInputFocus(): Promise<void>
@@ -38,6 +41,7 @@ export type FurnaceTerminal = {
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
+  setPinnedChats(chats: PinnedChatSummary[]): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
@@ -100,6 +104,17 @@ export type QueuedPrompt = {
   text: string
 }
 
+export type PinnedChatSummary = {
+  active: boolean
+  id: string
+  lastPrompt: string
+  queuedCount: number
+  slot: number
+  title: string
+  unread: boolean
+  working: boolean
+}
+
 export type PlanAction = "execute" | "refine" | "stay"
 
 type CreateFurnaceTerminalOptions = {
@@ -109,6 +124,8 @@ type CreateFurnaceTerminalOptions = {
   onQueueEdit?: (id: string) => void
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
+  onPinnedSelect?: (slot: number) => void
+  onPinnedUnpin?: (slot: number) => void
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
@@ -117,6 +134,7 @@ type CreateFurnaceTerminalOptions = {
   statusLine?: StatusLinePreferences
   onSidebarToggle?: (enabled: boolean) => void
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onBareTab?: (value: string) => boolean
   onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
@@ -163,7 +181,7 @@ type QuestionPromptState = AskQuestionRequest & {
   resolve: (response: AskQuestionResponse) => void
 }
 
-type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks" | "settings"
+type UiFocus = "input" | "pins" | "plan_actions" | "question" | "queue" | "tasks" | "settings"
 
 type UiState = {
   approval?: ApprovalPromptState
@@ -186,6 +204,7 @@ type UiState = {
   modelSettings: ModelSettings
   planAction?: PlanActionState
   planPath?: string
+  pinnedChats: PinnedChatSummary[]
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
@@ -220,11 +239,16 @@ class UiStore {
   readonly taskHandlers: {
     onBackground?: () => void
   }
+  readonly pinnedHandlers: {
+    onSelect?: (slot: number) => void
+    onUnpin?: (slot: number) => void
+  }
   readonly modeHandlers: {
     onCycle?: (direction: 1 | -1) => void
   }
   readonly onInputChange?: (value: string) => void
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  readonly onBareTab?: (value: string) => boolean
   readonly onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   readonly onOpenEditor?: (draft: string) => Promise<string>
   readonly onCopy?: () => void
@@ -241,11 +265,16 @@ class UiStore {
     this.taskHandlers = {
       onBackground: options.onTaskBackground,
     }
+    this.pinnedHandlers = {
+      onSelect: options.onPinnedSelect,
+      onUnpin: options.onPinnedUnpin,
+    }
     this.modeHandlers = {
       onCycle: options.onModeCycle,
     }
     this.onInputChange = options.onInputChange
     this.onAutocompleteTab = options.onAutocompleteTab
+    this.onBareTab = options.onBareTab
     this.onAutocompleteHover = options.onAutocompleteHover
     this.onOpenEditor = options.onOpenEditor
     this.onCopy = options.onCopy
@@ -272,6 +301,7 @@ class UiStore {
       modelSettings: options.modelSettings,
       planAction: undefined,
       planPath: undefined,
+      pinnedChats: [],
       question: undefined,
       queuedPrompts: [],
       screen: { kind: "chat" },
@@ -330,6 +360,7 @@ function canDrainQueuedPrompt(state: UiState): boolean {
 function normalizeUiState(state: UiState): UiState {
   if (state.focus === "queue" && state.queuedPrompts.length === 0) return { ...state, focus: "input" }
   if (state.focus === "tasks" && state.tasks.length === 0) return { ...state, focus: "input" }
+  if (state.focus === "pins" && state.pinnedChats.length === 0) return { ...state, focus: "input" }
   if (state.focus === "question" && !state.question) return { ...state, focus: "input" }
   if (state.focus === "plan_actions" && !state.planAction) return { ...state, focus: "input" }
   return state
@@ -351,6 +382,15 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     clearToolActivities() {
       store.update({ toolActivities: [] })
     },
+    clearInteractionPrompts() {
+      store.update((state) => ({
+        ...state,
+        approval: undefined,
+        focus: state.approval || state.focus === "question" || state.focus === "plan_actions" ? "input" : state.focus,
+        planAction: undefined,
+        question: undefined,
+      }))
+    },
     clearPlanActions() {
       store.update((state) => ({ ...state, focus: state.focus === "plan_actions" ? "input" : state.focus, planAction: undefined }))
     },
@@ -363,6 +403,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       return new Promise<PermissionDecision>((resolve) => {
         store.update({ approval: { ...request, resolve } })
       })
+    },
+    showQuestionPrompt(request, resolve) {
+      store.update((state) => ({ ...state, focus: "question", question: { ...request, resolve } }))
+    },
+    showApprovalPrompt(request, resolve) {
+      store.update({ approval: { ...request, resolve } })
     },
     run() {
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
@@ -399,6 +445,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setMode(mode, planPath) {
       store.update({ mode, planPath })
+    },
+    setPinnedChats(chats) {
+      store.update({ pinnedChats: chats })
     },
     setThinking(thinking, message = "Thinking") {
       store.update({ thinking, thinkingMessage: message })
@@ -597,6 +646,10 @@ function FurnaceApp({
       if (state.tasks.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "tasks" ? "input" : "tasks" }))
     }
+    if (key.ctrl && _input === "p") {
+      if (state.pinnedChats.length === 0) return
+      store.update((s) => ({ ...s, focus: s.focus === "pins" ? "input" : "pins" }))
+    }
   })
 
   const sentMessages = React.useMemo(
@@ -723,6 +776,7 @@ function FurnaceApp({
             onEmptyUp={() => focusPanelAboveInput(store, state)}
             onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
             onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
+            onBareTab={(value) => store.onBareTab?.(value) ?? false}
             onAutocompleteHover={(match) => store.onAutocompleteHover?.(match)}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
@@ -750,6 +804,7 @@ function FurnaceApp({
             typingIndicator={state.typingIndicator}
             value={state.inputDraft}
           />
+          {state.pinnedChats.length > 0 ? <PinnedChatsPanel chats={state.pinnedChats} store={store} /> : null}
           <AppShell.Header
             appName={showStatusPart(state.statusLine, "statusShowAppName") ? "Furnace" : undefined}
             contextUsage={showContextStatus(state.statusLine) ? formatContextUsage(state.contextTokens, state.contextWindowTokens, state.statusLine) : undefined}
@@ -1265,6 +1320,69 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
         {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
       </Text>
       {selectedTask?.error ? <Text color={theme.colors.error}>{truncateEnd(selectedTask.error, 100)}</Text> : null}
+    </Box>
+  )
+}
+
+function PinnedChatsPanel({ chats, store }: { chats: PinnedChatSummary[]; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const active = store.getSnapshot().focus === "pins"
+  const activeIndex = Math.max(0, chats.findIndex((chat) => chat.active))
+  const [selected, setSelected] = React.useState(activeIndex >= 0 ? activeIndex : 0)
+
+  React.useEffect(() => {
+    setSelected((current) => Math.min(Math.max(0, current), Math.max(0, chats.length - 1)))
+  }, [chats.length])
+
+  React.useEffect(() => {
+    if (!active || activeIndex < 0) return
+    setSelected(activeIndex)
+  }, [active, activeIndex])
+
+  useInput((input, key) => {
+    if (!active) return
+    if (key.escape || (key.ctrl && input === "p")) {
+      store.update({ focus: "input" })
+      return
+    }
+    if (key.upArrow) {
+      setSelected((current) => Math.max(0, current - 1))
+      return
+    }
+    if (key.downArrow) {
+      setSelected((current) => Math.min(chats.length - 1, current + 1))
+      return
+    }
+    if (key.return) {
+      store.pinnedHandlers.onSelect?.(selected + 1)
+      store.update({ focus: "input" })
+      return
+    }
+    if (input === "u" || key.tab) {
+      store.pinnedHandlers.onUnpin?.(selected + 1)
+      return
+    }
+    if (/^[1-5]$/.test(input)) {
+      store.pinnedHandlers.onSelect?.(Number.parseInt(input, 10))
+      store.update({ focus: "input" })
+    }
+  }, { isActive: active })
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Pinned chats</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "↑↓ select · Enter switch · u/Tab unpin · Esc close" : "Ctrl+P to switch"}</Text>
+      </Box>
+      {chats.map((chat, index) => (
+        <Box key={chat.id}>
+          <Text color={index === selected && active ? theme.colors.primary : chat.unread ? theme.colors.error : chat.active ? theme.colors.warning : theme.colors.foreground} bold={chat.active || chat.unread || (index === selected && active)} wrap="truncate">
+            {index === selected && active ? "› " : chat.unread ? "! " : chat.active ? "• " : "  "}#{chat.slot} {truncateEnd(chat.lastPrompt || chat.title, 72)}{chat.queuedCount > 0 ? `  +${chat.queuedCount} queued` : ""}
+          </Text>
+          {chat.working ? <Text color={theme.colors.mutedForeground}>  </Text> : null}
+          {chat.working ? <Spinner color={theme.colors.primary} label="Thinking" /> : null}
+        </Box>
+      ))}
     </Box>
   )
 }

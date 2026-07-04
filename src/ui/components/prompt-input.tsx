@@ -18,6 +18,7 @@ export type PromptInputProps = {
   inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
+  onBareTab?: (value: string) => boolean
   onChange?: (value: string) => void
   onCopy?: () => void
   onEmptyDown?: () => void
@@ -61,6 +62,7 @@ export function PromptInput({
   inputMode = "standard",
   onAutocompleteTab,
   onAutocompleteHover,
+  onBareTab,
   onChange,
   onCopy,
   onEmptyDown,
@@ -191,12 +193,14 @@ export function PromptInput({
       triggerImageAttach()
       return
     }
+    if (key.ctrl && input === "p") return
     const reverseTab = input === "\u001b[Z"
     if (reverseTab) {
       onModeCycle?.(-1)
       return
     }
     if (key.tab && !autocompleteActive) {
+      if (onBareTab?.(value)) return
       const shifted = Boolean((key as { shift?: boolean }).shift)
       onModeCycle?.(shifted ? -1 : 1)
       return

@@ -13,12 +13,14 @@ import { loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
+import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, type FurnacePreferences, type ModelSettings, type StatusLinePreferences } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
+import type { MessageEntryData, SessionRecord } from "./session/types.js"
 import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-commands/loader.js"
 import type { CustomCommand } from "./custom-commands/types.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
@@ -27,9 +29,10 @@ import type { Skill } from "./skills/types.js"
 import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
-import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
+import { createFurnaceTerminal, type FurnaceTerminal, type PinnedChatSummary, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
 import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
 import type { ImageAttachment } from "./utils/images.js"
+import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -69,7 +72,7 @@ program
           return
         }
         process.stdout.write(script)
-      }),
+      })
   )
   .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string }) => {
     try {
@@ -146,7 +149,7 @@ async function runInteractive(input: {
   const permissions = new SessionPermissionStore()
   const lofi = new LofiPlayer()
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
-  const queuedPrompts: QueuedPrompt[] = []
+  const promptQueues = new Map<string, QueuedPrompt[]>()
   const pendingBackgroundPrompts = new Map<string, string[]>()
   const modelListCache = createModelListCache(input.config)
   let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
@@ -155,12 +158,30 @@ async function runInteractive(input: {
   let currentAutocompleteScope: ReturnType<typeof argumentScopeFor> | undefined
   let previewedTheme: string | undefined
   let queueCounter = 0
-  let running = false
-  let activeAbortController: AbortController | undefined
+  const runningSessionIds = new Set<string>()
+  let activeDisplaySessionId = sessionId
+  let pinnedChatIds = normalizePinnedChatIds(input.config.pinnedChatIds)
+  const activeAbortControllers = new Map<string, AbortController>()
+  const unreadCompletedSessionIds = new Set<string>()
+  const pendingApprovals = new Map<string, { request: PermissionRequest; resolve: (decision: PermissionDecision) => void }>()
+  const pendingQuestions = new Map<string, { request: AskQuestionRequest; resolve: (response: AskQuestionResponse) => void }>()
+  const pendingPlanActions = new Map<string, { onSelect: (action: "execute" | "refine" | "stay") => void; planPath: string }>()
+  const sessionRuntimeUi = new Map<string, { streamingContent: string; thinking: boolean; thinkingMessage: string; toolActivities: ToolActivity[] }>()
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
   const initialSession = input.store.getSession(sessionId)
   let terminal!: FurnaceTerminal
+  const isCurrentSessionRunning = (): boolean => runningSessionIds.has(sessionId)
+  const isSessionRunning = (id: string): boolean => runningSessionIds.has(id)
+  const currentAbortController = (): AbortController | undefined => activeAbortControllers.get(sessionId)
+  const runtimeUiFor = (id: string): { streamingContent: string; thinking: boolean; thinkingMessage: string; toolActivities: ToolActivity[] } => {
+    let state = sessionRuntimeUi.get(id)
+    if (!state) {
+      state = { streamingContent: "", thinking: false, thinkingMessage: "Thinking", toolActivities: [] }
+      sessionRuntimeUi.set(id, state)
+    }
+    return state
+  }
   const taskManager: TaskManager = new TaskManager({
     createChildTask: ({ description, parentSessionId, prompt }) => {
       const child = input.store.createSession({ cwd: input.cwd, parentSessionId, relationType: "subagent", rootSessionId: parentSessionId, title: `${description} (subagent)` })
@@ -177,7 +198,7 @@ async function runInteractive(input: {
         status: "running",
       } satisfies TaskRecord
     },
-    executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager, terminal }),
+    executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager, terminal: terminalForSession(record.parentSessionId) }),
     onGroupComplete: ({ backgrounded, parentSessionId, records }) => {
       if (!backgrounded) return
       const pendingRecords = [...(pendingBackgroundRecords.get(parentSessionId) || []), ...records]
@@ -185,16 +206,18 @@ async function runInteractive(input: {
       if (hasActiveSubagentTasks(taskManager.status(parentSessionId).tasks)) return
       pendingBackgroundRecords.delete(parentSessionId)
       const prompt = formatBackgroundTaskCompletion(pendingRecords)
-      if (parentSessionId === sessionId) {
+      if (parentSessionId === activeDisplaySessionId) {
         void enqueueOrRunSyntheticPrompt(prompt)
         return
       }
       const pending = pendingBackgroundPrompts.get(parentSessionId) || []
       pending.push(prompt)
       pendingBackgroundPrompts.set(parentSessionId, pending)
+      syncPinnedChats()
     },
     onUpdate: (snapshot) => {
-      if (snapshot.parentSessionId !== sessionId) return
+      syncPinnedChats()
+      if (snapshot.parentSessionId !== activeDisplaySessionId) return
       terminal.setTasks(snapshot.tasks)
     },
   })
@@ -217,15 +240,21 @@ async function runInteractive(input: {
     onQueueRemove: (id) => {
       removeQueuedPrompt(id)
     },
+    onPinnedSelect: (slot) => {
+      switchToPinnedChat(slot)
+    },
+    onPinnedUnpin: (slot) => {
+      unpinChatSlot(slot)
+    },
     onInterrupt: () => {
-      activeAbortController?.abort()
+      currentAbortController()?.abort()
     },
     onTaskBackground: () => {
       const promoted = taskManager.promoteActiveGroup(sessionId)
       showTransientStatus(promoted ? "Subagents moved to background. Furnace will continue once the task tool returns." : "No active foreground subagents to background.")
     },
     onModeCycle: (direction) => {
-      if (running) {
+      if (isCurrentSessionRunning()) {
         showTransientStatus("Mode switching is available after the current turn finishes.")
         return
       }
@@ -233,7 +262,7 @@ async function runInteractive(input: {
       void switchMode(current === "plan" ? "agent" : "plan", { reason: "user", seed: direction > 0 ? "plan" : "agent" }).catch((error) => showTransientStatus(formatError(error)))
     },
     onInputChange: (value) => {
-      if (running) return
+      if (isCurrentSessionRunning()) return
       const scope = argumentScopeFor(value)
       if (!scope) {
         if (currentAutocompleteScope !== undefined) {
@@ -261,6 +290,10 @@ async function runInteractive(input: {
       }
     },
     onAutocompleteTab: (match) => {
+      if (isHistoryAutocompleteValue(match.value)) {
+        togglePinnedChatFromResumeValue(match.value)
+        return true
+      }
       if (!match.value.startsWith("/model ") || !modelListCache.settled) return false
       const modelId = match.value.slice("/model ".length).trim()
       void modelListCache.promise.then((models) => {
@@ -283,6 +316,7 @@ async function runInteractive(input: {
       })
       return true
     },
+
     onAutocompleteHover: (match) => {
       if (currentAutocompleteScope !== "theme") return
       const value = match?.value || ""
@@ -293,7 +327,7 @@ async function runInteractive(input: {
       terminal.setTheme(choice.name)
     },
     onOpenEditor: (draft) => {
-      if (running) {
+      if (isCurrentSessionRunning()) {
         showTransientStatus("Editor is available after the current turn finishes.")
         return Promise.resolve(draft)
       }
@@ -315,13 +349,16 @@ async function runInteractive(input: {
     typingIndicator: input.config.typingIndicator,
     title: initialSession.title,
     onSubmit: (prompt, images) => {
+      const submittedSessionId = sessionId
       void handleInteractiveSubmit(prompt, images).catch((error) => {
-        running = false
-        activeAbortController = undefined
-        terminal.setBusy(false)
+        runningSessionIds.delete(submittedSessionId)
+        activeAbortControllers.delete(submittedSessionId)
+        if (activeDisplaySessionId === submittedSessionId) terminal.setBusy(false)
         process.stdout.write("\x07")
-        terminal.setThinking(false)
-        terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
+        if (activeDisplaySessionId === submittedSessionId) {
+          terminal.setThinking(false)
+          terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(submittedSessionId)), { role: "assistant", content: formatError(error) }])
+        }
       })
     },
   })
@@ -348,9 +385,14 @@ async function runInteractive(input: {
     const command = parseSlashCommand(prompt)
 
     if (command.name === "/exit" || command.name === "/quit") {
-      activeAbortController?.abort()
+      currentAbortController()?.abort()
       lofi.stop()
       terminal.stop()
+      return
+    }
+    const pinSwitch = parsePinnedChatSwitch(prompt)
+    if (pinSwitch !== undefined) {
+      switchToPinnedChat(pinSwitch)
       return
     }
     if (command.name === "/lofi") {
@@ -368,14 +410,14 @@ async function runInteractive(input: {
       return
     }
     if (isSkillCommand(command.name)) {
-      if (running) {
+      if (isCurrentSessionRunning()) {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)
         return
       }
       await runSkillCommand(command.name, command.argument)
       return
     }
-    if (running && prompt.startsWith("/")) {
+    if (isCurrentSessionRunning() && prompt.startsWith("/")) {
       if (command.name === "/tasks") {
         showTaskStatus()
         return
@@ -407,7 +449,7 @@ async function runInteractive(input: {
       showTransientStatus(isKnownSlashCommand(command.name) ? `${command.name} is available after the current turn finishes.` : `Unknown command while Furnace is working: ${command.name}`)
       return
     }
-    if (running) {
+    if (isCurrentSessionRunning()) {
       enqueuePrompt(prompt)
       return
     }
@@ -429,8 +471,11 @@ async function runInteractive(input: {
       const session = input.store.getSession(sessionId)
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
+      activeDisplaySessionId = next.id
+      unreadCompletedSessionIds.delete(next.id)
       terminal.clearTranscriptDisplay()
       refreshCurrentSession()
+      syncQueuedPrompts()
       flushPendingBackgroundPrompts()
       return
     }
@@ -538,7 +583,7 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/editor") {
-      if (running) { showTransientStatus("Editor is available after the current turn finishes."); return }
+      if (isCurrentSessionRunning()) { showTransientStatus("Editor is available after the current turn finishes."); return }
       const current = ""
       const result = await terminal.suspendForEditor(current)
       if (result.trim()) await runPromptQueue(result.trim())
@@ -557,7 +602,7 @@ async function runInteractive(input: {
     // Custom user-defined slash commands
     const customCmd = customCommands.find((c) => `/${c.name}` === command.name)
     if (customCmd) {
-      if (running) {
+      if (isCurrentSessionRunning()) {
         showTransientStatus(`/${customCmd.name} is available after the current turn finishes.`)
         return
       }
@@ -629,12 +674,15 @@ async function runInteractive(input: {
   function resumeAutocompleteItems(sessions: ReturnType<SessionStore["listSessions"]>): PromptAutocompleteItem[] {
     return sessions.map((session, index) => {
       const parentIndex = session.parentSessionId ? sessions.findIndex((candidate) => candidate.id === session.parentSessionId) : -1
+      const pinnedIndex = pinnedChatIds.indexOf(session.id)
       return {
         browsable: true,
-        description: session.relationType === "fork" && session.parentSessionId
-          ? `${formatRelativeTime(session.updatedAt)} · fork of ${sessionTitleById(input.store, session.parentSessionId)}`
-          : formatRelativeTime(session.updatedAt),
-        label: session.title,
+        description: `${pinnedIndex >= 0 ? `pinned #${pinnedIndex + 1} · Tab unpin · ` : "Tab pin · "}${
+          session.relationType === "fork" && session.parentSessionId
+            ? `${formatRelativeTime(session.updatedAt)} · fork of ${sessionTitleById(input.store, session.parentSessionId)}`
+            : formatRelativeTime(session.updatedAt)
+        }`,
+        label: `${pinnedIndex >= 0 ? `#${pinnedIndex + 1} ` : ""}${session.title}`,
         relatedValue: parentIndex >= 0 ? `/resume ${parentIndex + 1}` : undefined,
         value: `/resume ${index + 1}`,
       }
@@ -684,10 +732,210 @@ async function runInteractive(input: {
       showTransientStatus(`Unknown conversation: ${argument}`)
       return
     }
-    sessionId = target.id
+    switchToSession(target.id)
+  }
+
+  function switchToSession(targetSessionId: string): void {
+    unreadCompletedSessionIds.delete(targetSessionId)
+    if (targetSessionId === sessionId) {
+      refreshCurrentSession()
+      restoreSessionInteractionState(targetSessionId)
+      return
+    }
+    sessionId = targetSessionId
+    activeDisplaySessionId = targetSessionId
+    process.stdout.write("\x1b[2J\x1b[H")
     terminal.clearTranscriptDisplay()
     refreshCurrentSession()
+    restoreSessionInteractionState(targetSessionId)
+    const runtimeUi = runtimeUiFor(targetSessionId)
+    terminal.setStreamingContent(runtimeUi.streamingContent)
+    terminal.setToolActivities(runtimeUi.toolActivities)
+    terminal.setThinking(runtimeUi.thinking || isSessionRunning(sessionId), runtimeUi.thinkingMessage || "Thinking")
+    terminal.setBusy(isSessionRunning(sessionId))
+    syncQueuedPrompts()
     flushPendingBackgroundPrompts()
+  }
+
+  function restoreSessionInteractionState(targetSessionId: string): void {
+    terminal.clearInteractionPrompts()
+    const approval = pendingApprovals.get(targetSessionId)
+    if (approval) {
+      terminal.showApprovalPrompt(approval.request, approval.resolve)
+      return
+    }
+    const question = pendingQuestions.get(targetSessionId)
+    if (question) {
+      terminal.showQuestionPrompt(question.request, question.resolve)
+      return
+    }
+    const planAction = pendingPlanActions.get(targetSessionId)
+    if (planAction) terminal.showPlanActions(planAction.planPath, planAction.onSelect)
+  }
+
+  function togglePinnedChatFromResumeValue(value: string): void {
+    const match = value.match(/^\/resume\s+(\d+)$/)
+    if (!match) return
+    const sessions = input.store.listHistorySessions(input.cwd)
+    const target = sessions[Number.parseInt(match[1] || "", 10) - 1]
+    if (!target) return
+    togglePinnedChat(target.id)
+  }
+
+  function togglePinnedChat(targetSessionId: string): void {
+    try {
+      const session = input.store.getSession(targetSessionId)
+      if (session.cwd !== input.cwd || session.archivedAt !== null || session.activeLeafId === null) {
+        showTransientStatus("Only saved chats from this project can be pinned.")
+        return
+      }
+    } catch {
+      showTransientStatus("Chat not found.")
+      return
+    }
+    const existingIndex = pinnedChatIds.indexOf(targetSessionId)
+    if (existingIndex >= 0) {
+      pinnedChatIds = pinnedChatIds.filter((id) => id !== targetSessionId)
+      void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
+      syncPinnedChats()
+      showTransientStatus("Unpinned chat.")
+      return
+    }
+    if (pinnedChatIds.length >= 5) {
+      showTransientStatus("You can pin up to 5 chats. Unpin one first.")
+      return
+    }
+    pinnedChatIds = [...pinnedChatIds, targetSessionId]
+    void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
+    syncPinnedChats()
+    showTransientStatus("Pinned chat. Type #" + pinnedChatIds.length + " to switch to it.")
+  }
+
+  function unpinChatSlot(slot: number): void {
+    const targetSessionId = pinnedChatIds[slot - 1]
+    if (!targetSessionId) return
+    pinnedChatIds = pinnedChatIds.filter((id) => id !== targetSessionId)
+    void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
+    syncPinnedChats()
+    showTransientStatus(`Unpinned #${slot}.`)
+  }
+
+  function switchToPinnedChat(slot: number): void {
+    const targetSessionId = pinnedChatIds[slot - 1]
+    if (!targetSessionId) {
+      showTransientStatus(`No pinned chat at #${slot}.`)
+      return
+    }
+    switchToSession(targetSessionId)
+  }
+
+  function syncPinnedChats(): void {
+    const summaries: PinnedChatSummary[] = []
+    const validIds: string[] = []
+    for (const id of pinnedChatIds.slice(0, 5)) {
+      try {
+        const session = input.store.getSession(id)
+        if (session.cwd !== input.cwd || session.archivedAt !== null || session.activeLeafId === null) continue
+        validIds.push(id)
+        summaries.push(pinnedChatSummary(session, validIds.length))
+      } catch {
+        // Drop stale pins for deleted sessions.
+      }
+    }
+    if (validIds.length !== pinnedChatIds.length || validIds.some((id, index) => id !== pinnedChatIds[index])) {
+      pinnedChatIds = validIds
+      void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
+    }
+    terminal.setPinnedChats(summaries)
+  }
+
+  function pinnedChatSummary(session: SessionRecord, slot: number): PinnedChatSummary {
+    return {
+      active: session.id === sessionId,
+      id: session.id,
+      lastPrompt: lastUserPrompt(input.store, session.id) || session.title,
+      queuedCount: promptQueue(session.id).filter((prompt) => !prompt.hidden).length,
+      slot,
+      title: session.title,
+      unread: unreadCompletedSessionIds.has(session.id),
+      working: isSessionRunning(session.id) || hasActiveSubagentTasks(taskManager.status(session.id).tasks),
+    }
+  }
+
+  function terminalForSession(targetSessionId: string): FurnaceTerminal {
+    const visible = () => activeDisplaySessionId === targetSessionId
+    return {
+      ...terminal,
+      clearInteractionPrompts() {
+        pendingApprovals.delete(targetSessionId)
+        pendingQuestions.delete(targetSessionId)
+        pendingPlanActions.delete(targetSessionId)
+        if (visible()) terminal.clearInteractionPrompts()
+      },
+      clearToolActivities() {
+        runtimeUiFor(targetSessionId).toolActivities = []
+        if (visible()) terminal.clearToolActivities()
+      },
+      clearPlanActions() {
+        pendingPlanActions.delete(targetSessionId)
+        if (visible()) terminal.clearPlanActions()
+      },
+      requestApproval(request) {
+        return new Promise<PermissionDecision>((resolve) => {
+          const wrappedResolve = (decision: PermissionDecision): void => {
+            pendingApprovals.delete(targetSessionId)
+            resolve(decision)
+          }
+          pendingApprovals.set(targetSessionId, { request, resolve: wrappedResolve })
+          if (visible()) terminal.showApprovalPrompt(request, wrappedResolve)
+        })
+      },
+      requestQuestions(request) {
+        return new Promise<AskQuestionResponse>((resolve) => {
+          const wrappedResolve = (response: AskQuestionResponse): void => {
+            pendingQuestions.delete(targetSessionId)
+            resolve(response)
+          }
+          pendingQuestions.set(targetSessionId, { request, resolve: wrappedResolve })
+          if (visible()) terminal.showQuestionPrompt(request, wrappedResolve)
+        })
+      },
+      showApprovalPrompt(request, resolve) { if (visible()) terminal.showApprovalPrompt(request, resolve) },
+      showQuestionPrompt(request, resolve) { if (visible()) terminal.showQuestionPrompt(request, resolve) },
+      setBusy(busy) { if (visible()) terminal.setBusy(busy) },
+      setContextUsage(tokens, window) { if (visible()) terminal.setContextUsage(tokens, window) },
+      setMode(mode, planPath) { if (visible()) terminal.setMode(mode, planPath) },
+      setSessionMeta(meta) { if (visible()) terminal.setSessionMeta(meta) },
+      setStreamingContent(text) {
+        runtimeUiFor(targetSessionId).streamingContent = text
+        if (visible()) terminal.setStreamingContent(text)
+      },
+      setThinking(thinking, message = "Thinking") {
+        const runtimeUi = runtimeUiFor(targetSessionId)
+        runtimeUi.thinking = thinking
+        runtimeUi.thinkingMessage = message
+        if (visible()) terminal.setThinking(thinking, message)
+      },
+      setTitle(title) { if (visible()) terminal.setTitle(title) },
+      setToolActivities(activities) {
+        runtimeUiFor(targetSessionId).toolActivities = activities
+        if (visible()) terminal.setToolActivities(activities)
+      },
+      setTranscript(transcript) {
+        const runtimeUi = runtimeUiFor(targetSessionId)
+        runtimeUi.streamingContent = ""
+        runtimeUi.toolActivities = []
+        if (visible()) terminal.setTranscript(transcript)
+      },
+      showPlanActions(planPath, onSelect) {
+        const wrappedSelect = (action: "execute" | "refine" | "stay"): void => {
+          pendingPlanActions.delete(targetSessionId)
+          onSelect(action)
+        }
+        pendingPlanActions.set(targetSessionId, { onSelect: wrappedSelect, planPath })
+        if (visible()) terminal.showPlanActions(planPath, wrappedSelect)
+      },
+    }
   }
 
   async function setModelByArgument(argument: string): Promise<void> {
@@ -752,9 +1000,12 @@ async function runInteractive(input: {
         sourceSessionId: sessionId,
       })
       sessionId = result.forkedSession.id
+      activeDisplaySessionId = result.forkedSession.id
+      unreadCompletedSessionIds.delete(result.forkedSession.id)
       terminal.setInputDraft("")
       terminal.clearTranscriptDisplay()
       refreshCurrentSession()
+      syncQueuedPrompts()
       flushPendingBackgroundPrompts()
       showTransientStatus(`Forked into ${result.forkedSession.title}.`, 6000)
     } catch (error) {
@@ -924,8 +1175,10 @@ async function runInteractive(input: {
 
   async function compactCurrentSession(focus: string): Promise<void> {
     clearTransientStatus()
-    running = true
-    terminal.setBusy(true)
+    const compactSessionId = sessionId
+    runningSessionIds.add(compactSessionId)
+    if (sessionId === activeDisplaySessionId) terminal.setBusy(true)
+    syncPinnedChats()
     terminal.setInputDisabled(true)
     terminal.setThinking(true, "Compacting context")
     try {
@@ -938,14 +1191,17 @@ async function runInteractive(input: {
         focus: focus.trim() || undefined,
         force: true,
         reason: "manual",
-        sessionId,
+        sessionId: compactSessionId,
         store: input.store,
         systemPrompt,
         tools: toolDefinitions,
       })
-      terminal.setThinking(false)
-      refreshCurrentSession()
-      { const u = estimateContextUsage(); terminal.setContextUsage(u.tokens, u.window) }
+      if (activeDisplaySessionId === compactSessionId) {
+        terminal.setThinking(false)
+        refreshCurrentSession()
+        const u = estimateContextUsageFor(compactSessionId)
+        terminal.setContextUsage(u.tokens, u.window)
+      }
       const message = result.entry
         ? `Compacted context: ${formatTokenCount(result.tokensBefore)} -> ${formatTokenCount(result.tokensAfter || result.tokensBefore)} tokens. File-read state cleared.`
         : `Compaction skipped: ${formatCompactionSkip(result.skipped)}.`
@@ -953,10 +1209,11 @@ async function runInteractive(input: {
     } catch (error) {
       showTransientStatus(`Compaction failed: ${formatError(error)}`, 6000)
     } finally {
-      terminal.setThinking(false)
+      if (activeDisplaySessionId === compactSessionId) terminal.setThinking(false)
       terminal.setInputDisabled(false)
-      terminal.setBusy(false)
-      running = false
+      if (activeDisplaySessionId === compactSessionId) terminal.setBusy(false)
+      runningSessionIds.delete(compactSessionId)
+      syncPinnedChats()
     }
   }
 
@@ -1126,7 +1383,7 @@ async function runInteractive(input: {
   }
 
   function enqueuePrompt(text: string, options: { hidden?: boolean; source?: string } = {}): void {
-    queuedPrompts.push({
+    promptQueue().push({
       createdAt: Date.now(),
       hidden: options.hidden,
       id: `queue-${Date.now()}-${queueCounter++}`,
@@ -1137,9 +1394,10 @@ async function runInteractive(input: {
   }
 
   function removeQueuedPrompt(id: string): QueuedPrompt | undefined {
-    const index = queuedPrompts.findIndex((prompt) => prompt.id === id)
+    const queue = promptQueue()
+    const index = queue.findIndex((prompt) => prompt.id === id)
     if (index < 0) return undefined
-    const [removed] = queuedPrompts.splice(index, 1)
+    const [removed] = queue.splice(index, 1)
     syncQueuedPrompts()
     return removed
   }
@@ -1147,13 +1405,14 @@ async function runInteractive(input: {
   function promoteQueuedPrompt(id: string): void {
     const prompt = removeQueuedPrompt(id)
     if (!prompt) return
-    queuedPrompts.unshift(prompt)
+    promptQueue().unshift(prompt)
     syncQueuedPrompts()
-    activeAbortController?.abort()
+    currentAbortController()?.abort()
   }
 
   function syncQueuedPrompts(): void {
-    terminal.setQueuedPrompts(queuedPrompts.filter((prompt) => !prompt.hidden))
+    terminal.setQueuedPrompts(promptQueue().filter((prompt) => !prompt.hidden))
+    syncPinnedChats()
   }
 
   function refreshCurrentSession(): void {
@@ -1163,25 +1422,38 @@ async function runInteractive(input: {
     terminal.setMode(state.mode, state.planPath)
     if (state.mode !== "plan") terminal.clearPlanActions()
     terminal.setTasks(taskManager.status(sessionId).tasks)
+    syncPinnedChats()
     const usage = estimateContextUsage()
     terminal.setContextUsage(usage.tokens, usage.window)
   }
 
   function estimateContextUsage(): { tokens: number; window: number } {
-    const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(sessionId)))
-    const messages = entriesToModelMessages(systemPrompt, input.store.getActivePath(sessionId), { cwd: input.cwd })
+    return estimateContextUsageFor(sessionId)
+  }
+
+  function estimateContextUsageFor(targetSessionId: string): { tokens: number; window: number } {
+    const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(targetSessionId)))
+    const messages = entriesToModelMessages(systemPrompt, input.store.getActivePath(targetSessionId), { cwd: input.cwd })
     const tokens = estimateRequestTokens(messages, toolDefinitions)
     const settings = resolveCompactionSettings(input.config)
     return { tokens, window: settings.contextWindow }
-
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
-    if (running) {
+    if (isCurrentSessionRunning()) {
       enqueuePrompt(text, { hidden: true, source: "background_subagent_completion" })
       return
     }
     await runPromptQueue({ hidden: true, source: "background_subagent_completion", text })
+  }
+
+  function promptQueue(targetSessionId = sessionId): QueuedPrompt[] {
+    let queue = promptQueues.get(targetSessionId)
+    if (!queue) {
+      queue = []
+      promptQueues.set(targetSessionId, queue)
+    }
+    return queue
   }
 
   function flushPendingBackgroundPrompts(): void {
@@ -1189,8 +1461,9 @@ async function runInteractive(input: {
     if (!prompts || prompts.length === 0) return
     pendingBackgroundPrompts.delete(sessionId)
     for (const prompt of prompts) enqueuePrompt(prompt, { hidden: true, source: "background_subagent_completion" })
-    if (!running && queuedPrompts.length > 0) {
-      const next = queuedPrompts.shift()
+    const queue = promptQueue()
+    if (!isCurrentSessionRunning() && queue.length > 0) {
+      const next = queue.shift()
       syncQueuedPrompts()
       if (next) void runPromptQueue(next).catch((error) => {
         terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
@@ -1199,11 +1472,13 @@ async function runInteractive(input: {
   }
 
   async function runPromptQueue(firstPrompt: string | { hidden?: boolean; images?: ImageAttachment[]; source?: string; text: string }, submittedImages?: ImageAttachment[]): Promise<void> {
+    const targetSessionId = sessionId
+    const queue = promptQueue(targetSessionId)
     const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
     const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
     const source = typeof firstPrompt === "string" ? undefined : firstPrompt.source
     const images = typeof firstPrompt === "string" ? submittedImages : firstPrompt.images
-    queuedPrompts.unshift({
+    queue.unshift({
       createdAt: Date.now(),
       hidden,
       id: `active-${Date.now()}-${queueCounter++}`,
@@ -1211,19 +1486,21 @@ async function runInteractive(input: {
       source,
       text: promptText,
     })
-    if (running) return
+    syncQueuedPrompts()
+    if (isSessionRunning(targetSessionId)) return
 
-    running = true
-    terminal.setBusy(true)
+    runningSessionIds.add(targetSessionId)
+    if (targetSessionId === activeDisplaySessionId) terminal.setBusy(true)
+    syncPinnedChats()
     try {
-      let isFirstTurn = true
-      while (queuedPrompts.length > 0) {
-        if (!isFirstTurn) await terminal.waitForInputFocus()
-        const next = queuedPrompts.shift()
+      while (queue.length > 0) {
+        const next = queue.shift()
         syncQueuedPrompts()
         if (!next) continue
         const controller = new AbortController()
-        activeAbortController = controller
+        activeAbortControllers.set(targetSessionId, controller)
+        const turnSessionId = targetSessionId
+        let completed = false
         try {
           await runSingleTurn({
             config: input.config,
@@ -1233,33 +1510,46 @@ async function runInteractive(input: {
             images: next.images,
             permissions,
             prompt: next.text,
-            sessionId,
+            sessionId: turnSessionId,
             signal: controller.signal,
             onPlanReady: (planPath) => {
-              terminal.showPlanActions(planPath, (action) => {
+              terminalForSession(turnSessionId).showPlanActions(planPath, (action) => {
                 void handlePlanAction(action, planPath).catch((error) => showTransientStatus(formatError(error)))
               })
             },
             store: input.store,
             taskRunner: taskManager,
-            terminal,
+            terminal: terminalForSession(turnSessionId),
           })
+          completed = true
         } catch (error) {
           if (!isAbortError(error)) throw error
-          input.store.appendMessage(sessionId, "assistant", "Interrupted by queued prompt.", input.config.model)
-          terminal.setThinking(false)
-          terminal.setTranscript(entriesToTranscript(input.store.getActivePath(sessionId)))
+          input.store.appendMessage(turnSessionId, "assistant", "Interrupted by queued prompt.", input.config.model)
+          if (activeDisplaySessionId === turnSessionId) {
+            terminal.setThinking(false)
+            terminal.setTranscript(entriesToTranscript(input.store.getActivePath(turnSessionId)))
+          }
         } finally {
-          if (activeAbortController === controller) activeAbortController = undefined
-          const usage = estimateContextUsage()
-          terminal.setContextUsage(usage.tokens, usage.window)
+          if (completed && !next.hidden) {
+            if (activeDisplaySessionId === turnSessionId) unreadCompletedSessionIds.delete(turnSessionId)
+            else unreadCompletedSessionIds.add(turnSessionId)
+            syncPinnedChats()
+          }
+          if (activeAbortControllers.get(turnSessionId) === controller) activeAbortControllers.delete(turnSessionId)
+          if (activeDisplaySessionId === turnSessionId) {
+            const usage = estimateContextUsageFor(turnSessionId)
+            terminal.setContextUsage(usage.tokens, usage.window)
+          }
         }
-        isFirstTurn = false
       }
     } finally {
-      running = false
-      activeAbortController = undefined
-      terminal.setBusy(false)
+      runningSessionIds.delete(targetSessionId)
+      activeAbortControllers.delete(targetSessionId)
+      if (targetSessionId === activeDisplaySessionId) {
+        terminal.setBusy(false)
+        terminal.setThinking(false)
+      }
+      syncPinnedChats()
       process.stdout.write("\x07")
       syncQueuedPrompts()
     }
@@ -1885,6 +2175,34 @@ function formatBackgroundTaskCompletion(records: TaskRecord[]): string {
 
 function hasActiveSubagentTasks(records: TaskRecord[]): boolean {
   return records.some((record) => record.status === "running" || record.status === "backgrounded")
+}
+
+function normalizePinnedChatIds(ids: string[] | undefined): string[] {
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const id of ids || []) {
+    const clean = id.trim()
+    if (!clean || seen.has(clean)) continue
+    seen.add(clean)
+    normalized.push(clean)
+    if (normalized.length >= 5) break
+  }
+  return normalized
+}
+
+function parsePinnedChatSwitch(prompt: string): number | undefined {
+  const match = prompt.trim().match(/^#([1-5])$/)
+  return match ? Number.parseInt(match[1] || "", 10) : undefined
+}
+
+function isHistoryAutocompleteValue(value: string): boolean {
+  return /^\/resume\s+\d+$/.test(value.trim())
+}
+
+function lastUserPrompt(store: SessionStore, sessionId: string): string {
+  const entry = [...store.getActivePath(sessionId)].reverse().find((candidate) => candidate.type === "message" && candidate.role === "user" && !(candidate.data as MessageEntryData).hidden)
+  const content = entry ? (entry.data as MessageEntryData).content : ""
+  return firstLine(content)
 }
 
 function formatTaskStatusForUser(records: TaskRecord[]): string {

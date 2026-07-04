@@ -17,6 +17,7 @@ export type FurnaceConfig = {
   modelSettings: ModelSettings
   notifications: boolean
   openRouterApiKey: string
+  pinnedChatIds: string[]
   sidebarEnabled: boolean
   siteUrl: string
   skillPaths: string[]
@@ -47,6 +48,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     notifications: preferences.notifications === true,
     modelSettings: preferences.modelSettings || {},
     openRouterApiKey,
+    pinnedChatIds: Array.isArray(preferences.pinnedChatIds) ? preferences.pinnedChatIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()).slice(0, 5) : [],
     sidebarEnabled: preferences.sidebarEnabled !== false,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
     skillPaths: Array.isArray(preferences.skillPaths) ? preferences.skillPaths.filter((path) => typeof path === "string" && path.trim()).map((path) => path.trim()) : [],

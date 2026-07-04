@@ -15,6 +15,7 @@ import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
+import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, type FurnacePreferences, type ModelSettings, type StatusLinePreferences } from "./preferences.js"
@@ -140,7 +141,8 @@ type ModelListCache = {
 }
 
 function createModelListCache(config: FurnaceConfig): ModelListCache {
-  const promise = listOpenRouterModels(config)
+  const adapter = createOpenAICompatibleProvider()
+  const promise = adapter.listModels(config.providerConfig)
   const cache: ModelListCache = { promise, settled: false }
   promise.then(
     () => {

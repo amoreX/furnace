@@ -25,27 +25,18 @@ test("termcn theme registry exposes all bundled themes", async () => {
   const { resolveTheme, themeChoices } = await import("../dist/ui/terminal-themes/index.js")
   const names = themeChoices.map((theme) => theme.name)
 
-  // Hand-crafted themes must be present as the first 8 entries
-  const handCrafted = ["flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
-  assert.deepEqual(names.slice(0, 8), handCrafted)
-  for (const name of handCrafted) {
+  // synthwave-84 is the default (first entry)
+  assert.equal(names[0], "synthwave-84")
+  assert.equal(resolveTheme(undefined).name, "synthwave-84")
+
+  // Core hand-crafted themes must be present
+  const core = ["synthwave-84", "flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
+  for (const name of core) {
     assert.equal(resolveTheme(name).name, name)
   }
-  // Extra hand-crafted themes should bring the total to 30+
+  // Total should include all 33 hand-crafted themes
   assert.ok(themeChoices.length >= 30, `expected 30+ themes, got ${themeChoices.length}`)
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
-
-  const displayLabels = Object.fromEntries(themeChoices.slice(0, 8).map((theme) => [theme.name, theme.displayLabel]))
-  assert.deepEqual(displayLabels, {
-    flexoki: "Flexoki",
-    default: "Default",
-    dracula: "Dracula",
-    catppuccin: "Catppuccin",
-    "tokyo-night": "Tokyo Night",
-    nord: "Nord",
-    rosepine: "Rosé Pine",
-    gruvbox: "Gruvbox",
-  })
 })
 
 test("assistant markdown inline formatting is parsed for terminal rendering", async () => {

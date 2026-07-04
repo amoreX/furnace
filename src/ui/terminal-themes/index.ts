@@ -245,6 +245,7 @@ export const gruvboxTheme: Theme = {
 }
 
 export const themeChoices: ThemeChoice[] = [
+  { name: "synthwave-84", displayLabel: "Synthwave '84", description: "Retro neon glow palette", theme: extraThemes[7]! },
   { name: "flexoki", displayLabel: "Flexoki", description: "Warm, low-contrast palette", theme: flexokiTheme },
   { name: "default", displayLabel: "Default", description: "Default TermCN palette", theme: defaultTheme },
   { name: "dracula", displayLabel: "Dracula", description: "Purple-heavy dark palette", theme: draculaTheme },
@@ -260,7 +261,6 @@ export const themeChoices: ThemeChoice[] = [
   { name: "solarized-dark", displayLabel: "Solarized Dark", description: "Ethan Schoonover's classic", theme: extraThemes[4]! },
   { name: "ayu-dark", displayLabel: "Ayu Dark", description: "Warm dark with orange accents", theme: extraThemes[5]! },
   { name: "night-owl", displayLabel: "Night Owl", description: "Sarah Drasner's night palette", theme: extraThemes[6]! },
-  { name: "synthwave-84", displayLabel: "Synthwave '84", description: "Retro neon glow palette", theme: extraThemes[7]! },
   { name: "kanagawa", displayLabel: "Kanagawa", description: "Japanese ink-inspired dark", theme: extraThemes[8]! },
   { name: "everforest", displayLabel: "Everforest", description: "Natural green-brown palette", theme: extraThemes[9]! },
   { name: "cyberdream", displayLabel: "Cyberdream", description: "Neon cyber dark palette", theme: extraThemes[10]! },

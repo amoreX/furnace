@@ -10,6 +10,7 @@ export type FurnacePreferences = {
   modelSettings?: ModelSettings
   notifications?: boolean
   provider?: string
+  pinnedChatIds?: string[]
   sidebarEnabled?: boolean
   skillPaths?: string[]
   statusShowAppName?: boolean

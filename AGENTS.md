@@ -43,10 +43,11 @@ nvm use
 
 ## Current Implementation Map
 
-- `src/cli.ts` is the main orchestration layer. It wires Commander options, OpenRouter config, the session store, the Ink terminal, slash commands, plan mode, permissions, prompt queueing, subagent tasks, compaction, preferences, and headless/piped execution.
+- `src/cli.ts` is the CLI entrypoint. It wires Commander options, opens the session store, and delegates interactive/headless/piped execution to `src/interactive-session-controller.ts`.
+- `src/interactive-session-controller.ts` owns session orchestration for the TUI, headless turns, piped mode, plan mode, permissions, compaction, preferences, and subagent execution. Focused helpers live in `src/prompt-queue.ts`, `src/session-switching.ts`, `src/slash-command-router.ts`, and `src/task-ui-bridge.ts`.
 - `src/agent/loop.ts` contains the reusable streamed agent turn loop. It handles tool-call iterations, asks the permission store before gated tools run, records callbacks, and can force web search for non-local current-info requests.
 - `src/openrouter.ts` contains streaming/completion/model-list OpenRouter calls, model settings, reasoning, context length, and fast routing payloads.
-- `src/tools/registry.ts` defines built-in tools and handlers:
+- `src/tools/registry.ts` declares built-in tool schemas/registration and dispatches to handlers split by domain under `src/tools/`:
   - file/search: `read`, `ls`, `find`, `glob`, `grep`, `write`, `edit`;
   - execution/interaction: `bash`, `ask_question`;
   - skills: `skill`, `skill_manage`;
@@ -62,7 +63,7 @@ nvm use
 - `src/ui/ink-terminal.tsx` and `src/ui/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, status line, and optional sidebar.
 - `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
 - `src/plan-mode.ts` supports agent/plan modes, creates plan artifact paths under `.furnace/plans/`, injects plan-mode system guidance, and renders saved plan artifacts/actions.
-- `src/tasks/manager.ts` runs delegated subagent task groups in parallel, supports foreground/background promotion, records recent task status, and propagates task updates to the UI.
+- `src/tasks/manager.ts` runs delegated subagent task groups in parallel, supports foreground/background promotion, records recent task status, and propagates task updates to the UI. Backgrounded task groups release the parent turn immediately; completion results are injected later through a hidden queued prompt.
 - `src/skills/*` discovers skills from project/user/plugin roots, renders skill guidance, loads explicit skills, and can create managed project/user skill files.
 - `src/custom-commands/*` loads reusable slash-command templates from `.furnace/commands` and `~/.furnace/commands`; project commands override global commands.
 - `src/preferences.ts` loads/saves global and project preferences for model, model settings, theme, input mode, typing indicator style/blink, notifications, sidebar, status line, and skill paths.
@@ -136,8 +137,8 @@ nvm use
 
 ## Watch List
 
-- `src/cli.ts` is the biggest risk area by size and responsibility. Prefer extracting focused modules rather than adding more nested command/orchestration logic there.
-- The runtime is only partially separated from the UI: `runAgentTurn` is reusable, but `src/cli.ts` still owns a large amount of orchestration for modes, tasks, permissions, compaction, slash commands, preferences, and UI callbacks.
+- Interactive orchestration is now split across `interactive-session-controller.ts` and focused helper modules. Keep new command/session/task logic in those focused modules rather than growing `src/cli.ts` again.
+- The runtime is more separated from the UI, but `interactive-session-controller.ts` still coordinates many concerns for modes, tasks, permissions, compaction, slash commands, preferences, and UI callbacks.
 - Provider support is OpenRouter-first. Anthropic/OpenAI-native adapters and a provider abstraction beyond the current OpenRouter module are not implemented.
 - Sandboxing is permission-gate based. There is no OS/container sandbox adapter yet.
 - JSON/headless output exists, but the event stream is not yet exposed as a stable public JSON/RPC/SDK interface.

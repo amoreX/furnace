@@ -1,11 +1,19 @@
 {
   "name": "furnace",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.0",
   "description": "A from-scratch harness for agentic coding.",
   "type": "module",
   "bin": {
     "furnace": "./dist/cli.js"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md"
+  ],
   "scripts": {
     "check-node": "./scripts/with-node22.sh node scripts/ensure-node-version.mjs",
     "dev": "./scripts/with-node22.sh tsx src/cli.ts",

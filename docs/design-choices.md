@@ -332,7 +332,7 @@ Local changes:
 - Furnace does not expose `subagent_type` in the first version. Children are prompt-only and use one default subagent runtime.
 - Children use the same model as the parent and the same tools except `task`, which prevents recursive subagent spawning.
 - Permission grants are inherited from the parent conversation through an explicit child-to-parent session link, not copied globally.
-- Background promotion is user-driven from the TUI (`Ctrl+B` in the task panel). The model can start background tasks, but the expected default is synchronous execution.
+- Background promotion is user-driven from the TUI (`b` in the focused task panel). The model can start background tasks, but the expected default is synchronous execution.
 
 Current implementation:
 

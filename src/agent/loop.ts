@@ -3,6 +3,7 @@ import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouter
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
+import { isBackgroundedTaskToolResult } from "../tools/tasks.js"
 import { executeToolCall, toolDefinitions, type ToolFileReadStore, type ToolTodoStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
@@ -26,6 +27,7 @@ export type RunAgentTurnInput = {
 }
 
 export type RunAgentTurnResult = {
+  backgrounded?: boolean
   content: string
   usage?: OpenRouterUsage
 }
@@ -111,6 +113,12 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner, todoStore: input.todoStore },
       )
       input.onToolResult?.(call, result.content)
+      if (isBackgroundedTaskToolResult(result.name, result.content)) {
+        const usage = accumulatedPromptTokens > 0 || lastCompletionTokens > 0
+          ? { promptTokens: accumulatedPromptTokens, completionTokens: lastCompletionTokens }
+          : undefined
+        return { backgrounded: true, content: "Subagents are running in the background. I'll continue when they finish.", usage }
+      }
       messages.push({
         role: "tool",
         name: result.name,

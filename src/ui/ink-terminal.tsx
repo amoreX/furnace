@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Box, Newline, Static, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
+import { Box, Newline, Static, Text, render, useAnimation, useApp, useInput, usePaste, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
@@ -23,10 +23,13 @@ import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./termi
 import { createImageAttachment, type ImageAttachment, type ImageSource } from "../utils/images.js"
 
 export type FurnaceTerminal = {
+  clearInteractionPrompts(): void
   clearToolActivities(): void
   clearPlanActions(): void
   requestQuestions(request: AskQuestionRequest): Promise<AskQuestionResponse>
   requestApproval(request: PermissionRequest): Promise<PermissionDecision>
+  showQuestionPrompt(request: AskQuestionRequest, resolve: (response: AskQuestionResponse) => void): void
+  showApprovalPrompt(request: PermissionRequest, resolve: (decision: PermissionDecision) => void): void
   run(): Promise<void>
   stop(): void
   waitForInputFocus(): Promise<void>
@@ -38,6 +41,7 @@ export type FurnaceTerminal = {
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
+  setPinnedChats(chats: PinnedChatSummary[]): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
@@ -102,6 +106,17 @@ export type QueuedPrompt = {
   text: string
 }
 
+export type PinnedChatSummary = {
+  active: boolean
+  id: string
+  lastPrompt: string
+  queuedCount: number
+  slot: number
+  title: string
+  unread: boolean
+  working: boolean
+}
+
 export type PlanAction = "execute" | "refine" | "stay"
 
 type CreateFurnaceTerminalOptions = {
@@ -111,6 +126,8 @@ type CreateFurnaceTerminalOptions = {
   onQueueEdit?: (id: string) => void
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
+  onPinnedSelect?: (slot: number) => void
+  onPinnedUnpin?: (slot: number) => void
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
@@ -119,6 +136,7 @@ type CreateFurnaceTerminalOptions = {
   statusLine?: StatusLinePreferences
   onSidebarToggle?: (enabled: boolean) => void
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onBareTab?: (value: string) => boolean
   onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
@@ -185,7 +203,7 @@ type QuestionPromptState = AskQuestionRequest & {
   resolve: (response: AskQuestionResponse) => void
 }
 
-type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks" | "settings"
+type UiFocus = "input" | "pins" | "plan_actions" | "question" | "queue" | "tasks" | "settings"
 
 type UiState = {
   approval?: ApprovalPromptState
@@ -208,9 +226,11 @@ type UiState = {
   modelSettings: ModelSettings
   planAction?: PlanActionState
   planPath?: string
+  pinnedChats: PinnedChatSummary[]
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
+  scrollbackOffset: number
   slashCommandItems: PromptAutocompleteItem[]
   statusNotice?: string
   statusLine: StatusLinePreferences
@@ -242,11 +262,16 @@ class UiStore {
   readonly taskHandlers: {
     onBackground?: () => void
   }
+  readonly pinnedHandlers: {
+    onSelect?: (slot: number) => void
+    onUnpin?: (slot: number) => void
+  }
   readonly modeHandlers: {
     onCycle?: (direction: 1 | -1) => void
   }
   readonly onInputChange?: (value: string) => void
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  readonly onBareTab?: (value: string) => boolean
   readonly onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
   readonly onOpenEditor?: (draft: string) => Promise<string>
   readonly onCopy?: () => void
@@ -263,11 +288,16 @@ class UiStore {
     this.taskHandlers = {
       onBackground: options.onTaskBackground,
     }
+    this.pinnedHandlers = {
+      onSelect: options.onPinnedSelect,
+      onUnpin: options.onPinnedUnpin,
+    }
     this.modeHandlers = {
       onCycle: options.onModeCycle,
     }
     this.onInputChange = options.onInputChange
     this.onAutocompleteTab = options.onAutocompleteTab
+    this.onBareTab = options.onBareTab
     this.onAutocompleteHover = options.onAutocompleteHover
     this.onOpenEditor = options.onOpenEditor
     this.onCopy = options.onCopy
@@ -294,9 +324,11 @@ class UiStore {
       modelSettings: options.modelSettings,
       planAction: undefined,
       planPath: undefined,
+      pinnedChats: [],
       question: undefined,
       queuedPrompts: [],
       screen: { kind: "chat" },
+      scrollbackOffset: 0,
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
       statusNotice: undefined,
       statusLine: options.statusLine || {},
@@ -352,6 +384,7 @@ function canDrainQueuedPrompt(state: UiState): boolean {
 function normalizeUiState(state: UiState): UiState {
   if (state.focus === "queue" && state.queuedPrompts.length === 0) return { ...state, focus: "input" }
   if (state.focus === "tasks" && state.tasks.length === 0) return { ...state, focus: "input" }
+  if (state.focus === "pins" && state.pinnedChats.length === 0) return { ...state, focus: "input" }
   if (state.focus === "question" && !state.question) return { ...state, focus: "input" }
   if (state.focus === "plan_actions" && !state.planAction) return { ...state, focus: "input" }
   return state
@@ -373,6 +406,15 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     clearToolActivities() {
       store.update({ toolActivities: [] })
     },
+    clearInteractionPrompts() {
+      store.update((state) => ({
+        ...state,
+        approval: undefined,
+        focus: state.approval || state.focus === "question" || state.focus === "plan_actions" ? "input" : state.focus,
+        planAction: undefined,
+        question: undefined,
+      }))
+    },
     clearPlanActions() {
       store.update((state) => ({ ...state, focus: state.focus === "plan_actions" ? "input" : state.focus, planAction: undefined }))
     },
@@ -385,6 +427,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       return new Promise<PermissionDecision>((resolve) => {
         store.update({ approval: { ...request, resolve } })
       })
+    },
+    showQuestionPrompt(request, resolve) {
+      store.update((state) => ({ ...state, focus: "question", question: { ...request, resolve } }))
+    },
+    showApprovalPrompt(request, resolve) {
+      store.update({ approval: { ...request, resolve } })
     },
     run() {
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
@@ -421,6 +469,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setMode(mode, planPath) {
       store.update({ mode, planPath })
+    },
+    setPinnedChats(chats) {
+      store.update({ pinnedChats: chats })
     },
     setThinking(thinking, message = "Thinking") {
       store.update({ thinking, thinkingMessage: message })
@@ -461,7 +512,22 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
     setTheme(themeName) {
       const choice = resolveTheme(themeName)
-      store.update({ theme: choice.theme, themeName: choice.name })
+      const current = store.getSnapshot()
+      if (current.themeName === choice.name) return
+      // Committed chat history is rendered through Ink's Static component so it
+      // can live in normal terminal scrollback. Static output is append-only and
+      // will not recolor when context changes. Ink's instance.clear() only clears
+      // Ink's live log region, so theme browsing can otherwise look split between
+      // old static colors and the new input/status colors. Clear the visible TTY
+      // frame, then remount/replay committed lines with the new theme.
+      instance?.clear()
+      if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H")
+      store.update((state) => ({
+        ...state,
+        theme: choice.theme,
+        themeName: choice.name,
+        transcriptGeneration: state.transcriptGeneration + 1,
+      }))
     },
     setTitle(title) {
       store.update({ title })
@@ -477,6 +543,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update((state) => ({
         ...state,
         committedLines: [],
+        scrollbackOffset: 0,
         transcriptGeneration: state.transcriptGeneration + 1,
         pastedImages: [],
         nextImageLabel: 1,
@@ -600,6 +667,7 @@ function FurnaceApp({
 }): React.ReactNode {
   const app = useApp()
   const theme = useTheme()
+  const { columns, rows } = useWindowSize()
 
   React.useEffect(() => {
     const title = state.title && state.title !== "New Chat" ? `Furnace — ${state.title}` : "Furnace"
@@ -608,9 +676,26 @@ function FurnaceApp({
   }, [state.title])
 
   useInput((_input, key) => {
+    const extendedKey = key as typeof key & { pageDown?: boolean; pageUp?: boolean }
     if (key.ctrl && _input === "c") {
       onExit()
       app.exit()
+    }
+    if (!state.approval && !state.question && state.screen.kind === "chat" && state.committedLines.length > 0) {
+      const pageSize = scrollbackPageSize(rows)
+      const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+      if (extendedKey.pageUp) {
+        store.update((s) => ({ ...s, scrollbackOffset: Math.min(maxOffset, Math.max(1, s.scrollbackOffset + pageSize)) }))
+        return
+      }
+      if (extendedKey.pageDown) {
+        store.update((s) => ({ ...s, scrollbackOffset: Math.max(0, s.scrollbackOffset - pageSize) }))
+        return
+      }
+      if (key.escape && state.scrollbackOffset > 0) {
+        store.update({ scrollbackOffset: 0 })
+        return
+      }
     }
     if (key.ctrl && _input === "q") {
       if (state.queuedPrompts.length === 0) return
@@ -624,6 +709,10 @@ function FurnaceApp({
     if (key.ctrl && (_input === "t" || _input === "k")) {
       if (state.tasks.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "tasks" ? "input" : "tasks" }))
+    }
+    if (key.ctrl && _input === "p") {
+      if (state.pinnedChats.length === 0) return
+      store.update((s) => ({ ...s, focus: s.focus === "pins" ? "input" : "pins" }))
     }
   })
 
@@ -700,8 +789,6 @@ function FurnaceApp({
     return { label }
   }, [state.cwd, store])
 
-  const { columns } = useWindowSize()
-
   return (
     <>
       <Box flexDirection="column" width={columns}>
@@ -709,6 +796,7 @@ function FurnaceApp({
           key={state.transcriptGeneration}
           committedLines={state.committedLines}
           flexGrow
+          scrollbackOffset={state.scrollbackOffset}
           thinking={state.thinking}
           thinkingMessage={state.thinkingMessage}
           streamingContent={state.streamingContent}
@@ -753,6 +841,7 @@ function FurnaceApp({
             onEmptyUp={() => focusPanelAboveInput(store, state)}
             onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
             onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
+            onBareTab={(value) => store.onBareTab?.(value) ?? false}
             onAutocompleteHover={(match) => store.onAutocompleteHover?.(match)}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
@@ -780,6 +869,7 @@ function FurnaceApp({
             typingIndicator={state.typingIndicator}
             value={state.inputDraft}
           />
+          {state.pinnedChats.length > 0 ? <PinnedChatsPanel chats={state.pinnedChats} store={store} /> : null}
           <AppShell.Header
             appName={showStatusPart(state.statusLine, "statusShowAppName") ? "Furnace" : undefined}
             contextUsage={showContextStatus(state.statusLine) ? formatContextUsage(state.contextTokens, state.contextWindowTokens, state.statusLine) : undefined}
@@ -822,7 +912,7 @@ function queueHintItems(): string[] {
 function taskHintItems(state: UiState): string[] {
   const hasForeground = state.tasks.some((task) => task.status === "running")
   const hasBackground = state.tasks.some((task) => task.status === "backgrounded")
-  return ["Up/down to select", hasForeground ? "Ctrl+b to background" : hasBackground ? "Working in background" : "Task status", "Esc to return to input"]
+  return ["Up/down to select", hasForeground ? "b to background" : hasBackground ? "Working in background" : "Task status", "Esc to return to input"]
 }
 
 function hintItemsForState(state: UiState): string[] {
@@ -1268,7 +1358,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
       setSelected((current) => Math.min(tasks.length - 1, current + 1))
       return
     }
-    if (key.ctrl && input === "b" && canBackground) {
+    if (isTaskBackgroundShortcut(input, key) && canBackground) {
       store.taskHandlers.onBackground?.()
       store.update({ focus: "input" })
     }
@@ -1292,11 +1382,78 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
         </Box>
       ))}
       <Text color={theme.colors.mutedForeground}>
-        {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
+        {active ? `Up/down to select · ${canBackground ? "b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
       </Text>
       {selectedTask?.error ? <Text color={theme.colors.error}>{truncateEnd(selectedTask.error, 100)}</Text> : null}
     </Box>
   )
+}
+
+function PinnedChatsPanel({ chats, store }: { chats: PinnedChatSummary[]; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const active = store.getSnapshot().focus === "pins"
+  const activeIndex = Math.max(0, chats.findIndex((chat) => chat.active))
+  const [selected, setSelected] = React.useState(activeIndex >= 0 ? activeIndex : 0)
+
+  React.useEffect(() => {
+    setSelected((current) => Math.min(Math.max(0, current), Math.max(0, chats.length - 1)))
+  }, [chats.length])
+
+  React.useEffect(() => {
+    if (!active || activeIndex < 0) return
+    setSelected(activeIndex)
+  }, [active, activeIndex])
+
+  useInput((input, key) => {
+    if (!active) return
+    if (key.escape || (key.ctrl && input === "p")) {
+      store.update({ focus: "input" })
+      return
+    }
+    if (key.upArrow) {
+      setSelected((current) => Math.max(0, current - 1))
+      return
+    }
+    if (key.downArrow) {
+      setSelected((current) => Math.min(chats.length - 1, current + 1))
+      return
+    }
+    if (key.return) {
+      store.pinnedHandlers.onSelect?.(selected + 1)
+      store.update({ focus: "input" })
+      return
+    }
+    if (input === "u" || key.tab) {
+      store.pinnedHandlers.onUnpin?.(selected + 1)
+      return
+    }
+    if (/^[1-5]$/.test(input)) {
+      store.pinnedHandlers.onSelect?.(Number.parseInt(input, 10))
+      store.update({ focus: "input" })
+    }
+  }, { isActive: active })
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Pinned chats</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "↑↓ select · Enter switch · u/Tab unpin · Esc close" : "Ctrl+P to switch"}</Text>
+      </Box>
+      {chats.map((chat, index) => (
+        <Box key={chat.id}>
+          <Text color={index === selected && active ? theme.colors.primary : chat.unread ? theme.colors.error : chat.active ? theme.colors.warning : theme.colors.foreground} bold={chat.active || chat.unread || (index === selected && active)} wrap="truncate">
+            {index === selected && active ? "› " : chat.unread ? "! " : chat.active ? "• " : "  "}#{chat.slot} {truncateEnd(chat.lastPrompt || chat.title, 72)}{chat.queuedCount > 0 ? `  +${chat.queuedCount} queued` : ""}
+          </Text>
+          {chat.working ? <Text color={theme.colors.mutedForeground}>  </Text> : null}
+          {chat.working ? <Spinner color={theme.colors.primary} label="Thinking" /> : null}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+export function isTaskBackgroundShortcut(input: string, key: { ctrl?: boolean; meta?: boolean }): boolean {
+  return !key.ctrl && !key.meta && input.toLowerCase() === "b"
 }
 
 export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; lastToolName?: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
@@ -1389,6 +1546,7 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 function LiveChat({
   committedLines = [],
   flexGrow: grow,
+  scrollbackOffset = 0,
   streamingContent,
   thinking,
   thinkingMessage,
@@ -1396,6 +1554,7 @@ function LiveChat({
 }: {
   committedLines?: TranscriptLineData[]
   flexGrow?: boolean
+  scrollbackOffset?: number
   streamingContent: string
   thinking: boolean
   thinkingMessage: string
@@ -1405,8 +1564,16 @@ function LiveChat({
   const { columns, rows } = useWindowSize()
   const width = Math.max(20, columns - 4)
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
+  const pageSize = scrollbackPageSize(rows)
+  const maxOffset = maxScrollbackOffset(committedLines.length, pageSize)
+  const offset = Math.min(Math.max(0, scrollbackOffset), maxOffset)
+  const isScrollbackActive = offset > 0
+  const displayedActiveLines = isScrollbackActive
+    ? [{ kind: "content" as const, plain: true, text: `Viewing scrollback — PageDown or Esc returns to live (${offset} line${offset === 1 ? "" : "s"} back)` }]
+    : activeLines
+  const displayedCommittedLines = isScrollbackActive ? scrollbackWindow(committedLines, offset, pageSize) : committedLines
 
-  const hasLines = committedLines.length > 0 || activeLines.length > 0
+  const hasLines = displayedCommittedLines.length > 0 || displayedActiveLines.length > 0
 
   if (!hasLines) {
     return (
@@ -1441,21 +1608,43 @@ function LiveChat({
   return (
     <>
       {/*
-        Finished lines are flushed to the terminal exactly once via Static, so the
-        terminal's own scrollback (mouse wheel, trackpad, Shift+PageUp) can scroll
-        back through full chat history — matching Pi's differential renderer, which
-        never clips history into a fixed-height viewport.
+        Live mode flushes finished lines exactly once via Static so the terminal's
+        own scrollback can scroll full chat history. Scrollback preview mode avoids
+        Static because Static only appends and cannot replace older slices while a
+        turn is still streaming.
       */}
-      <Static items={committedLines}>
-        {(line, index) => <StaticLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />}
-      </Static>
+      {isScrollbackActive ? (
+        <Box flexDirection="column" paddingX={1}>
+          {displayedCommittedLines.map((line, index) => <TranscriptLine key={`scrollback-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />)}
+        </Box>
+      ) : (
+        <Static items={displayedCommittedLines}>
+          {(line, index) => <StaticLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />}
+        </Static>
+      )}
       <Box flexDirection="column" flexGrow={grow ? 1 : 0} paddingX={1}>
-        {activeLines.map((line, index) => (
+        {displayedActiveLines.map((line, index) => (
           <TranscriptLine key={`live-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
         ))}
       </Box>
     </>
   )
+}
+
+export function scrollbackPageSize(rows: number): number {
+  return Math.max(5, rows - 12)
+}
+
+export function maxScrollbackOffset(totalLines: number, pageSize: number): number {
+  return Math.max(0, totalLines - Math.max(1, pageSize))
+}
+
+export function scrollbackWindow<T>(items: T[], offset: number, pageSize: number): T[] {
+  const safePageSize = Math.max(1, pageSize)
+  const safeOffset = Math.min(Math.max(0, offset), maxScrollbackOffset(items.length, safePageSize))
+  const end = Math.max(0, items.length - safeOffset)
+  const start = Math.max(0, end - safePageSize)
+  return items.slice(start, end)
 }
 
 type TranscriptLineData = {
@@ -1964,6 +2153,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (editLines.length > 0) return editLines
   }
 
+  if (activity.name === "read") {
+    const readLines = formatReadActivity(activity, width)
+    if (readLines.length > 0) return readLines
+  }
+
   if (activity.name === "write") {
     const writeLines = formatWriteActivity(activity, width)
     if (writeLines.length > 0) return writeLines
@@ -2125,6 +2319,40 @@ function formatWriteActivity(activity: ToolActivity, width: number): RenderedToo
   }
   if (contentLines.length > 8) lines.push({ text: `  ... truncated ${contentLines.length - 8} more lines`, tone: "meta" })
   return lines
+}
+
+function formatReadActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const args = parseJsonRecord(activity.args)
+  const path = stringField(args, "path") ?? stringField(args, "file_path")
+  if (!path) return []
+
+  const range = readLineRangeLabel(args, activity.result)
+  const verb = activity.status === "running" ? "Reading" : "Read"
+  const suffix = range ? ` ${range}` : ""
+  return [{ text: `${statusSymbol(activity.status)} ${verb} ${truncateEnd(path, Math.max(24, width - 24))}${suffix}`, tone: "summary" }]
+}
+
+function readLineRangeLabel(args: Record<string, unknown>, result: string | undefined): string {
+  const returned = readLineRangeFromResult(result)
+  if (returned) return returned.start === returned.end ? `line ${returned.start}` : `lines ${returned.start}-${returned.end}`
+
+  const offset = numberField(args, "offset")
+  const limit = numberField(args, "limit")
+  const start = Math.max(1, Math.floor(offset ?? 1))
+  if (typeof limit === "number") return `lines ${start}-${start + Math.max(0, Math.floor(limit)) - 1}`
+  if (typeof offset === "number") return `from line ${start}`
+  return "from line 1"
+}
+
+function readLineRangeFromResult(result: string | undefined): { end: number; start: number } | undefined {
+  if (!result || result.startsWith("Tool ")) return undefined
+  const lineNumbers: number[] = []
+  for (const line of result.split(/\r?\n/)) {
+    const match = line.match(/^(\d+)\|/)
+    if (match) lineNumbers.push(Number(match[1]))
+  }
+  if (lineNumbers.length === 0) return undefined
+  return { start: lineNumbers[0], end: lineNumbers[lineNumbers.length - 1] }
 }
 
 function formatAskQuestionActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
@@ -2327,6 +2555,11 @@ function stringField(args: Record<string, unknown>, key: string): string | undef
 function booleanField(args: Record<string, unknown>, key: string): boolean | undefined {
   const value = args[key]
   return typeof value === "boolean" ? value : undefined
+}
+
+function numberField(args: Record<string, unknown>, key: string): number | undefined {
+  const value = args[key]
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function skillManageDisplayPath(name: string, target: string): string {
@@ -2688,6 +2921,11 @@ function ProviderSelectorScreen({ screen, store }: { screen: Extract<UiScreen, {
 function ApiKeySetupScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "apiKeySetup" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
   const [draft, setDraft] = React.useState("")
+
+  usePaste((pastedText) => {
+    const sanitized = pastedText.trim()
+    if (sanitized) setDraft((current) => current + sanitized)
+  })
 
   useInput((input, key) => {
     if (key.escape) {

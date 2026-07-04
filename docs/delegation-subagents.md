@@ -53,7 +53,7 @@ If the user interrupts the parent while the group is still foregrounded, Furnace
 
 ## Background Promotion
 
-The TUI shows active subagents in a focused task panel. Press up from an empty input to focus the panel when tasks are visible, then press `Ctrl+B` to move the active foreground task group to background. If the transcript can scroll upward, Up scrolls the chat before it focuses panels. Completed tasks are removed from the panel immediately; if the panel was focused on the last task, focus returns to the input.
+The TUI shows active subagents in a focused task panel. Press up from an empty input to focus the panel when tasks are visible, then press `b` to move the active foreground task group to background. If the transcript can scroll upward, Up scrolls the chat before it focuses panels. Completed tasks are removed from the panel immediately; if the panel was focused on the last task, focus returns to the input.
 
 Backgrounded groups render as `Subagents (backgrounded)` with task titles underneath. The background state is group-level, so Furnace does not repeat `backgrounded` on every row.
 
@@ -79,7 +79,7 @@ Unapproved operations still prompt normally. If a subagent calls `edit`, `write`
 
 - `/tasks`: show active and backgrounded tasks for the current conversation.
 - `task_status`: model-callable status check for the current parent conversation.
-- Task panel: shows subagent status and supports `Ctrl+B` background promotion.
+- Task panel: shows subagent status and supports `b` background promotion.
 
 ## Current Limits
 

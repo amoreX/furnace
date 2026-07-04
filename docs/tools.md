@@ -792,7 +792,7 @@ Behavior:
 - Uses the same model and runtime context shape as the parent agent, including current date/time, current year, and workspace path.
 - Uses the same tool set as the parent except `task` is removed.
 - Runs synchronously by default and returns one combined tool result in input order.
-- Can be promoted to background from the TUI task panel with `Ctrl+B`.
+- Can be promoted to background from the focused TUI task panel with `b`.
 - When a background group finishes, Furnace queues one grouped completion prompt for the original parent session.
 - Child session ids are kept internal and are not shown in task results.
 

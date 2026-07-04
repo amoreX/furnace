@@ -68,6 +68,82 @@ test("agent turn compacts and retries once after context overflow", async () => 
   }
 })
 
+test("agent turn stops immediately when a task group is backgrounded", async () => {
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  const toolResults = []
+
+  try {
+    globalThis.fetch = async () => {
+      calls += 1
+      const chunks = [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_task", type: "function", function: { name: "task", arguments: "" } }] }, finish_reason: null }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ prompt: "Research in background", background: true }) } }] }, finish_reason: null }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 2 }, choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]
+      const sseData = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n`).join("") + "data: [DONE]\n"
+      let consumed = false
+      return {
+        ok: true,
+        body: {
+          getReader() {
+            return {
+              read() {
+                if (consumed) return Promise.resolve({ done: true, value: undefined })
+                consumed = true
+                return Promise.resolve({ done: false, value: new TextEncoder().encode(sseData) })
+              },
+              releaseLock() {},
+            }
+          },
+        },
+      }
+    }
+
+    const taskRunner = {
+      promoteActiveGroup() {
+        return false
+      },
+      status() {
+        return { parentSessionId: "parent", tasks: [] }
+      },
+      async runTasks(input) {
+        return {
+          backgrounded: true,
+          groupId: "group_bg",
+          tasks: input.tasks.map((task, index) => ({
+            background: true,
+            childSessionId: `child_${index + 1}`,
+            description: task.description || task.prompt,
+            id: `task_${index + 1}`,
+            parentSessionId: input.parentSessionId,
+            prompt: task.prompt,
+            startedAt: 10,
+            status: "backgrounded",
+          })),
+        }
+      },
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig(),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "delegate" }],
+      onToolResult: (_call, content) => toolResults.push(content),
+      sessionId: "parent",
+      taskRunner,
+    })
+
+    assert.equal(calls, 1)
+    assert.equal(result.backgrounded, true)
+    assert.equal(result.content, "Subagents are running in the background. I'll continue when they finish.")
+    assert.equal(result.usage.promptTokens, 10)
+    assert.match(toolResults[0], /Task group group_bg backgrounded\./)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 function fakeConfig() {
   return {
     appName: "Furnace Test",

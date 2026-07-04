@@ -194,7 +194,9 @@ Each tool has a schema, permission metadata, execution logic, and bounded model-
 
 ## Sessions, Forks, And Subagents
 
-Sessions are stored locally in SQLite and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
+Sessions are stored locally in SQLite at `.furnace/furnace.sqlite` inside the current workspace and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
+
+The `.furnace/` directory is local runtime state and should stay gitignored. Deleting `.furnace/furnace.sqlite` removes saved Furnace conversations for that workspace.
 
 Current session behavior:
 
@@ -232,6 +234,12 @@ See [docs/compaction.md](docs/compaction.md) and [docs/headroom-lite.md](docs/he
 
 Furnace is designed to be useful on real repositories without requiring blind trust.
 
+Local data storage:
+
+- Conversation history, tool calls, tool results, todo state, fork metadata, file-read tracking, and image attachment metadata are stored in `.furnace/furnace.sqlite` for the current workspace.
+- Large compressed tool-output originals are stored separately under `.furnace/context-store/`.
+- `.furnace/` is intended to be local-only state and is ignored by this repo's `.gitignore`.
+
 Defaults:
 
 - Low-risk read/search/question/task/todo/web tools are allowed by default.
@@ -266,10 +274,12 @@ flowchart TD
 
 Important source areas:
 
-- `src/cli.ts` — CLI orchestration, slash commands, modes, sessions, TUI callbacks, headless flow.
+- `src/cli.ts` — CLI entrypoint and Commander setup.
+- `src/interactive-session-controller.ts` — interactive/headless/piped session orchestration.
+- `src/prompt-queue.ts`, `src/session-switching.ts`, `src/slash-command-router.ts`, `src/task-ui-bridge.ts` — focused orchestration helpers.
 - `src/agent/loop.ts` — reusable streamed agent loop and tool-call iteration.
 - `src/openrouter.ts` — OpenRouter completion/model-list integration.
-- `src/tools/registry.ts` — built-in tools and tool schemas.
+- `src/tools/registry.ts` and `src/tools/*` — built-in tool schemas, dispatch, and domain handlers.
 - `src/permissions.ts` — permission engine and plan-mode gating.
 - `src/session/store.ts` — SQLite session and entry persistence.
 - `src/session/context.ts` — session entries to model messages/transcript rows.
@@ -301,7 +311,7 @@ Useful docs:
 ## Current Limitations
 
 - Provider support is OpenRouter-first.
-- The reusable runtime exists, but `src/cli.ts` still owns a lot of orchestration.
+- Interactive orchestration is still evolving, but it is split out of the CLI entrypoint into focused controller modules.
 - There is no container/OS sandbox adapter yet.
 - JSON/headless output exists, but there is not yet a stable public RPC/SDK event API.
 - The TUI is featureful and still evolving, especially around focus, autocomplete, and settings panels.

@@ -72,6 +72,8 @@ export type ProviderDefinition = {
 
 export type ResolvedProvider = ProviderDefinition & {
   apiKey: string
+  siteUrl?: string
+  appName?: string
 }
 
 export type Provider = {

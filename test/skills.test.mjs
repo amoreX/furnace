@@ -151,5 +151,5 @@ test("slash autocomplete can expose manual-only skill commands", async () => {
   const matches = slashAutocompleteMatches("/skill:m", 8, items)
   assert.deepEqual(matches.map((item) => item.value), ["/skill:manual-only"])
   assert.equal(applySlashAutocomplete("/skill:m", 8, matches[0]), "/skill:manual-only ")
-  assert.deepEqual(slashAutocompleteMatches("/skill:manual-only", 18, items), [])
+  assert.deepEqual(slashAutocompleteMatches("/skill:manual-only", 18, items).map((item) => item.value), ["/skill:manual-only"])
 })

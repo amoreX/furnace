@@ -263,7 +263,7 @@ test("slash autocomplete filters and inserts command text", async () => {
   const filtered = slashAutocompleteMatches("/th", 3, items)
   assert.deepEqual(filtered.map((item) => [item.value, item.selected]), [["/theme", true]])
   assert.equal(applySlashAutocomplete("/th", 3, filtered[0]), "/theme ")
-  assert.deepEqual(slashAutocompleteMatches("/theme", 6, items), [])
+  assert.deepEqual(slashAutocompleteMatches("/theme", 6, items).map((item) => item.value), ["/theme"])
   assert.deepEqual(slashAutocompleteMatches("/theme flexoki", 14, items), [])
   const skillsReload = slashAutocompleteMatches("/skills r", 9, items)
   assert.deepEqual(skillsReload.map((item) => item.value), ["/skills reload"])
@@ -315,10 +315,11 @@ test("browsable autocomplete items support argument substring matching and stay 
   const substringMatch = slashAutocompleteMatches("/model claude", 13, modelItems)
   assert.deepEqual(substringMatch.map((item) => item.value), ["/model anthropic/claude-3.5-sonnet"])
 
+  // Exact match on a non-browsable command stays visible (menu does not hide)
   const nonBrowsableExact = slashAutocompleteMatches("/theme", 6, [
     { label: "/theme [name]", value: "/theme", insertText: "/theme ", description: "Select theme" },
   ])
-  assert.deepEqual(nonBrowsableExact, [])
+  assert.deepEqual(nonBrowsableExact.map((item) => item.value), ["/theme"])
 })
 
 test("/resume is the primary history command name, with /history kept as an alias", async () => {

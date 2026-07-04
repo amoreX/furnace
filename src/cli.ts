@@ -10,7 +10,9 @@ import { runAgentTurn } from "./agent/loop.js"
 import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { isApiKeyMissing, loadConfig, type FurnaceConfig } from "./config.js"
-import { setStoredKey } from "./keys.js"
+import { setStoredKey, getStoredKey, resolveKeyValue } from "./keys.js"
+import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
+import { loadCustomProviders } from "./providers/custom.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
@@ -463,17 +465,41 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/login") {
-      const providerId = input.config.provider
-      const providerLabel = input.config.providerConfig.displayName
-      terminal.showApiKeySetup(
-        providerId,
-        providerLabel,
-        async (key) => {
-          await setStoredKey(providerId, key).catch(() => {})
-          input.config.apiKey = key
-          input.config.openRouterApiKey = key
-          input.config.providerConfig = { ...input.config.providerConfig, apiKey: key }
-          showTransientStatus("API key saved.", 2000)
+      const customProviders = await loadCustomProviders()
+      const allProviders = [...BUILTIN_PROVIDERS, ...customProviders.map(({ apiKey: _, ...def }) => def)]
+      const rows: { id: string; displayName: string; status: "configured" | "unconfigured" | "active"; protocol: string }[] = []
+      for (const def of allProviders) {
+        const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
+        const storedKey = await getStoredKey(def.id)
+        const customKey = customProviders.find((p) => p.id === def.id)?.apiKey
+        const hasKey = !!(envKey || (storedKey && resolveKeyValue(storedKey)) || (customKey && resolveKeyValue(customKey)))
+        rows.push({
+          id: def.id,
+          displayName: def.displayName,
+          status: def.id === input.config.provider ? "active" : hasKey ? "configured" : "unconfigured",
+          protocol: def.protocol,
+        })
+      }
+      terminal.showProviderSelector(
+        rows,
+        (providerId) => {
+          const def = resolveProvider(providerId, customProviders)
+          if (!def) return
+          const label = def.displayName
+          terminal.showApiKeySetup(
+            providerId,
+            label,
+            async (key) => {
+              await setStoredKey(providerId, key).catch(() => {})
+              input.config.provider = providerId
+              input.config.apiKey = key
+              input.config.openRouterApiKey = key
+              input.config.providerConfig = { ...def, apiKey: key, siteUrl: input.config.siteUrl, appName: input.config.appName }
+              await saveGlobalPreferences({ provider: providerId }).catch(() => {})
+              showTransientStatus(`Provider set to ${label}. API key saved.`, 2000)
+            },
+            () => {},
+          )
         },
         () => {},
       )

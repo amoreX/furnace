@@ -53,6 +53,7 @@ export type FurnaceTerminal = {
   setSidebarEnabled(enabled: boolean): void
   showSettings(prefs: import("../preferences.js").FurnacePreferences, onSave: (prefs: import("../preferences.js").FurnacePreferences) => void): void
   showApiKeySetup(provider: string, label: string, onSave: (key: string) => void, onCancel: () => void): void
+  showProviderSelector(rows: ProviderDisplayRow[], onSelect: (providerId: string) => void, onCancel: () => void): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
@@ -157,6 +158,19 @@ type UiScreen =
       onSave: (key: string) => void
       onCancel: () => void
     }
+  | {
+      kind: "providerSelector"
+      rows: ProviderDisplayRow[]
+      onSelect: (providerId: string) => void
+      onCancel: () => void
+    }
+
+type ProviderDisplayRow = {
+  id: string
+  displayName: string
+  status: "configured" | "unconfigured" | "active"
+  protocol: string
+}
 
 type PlanActionState = {
   onSelect: (action: PlanAction) => void
@@ -438,6 +452,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showApiKeySetup(provider, label, onSave, onCancel) {
       store.update({ screen: { kind: "apiKeySetup", provider, label, onSave, onCancel }, focus: "input" })
     },
+    showProviderSelector(rows, onSelect, onCancel) {
+      store.update({ screen: { kind: "providerSelector", rows, onSelect, onCancel }, focus: "input" })
+    },
     setModel(model, settings, displayName) {
       store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
@@ -713,6 +730,7 @@ function FurnaceApp({
         <Box flexShrink={0} flexDirection="column">
           {state.screen.kind === "settings" && <SettingsPanel screen={state.screen} store={store} />}
           {state.screen.kind === "apiKeySetup" && <ApiKeySetupScreen screen={state.screen} store={store} />}
+          {state.screen.kind === "providerSelector" && <ProviderSelectorScreen screen={state.screen} store={store} />}
           {state.approval && <ApprovalPrompt request={state.approval} store={store} />}
           {state.tasks.length > 0 && !state.approval && <TaskPanel tasks={state.tasks} store={store} />}
           {state.planAction && !state.approval && <PlanActionPanel action={state.planAction} store={store} />}
@@ -2613,6 +2631,58 @@ function nextSettingValue(row: typeof SETTINGS_ROWS[number], prefs: import("../p
   }
   if (row.prefKey.startsWith("statusShow")) return { ...prefs, [row.prefKey]: next === "on" }
   return { ...prefs, [row.prefKey]: next }
+}
+
+function ProviderSelectorScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "providerSelector" }>; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const [selectedIndex, setSelectedIndex] = React.useState(0)
+  const rows = screen.rows
+
+  useInput((_input, key) => {
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.upArrow) {
+      setSelectedIndex((i) => (i <= 0 ? rows.length - 1 : i - 1))
+      return
+    }
+    if (key.downArrow) {
+      setSelectedIndex((i) => (i >= rows.length - 1 ? 0 : i + 1))
+      return
+    }
+    if (key.return) {
+      const row = rows[selectedIndex]
+      if (row) {
+        store.update({ screen: { kind: "chat" } })
+        screen.onSelect(row.id)
+      }
+      return
+    }
+  })
+
+  return (
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Select Provider</Text>
+        <Text color={theme.colors.mutedForeground}>Enter to select · Esc to cancel</Text>
+      </Box>
+      {rows.map((row, i) => {
+        const selected = i === selectedIndex
+        const symbol = row.status === "active" ? "●" : row.status === "configured" ? "✓" : "—"
+        const color = row.status === "active" ? theme.colors.primary : row.status === "configured" ? theme.colors.success : theme.colors.mutedForeground
+        return (
+          <Box key={row.id} gap={1}>
+            <Text color={selected ? theme.colors.primary : theme.colors.mutedForeground}>{selected ? "▸" : " "}</Text>
+            <Text color={color}>{symbol}</Text>
+            <Text color={selected ? theme.colors.primary : theme.colors.foreground} bold={selected}>{row.displayName}</Text>
+            <Text color={theme.colors.mutedForeground}>{row.protocol}</Text>
+          </Box>
+        )
+      })}
+    </Box>
+  )
 }
 
 function ApiKeySetupScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "apiKeySetup" }>; store: UiStore }): React.ReactNode {

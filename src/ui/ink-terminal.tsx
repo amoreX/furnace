@@ -2052,6 +2052,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (editLines.length > 0) return editLines
   }
 
+  if (activity.name === "read") {
+    const readLines = formatReadActivity(activity, width)
+    if (readLines.length > 0) return readLines
+  }
+
   if (activity.name === "write") {
     const writeLines = formatWriteActivity(activity, width)
     if (writeLines.length > 0) return writeLines
@@ -2213,6 +2218,40 @@ function formatWriteActivity(activity: ToolActivity, width: number): RenderedToo
   }
   if (contentLines.length > 8) lines.push({ text: `  ... truncated ${contentLines.length - 8} more lines`, tone: "meta" })
   return lines
+}
+
+function formatReadActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const args = parseJsonRecord(activity.args)
+  const path = stringField(args, "path") ?? stringField(args, "file_path")
+  if (!path) return []
+
+  const range = readLineRangeLabel(args, activity.result)
+  const verb = activity.status === "running" ? "Reading" : "Read"
+  const suffix = range ? ` ${range}` : ""
+  return [{ text: `${statusSymbol(activity.status)} ${verb} ${truncateEnd(path, Math.max(24, width - 24))}${suffix}`, tone: "summary" }]
+}
+
+function readLineRangeLabel(args: Record<string, unknown>, result: string | undefined): string {
+  const returned = readLineRangeFromResult(result)
+  if (returned) return returned.start === returned.end ? `line ${returned.start}` : `lines ${returned.start}-${returned.end}`
+
+  const offset = numberField(args, "offset")
+  const limit = numberField(args, "limit")
+  const start = Math.max(1, Math.floor(offset ?? 1))
+  if (typeof limit === "number") return `lines ${start}-${start + Math.max(0, Math.floor(limit)) - 1}`
+  if (typeof offset === "number") return `from line ${start}`
+  return "from line 1"
+}
+
+function readLineRangeFromResult(result: string | undefined): { end: number; start: number } | undefined {
+  if (!result || result.startsWith("Tool ")) return undefined
+  const lineNumbers: number[] = []
+  for (const line of result.split(/\r?\n/)) {
+    const match = line.match(/^(\d+)\|/)
+    if (match) lineNumbers.push(Number(match[1]))
+  }
+  if (lineNumbers.length === 0) return undefined
+  return { start: lineNumbers[0], end: lineNumbers[lineNumbers.length - 1] }
 }
 
 function formatAskQuestionActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
@@ -2415,6 +2454,11 @@ function stringField(args: Record<string, unknown>, key: string): string | undef
 function booleanField(args: Record<string, unknown>, key: string): boolean | undefined {
   const value = args[key]
   return typeof value === "boolean" ? value : undefined
+}
+
+function numberField(args: Record<string, unknown>, key: string): number | undefined {
+  const value = args[key]
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function skillManageDisplayPath(name: string, target: string): string {

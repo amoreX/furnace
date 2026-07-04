@@ -83,6 +83,24 @@ test("edit tool activity renders as a diff preview", async () => {
   assert.equal(lines[4].text.trim(), "+new line")
 })
 
+test("read tool activity shows the returned line range", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-read",
+      name: "read",
+      status: "done",
+      args: JSON.stringify({ path: "src/tools/registry.ts", offset: 406, limit: 3 }),
+      result: "406|async function readTool(args, context) {\n407|  const path = requiredString(args, \"path\")\n408|  const file = resolveToolPath(context.cwd, path)",
+    },
+    100,
+  )
+
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].text, "✓ Read src/tools/registry.ts lines 406-408")
+  assert.equal(lines[0].tone, "summary")
+})
+
 test("saved plan preview renders as a bordered block", async () => {
   const { planPreviewBoxLines } = await import("../dist/ui/ink-terminal.js")
   const lines = planPreviewBoxLines(".furnace/plans/example.md", "# Plan\n\n- Step one", 52)

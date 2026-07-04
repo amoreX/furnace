@@ -266,10 +266,12 @@ flowchart TD
 
 Important source areas:
 
-- `src/cli.ts` — CLI orchestration, slash commands, modes, sessions, TUI callbacks, headless flow.
+- `src/cli.ts` — CLI entrypoint and Commander setup.
+- `src/interactive-session-controller.ts` — interactive/headless/piped session orchestration.
+- `src/prompt-queue.ts`, `src/session-switching.ts`, `src/slash-command-router.ts`, `src/task-ui-bridge.ts` — focused orchestration helpers.
 - `src/agent/loop.ts` — reusable streamed agent loop and tool-call iteration.
 - `src/openrouter.ts` — OpenRouter completion/model-list integration.
-- `src/tools/registry.ts` — built-in tools and tool schemas.
+- `src/tools/registry.ts` and `src/tools/*` — built-in tool schemas, dispatch, and domain handlers.
 - `src/permissions.ts` — permission engine and plan-mode gating.
 - `src/session/store.ts` — SQLite session and entry persistence.
 - `src/session/context.ts` — session entries to model messages/transcript rows.
@@ -301,7 +303,7 @@ Useful docs:
 ## Current Limitations
 
 - Provider support is OpenRouter-first.
-- The reusable runtime exists, but `src/cli.ts` still owns a lot of orchestration.
+- Interactive orchestration is still evolving, but it is split out of the CLI entrypoint into focused controller modules.
 - There is no container/OS sandbox adapter yet.
 - JSON/headless output exists, but there is not yet a stable public RPC/SDK event API.
 - The TUI is featureful and still evolving, especially around focus, autocomplete, and settings panels.

@@ -3,11 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-export type StoredKeys = {
-  openrouter?: string
-  anthropic?: string
-  openai?: string
-}
+export type StoredKeys = Record<string, string>
 
 function keysPath(): string {
   return join(homedir(), ".furnace", "auth.json")

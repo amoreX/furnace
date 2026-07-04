@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
 import { loadPreferences, type ModelSettings, type StatusLinePreferences, type TypingIndicatorStyle } from "./preferences.js"
 import { getStoredKey, resolveKeyValue } from "./keys.js"
+import { loadCustomProviders } from "./providers/custom.js"
+import { resolveProvider, BUILTIN_PROVIDERS } from "./providers/registry.js"
+import type { ResolvedProvider } from "./providers/types.js"
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const promptsDir = join(currentDir, "prompts")
@@ -17,6 +20,9 @@ export type FurnaceConfig = {
   model: string
   modelSettings: ModelSettings
   notifications: boolean
+  provider: string
+  apiKey: string
+  providerConfig: ResolvedProvider
   openRouterApiKey: string
   sidebarEnabled: boolean
   siteUrl: string
@@ -32,17 +38,35 @@ export type FurnaceConfig = {
 }
 
 export function isApiKeyMissing(config: FurnaceConfig): boolean {
-  return !config.openRouterApiKey
+  return !config.apiKey
 }
 
 export async function loadConfig(): Promise<FurnaceConfig> {
   dotenv.config({ quiet: true })
-
-  const envKey = process.env.OPENROUTER_API_KEY?.trim()
-  const rawStoredKey = envKey ? undefined : await getStoredKey("openrouter")
-  const storedKey = rawStoredKey ? resolveKeyValue(rawStoredKey) : undefined
-  const openRouterApiKey = envKey || storedKey || ""
   const preferences = await loadPreferences()
+  const providerId = preferences.provider?.trim() || "openrouter"
+  const customProviders = await loadCustomProviders()
+  const def = resolveProvider(providerId, customProviders)
+
+  const effectiveProviderId = def ? providerId : "openrouter"
+  const effectiveDef = def || BUILTIN_PROVIDERS[0]
+
+  const envVarName = effectiveDef.envVar
+  const envKey = envVarName ? process.env[envVarName]?.trim() : undefined
+  const rawStoredKey = envKey ? undefined : await getStoredKey(effectiveProviderId)
+  const storedKey = rawStoredKey ? resolveKeyValue(rawStoredKey) : undefined
+
+  const customProvider = customProviders.find((p) => p.id === effectiveProviderId)
+  const customKey = (!envKey && !storedKey && customProvider?.apiKey) ? resolveKeyValue(customProvider.apiKey) : undefined
+
+  const apiKey = envKey || storedKey || customKey || ""
+
+  const providerConfig: ResolvedProvider = {
+    ...effectiveDef,
+    apiKey,
+    siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
+    appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
+  }
 
   return {
     appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
@@ -50,7 +74,10 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4.6",
     notifications: preferences.notifications === true,
     modelSettings: preferences.modelSettings || {},
-    openRouterApiKey,
+    provider: effectiveProviderId,
+    apiKey,
+    providerConfig,
+    openRouterApiKey: apiKey,
     sidebarEnabled: preferences.sidebarEnabled !== false,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
     skillPaths: Array.isArray(preferences.skillPaths) ? preferences.skillPaths.filter((path) => typeof path === "string" && path.trim()).map((path) => path.trim()) : [],

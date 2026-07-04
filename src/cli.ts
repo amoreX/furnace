@@ -76,7 +76,11 @@ program
   .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string }) => {
     try {
       const config = await loadConfig()
-      if (options.apiKey?.trim()) config.openRouterApiKey = options.apiKey.trim()
+      if (options.apiKey?.trim()) {
+        config.apiKey = options.apiKey.trim()
+        config.openRouterApiKey = options.apiKey.trim()
+        config.providerConfig = { ...config.providerConfig, apiKey: options.apiKey.trim() }
+      }
       const cwd = process.cwd()
       const { SessionStore } = await import("./session/store.js")
       const store = SessionStore.open(cwd)
@@ -459,12 +463,16 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/login") {
+      const providerId = input.config.provider
+      const providerLabel = input.config.providerConfig.displayName
       terminal.showApiKeySetup(
-        "openrouter",
-        "OpenRouter",
+        providerId,
+        providerLabel,
         async (key) => {
-          await setStoredKey("openrouter", key).catch(() => {})
+          await setStoredKey(providerId, key).catch(() => {})
+          input.config.apiKey = key
           input.config.openRouterApiKey = key
+          input.config.providerConfig = { ...input.config.providerConfig, apiKey: key }
           showTransientStatus("API key saved.", 2000)
         },
         () => {},

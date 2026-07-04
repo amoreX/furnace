@@ -21,7 +21,7 @@ function toResolvedProvider(config: FurnaceConfig): ResolvedProvider {
     displayName: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
     protocol: "openai-compatible",
-    apiKey: config.openRouterApiKey,
+    apiKey: config.apiKey,
     siteUrl: config.siteUrl,
     appName: config.appName,
   }

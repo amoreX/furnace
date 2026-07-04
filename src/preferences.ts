@@ -9,6 +9,7 @@ export type FurnacePreferences = {
   model?: string
   modelSettings?: ModelSettings
   notifications?: boolean
+  provider?: string
   sidebarEnabled?: boolean
   skillPaths?: string[]
   statusShowAppName?: boolean

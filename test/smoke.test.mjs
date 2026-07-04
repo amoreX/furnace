@@ -464,6 +464,26 @@ test("task previews hide child session ids", async () => {
   assert.doesNotMatch(previews[0].text, /ses_hidden/)
 })
 
+test("task background shortcut does not conflict with sidebar toggle", async () => {
+  const { isTaskBackgroundShortcut } = await import("../dist/ui/ink-terminal.js")
+
+  assert.equal(isTaskBackgroundShortcut("b", {}), true)
+  assert.equal(isTaskBackgroundShortcut("B", {}), true)
+  assert.equal(isTaskBackgroundShortcut("b", { ctrl: true }), false)
+  assert.equal(isTaskBackgroundShortcut("b", { meta: true }), false)
+})
+
+test("scrollback window pages through committed transcript lines", async () => {
+  const { maxScrollbackOffset, scrollbackPageSize, scrollbackWindow } = await import("../dist/ui/ink-terminal.js")
+  const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`)
+
+  assert.equal(scrollbackPageSize(22), 10)
+  assert.equal(maxScrollbackOffset(lines.length, 5), 15)
+  assert.deepEqual(scrollbackWindow(lines, 0, 5), ["line 16", "line 17", "line 18", "line 19", "line 20"])
+  assert.deepEqual(scrollbackWindow(lines, 5, 5), ["line 11", "line 12", "line 13", "line 14", "line 15"])
+  assert.deepEqual(scrollbackWindow(lines, 999, 5), ["line 1", "line 2", "line 3", "line 4", "line 5"])
+})
+
 test("lofi mode exposes a terminal chibi animation and stream default", async () => {
   const { lofiChibiFrame } = await import("../dist/ui/components/prompt-input.js")
   const { defaultLofiStreamUrl } = await import("../dist/lofi.js")

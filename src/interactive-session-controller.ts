@@ -67,7 +67,7 @@ export async function runInteractive(input: {
   store: SessionStore
   shouldClear: boolean
 }): Promise<void> {
-  if (input.shouldClear) process.stdout.write("\x1b[2J\x1b[H")
+  if (input.shouldClear) clearTerminalViewportAndScrollback()
   let sessionId = input.sessionId
   const permissions = new SessionPermissionStore()
   const lofi = new LofiPlayer()
@@ -1380,6 +1380,14 @@ export async function runInteractive(input: {
   }
 }
 
+function clearTerminalViewportAndScrollback(): void {
+  // 2J clears the visible viewport, 3J clears terminal scrollback in terminals
+  // that support xterm's extension, and H returns the cursor to the top-left.
+  // This prevents `npm run dev` / shell output from remaining above the first
+  // Furnace render while preserving `--no-clear` for users who want it.
+  process.stdout.write("\x1b[2J\x1b[3J\x1b[H")
+}
+
 function refreshInteractive(terminal: FurnaceTerminal, store: SessionStore, sessionId: string): void {
   const session = store.getSession(sessionId)
   const activePath = store.getActivePath(sessionId)
@@ -1815,6 +1823,7 @@ async function runSubagentTask(input: {
   const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.subagentSystemPrompt, skillCatalog.skills), planState)
   const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
   const terminal = input.terminal
+  const foregroundTerminal = (): FurnaceTerminal | undefined => input.record.background ? undefined : terminal
 
   const result = await runAgentTurn({
     config: input.config,
@@ -1823,17 +1832,17 @@ async function runSubagentTask(input: {
     messages,
     onPermissionRequest: terminal
       ? async (request) => {
-          terminal.setThinking(true, `Waiting for subagent ${request.toolName} approval`)
+          foregroundTerminal()?.setThinking(true, `Waiting for subagent ${request.toolName} approval`)
           const decision = await terminal.requestApproval(request)
-          terminal.setThinking(true, "Thinking")
+          foregroundTerminal()?.setThinking(true, "Thinking")
           return decision
         }
       : undefined,
     onQuestionRequest: terminal
       ? async (request) => {
-          terminal.setThinking(true, "Waiting for your subagent answer")
+          foregroundTerminal()?.setThinking(true, "Waiting for your subagent answer")
           const response = await terminal.requestQuestions(request)
-          terminal.setThinking(true, "Thinking")
+          foregroundTerminal()?.setThinking(true, "Thinking")
           return response
         }
       : undefined,
@@ -1851,7 +1860,7 @@ async function runSubagentTask(input: {
         sessionId: input.record.childSessionId,
         store: input.store,
         systemPrompt,
-        terminal,
+        terminal: foregroundTerminal(),
         tools: activeTools,
       })
       return (await applyHeadroomLiteRequestTransforms({ cwd: input.cwd, messages: compacted })).messages
@@ -1862,7 +1871,7 @@ async function runSubagentTask(input: {
       sessionId: input.record.childSessionId,
       store: input.store,
       systemPrompt,
-      terminal,
+      terminal: foregroundTerminal(),
       tools: activeTools,
     }),
     onToolStart: (call) => {

@@ -55,8 +55,8 @@ Two distinct issues surfaced from user feedback:
 
 ## Key Technical Decisions
 
-**KTD1 — Toggle shortcut: `Ctrl+\`**
-`Ctrl+Q` is already taken by the queue panel toggle. `Ctrl+B` is used by subagent background. `Ctrl+\` is unused, easy to reach, and visually evokes a split. Announced in the hint bar as `Ctrl+\ sidebar`.
+**KTD1 — Toggle shortcut: `Ctrl+B`**
+`Ctrl+Q` is already taken by the queue panel toggle. `Ctrl+B` toggles the sidebar. Subagent background promotion uses `b` in the focused task panel to avoid conflicting with the global sidebar toggle. Announced in the hint bar as `Ctrl+b sidebar`.
 
 **KTD2 — Panels render as a priority stack above input**
 Rather than a single `inputOverride` slot that can only hold one panel, each panel is rendered conditionally in its own row above `PromptInput`. Priority (top-to-bottom, highest priority rendered last / closest to input): QueuedPromptPanel → TaskPanel → PlanActionPanel → ModelEditorPanel → PermissionsPanel → ApprovalPrompt. Only one panel is active (receives input) at a time, governed by `state.focus` and the existing `isActive` check inside each panel component.
@@ -188,21 +188,20 @@ Sidebar-off (splitMode=false): full-width single-line input; PromptAutocompleteM
 - Change the `splitMode` prop on `PromptInput` from the hardcoded boolean `splitMode` (truthy shorthand) to `splitMode={state.sidebarEnabled}`.
 - In `FurnaceRoot`'s `useInput` handler, add:
   ```
-  if (key.ctrl && input === "\\") {
+  if (key.ctrl && input === "b") {
     const next = !state.sidebarEnabled
     store.update({ sidebarEnabled: next })
     options.onSidebarToggle?.(next)
   }
   ```
-  (`"\"` is the string value Ink delivers for `Ctrl+\`.)
 - Add `onSidebarToggle?: (enabled: boolean) => void` to `CreateFurnaceTerminalOptions`.
-- Update `hintItemsForState` to include `"Ctrl+\\ sidebar"` in the default input hint items (append alongside `"Tab to switch mode"`).
+- Update `hintItemsForState` to include `"Ctrl+b sidebar"` in the default input hint items (append alongside `"Tab to switch mode"`).
 
 **Patterns to follow:** `Ctrl+Q` queue toggle added in previous commit; `onInterrupt`/`onTaskBackground` callback pattern in `CreateFurnaceTerminalOptions`.
 
 **Test scenarios:**
-- `Ctrl+\` when `sidebarEnabled=true` → `sidebarEnabled` becomes `false`, `onSidebarToggle(false)` called
-- `Ctrl+\` when `sidebarEnabled=false` → `sidebarEnabled` becomes `true`, `onSidebarToggle(true)` called
+- `Ctrl+B` when `sidebarEnabled=true` → `sidebarEnabled` becomes `false`, `onSidebarToggle(false)` called
+- `Ctrl+B` when `sidebarEnabled=false` → `sidebarEnabled` becomes `true`, `onSidebarToggle(true)` called
 - `Ctrl+\` with no queue → toggles without error (no guard needed, always valid)
 - Hint bar in default input state includes `Ctrl+\ sidebar`
 

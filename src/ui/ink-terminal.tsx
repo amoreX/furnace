@@ -208,6 +208,7 @@ type UiState = {
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
+  scrollbackOffset: number
   slashCommandItems: PromptAutocompleteItem[]
   statusNotice?: string
   statusLine: StatusLinePreferences
@@ -305,6 +306,7 @@ class UiStore {
       question: undefined,
       queuedPrompts: [],
       screen: { kind: "chat" },
+      scrollbackOffset: 0,
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
       statusNotice: undefined,
       statusLine: options.statusLine || {},
@@ -498,6 +500,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update((state) => ({
         ...state,
         committedLines: [],
+        scrollbackOffset: 0,
         transcriptGeneration: state.transcriptGeneration + 1,
         pastedImages: [],
         nextImageLabel: 1,
@@ -621,6 +624,7 @@ function FurnaceApp({
 }): React.ReactNode {
   const app = useApp()
   const theme = useTheme()
+  const { columns, rows } = useWindowSize()
 
   React.useEffect(() => {
     const title = state.title && state.title !== "New Chat" ? `Furnace — ${state.title}` : "Furnace"
@@ -629,9 +633,26 @@ function FurnaceApp({
   }, [state.title])
 
   useInput((_input, key) => {
+    const extendedKey = key as typeof key & { pageDown?: boolean; pageUp?: boolean }
     if (key.ctrl && _input === "c") {
       onExit()
       app.exit()
+    }
+    if (!state.approval && !state.question && state.screen.kind === "chat" && state.committedLines.length > 0) {
+      const pageSize = scrollbackPageSize(rows)
+      const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+      if (extendedKey.pageUp) {
+        store.update((s) => ({ ...s, scrollbackOffset: Math.min(maxOffset, Math.max(1, s.scrollbackOffset + pageSize)) }))
+        return
+      }
+      if (extendedKey.pageDown) {
+        store.update((s) => ({ ...s, scrollbackOffset: Math.max(0, s.scrollbackOffset - pageSize) }))
+        return
+      }
+      if (key.escape && state.scrollbackOffset > 0) {
+        store.update({ scrollbackOffset: 0 })
+        return
+      }
     }
     if (key.ctrl && _input === "q") {
       if (state.queuedPrompts.length === 0) return
@@ -725,8 +746,6 @@ function FurnaceApp({
     return { label }
   }, [state.cwd, store])
 
-  const { columns } = useWindowSize()
-
   return (
     <>
       <Box flexDirection="column" width={columns}>
@@ -734,6 +753,7 @@ function FurnaceApp({
           key={state.transcriptGeneration}
           committedLines={state.committedLines}
           flexGrow
+          scrollbackOffset={state.scrollbackOffset}
           thinking={state.thinking}
           thinkingMessage={state.thinkingMessage}
           streamingContent={state.streamingContent}
@@ -847,7 +867,7 @@ function queueHintItems(): string[] {
 function taskHintItems(state: UiState): string[] {
   const hasForeground = state.tasks.some((task) => task.status === "running")
   const hasBackground = state.tasks.some((task) => task.status === "backgrounded")
-  return ["Up/down to select", hasForeground ? "Ctrl+b to background" : hasBackground ? "Working in background" : "Task status", "Esc to return to input"]
+  return ["Up/down to select", hasForeground ? "b to background" : hasBackground ? "Working in background" : "Task status", "Esc to return to input"]
 }
 
 function hintItemsForState(state: UiState): string[] {
@@ -1293,7 +1313,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
       setSelected((current) => Math.min(tasks.length - 1, current + 1))
       return
     }
-    if (key.ctrl && input === "b" && canBackground) {
+    if (isTaskBackgroundShortcut(input, key) && canBackground) {
       store.taskHandlers.onBackground?.()
       store.update({ focus: "input" })
     }
@@ -1317,7 +1337,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
         </Box>
       ))}
       <Text color={theme.colors.mutedForeground}>
-        {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
+        {active ? `Up/down to select · ${canBackground ? "b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
       </Text>
       {selectedTask?.error ? <Text color={theme.colors.error}>{truncateEnd(selectedTask.error, 100)}</Text> : null}
     </Box>
@@ -1385,6 +1405,10 @@ function PinnedChatsPanel({ chats, store }: { chats: PinnedChatSummary[]; store:
       ))}
     </Box>
   )
+}
+
+export function isTaskBackgroundShortcut(input: string, key: { ctrl?: boolean; meta?: boolean }): boolean {
+  return !key.ctrl && !key.meta && input.toLowerCase() === "b"
 }
 
 export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; lastToolName?: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
@@ -1477,6 +1501,7 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 function LiveChat({
   committedLines = [],
   flexGrow: grow,
+  scrollbackOffset = 0,
   streamingContent,
   thinking,
   thinkingMessage,
@@ -1484,6 +1509,7 @@ function LiveChat({
 }: {
   committedLines?: TranscriptLineData[]
   flexGrow?: boolean
+  scrollbackOffset?: number
   streamingContent: string
   thinking: boolean
   thinkingMessage: string
@@ -1493,8 +1519,16 @@ function LiveChat({
   const { columns, rows } = useWindowSize()
   const width = Math.max(20, columns - 4)
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
+  const pageSize = scrollbackPageSize(rows)
+  const maxOffset = maxScrollbackOffset(committedLines.length, pageSize)
+  const offset = Math.min(Math.max(0, scrollbackOffset), maxOffset)
+  const isScrollbackActive = offset > 0
+  const displayedActiveLines = isScrollbackActive
+    ? [{ kind: "content" as const, plain: true, text: `Viewing scrollback — PageDown or Esc returns to live (${offset} line${offset === 1 ? "" : "s"} back)` }]
+    : activeLines
+  const displayedCommittedLines = isScrollbackActive ? scrollbackWindow(committedLines, offset, pageSize) : committedLines
 
-  const hasLines = committedLines.length > 0 || activeLines.length > 0
+  const hasLines = displayedCommittedLines.length > 0 || displayedActiveLines.length > 0
 
   if (!hasLines) {
     return (
@@ -1529,21 +1563,43 @@ function LiveChat({
   return (
     <>
       {/*
-        Finished lines are flushed to the terminal exactly once via Static, so the
-        terminal's own scrollback (mouse wheel, trackpad, Shift+PageUp) can scroll
-        back through full chat history — matching Pi's differential renderer, which
-        never clips history into a fixed-height viewport.
+        Live mode flushes finished lines exactly once via Static so the terminal's
+        own scrollback can scroll full chat history. Scrollback preview mode avoids
+        Static because Static only appends and cannot replace older slices while a
+        turn is still streaming.
       */}
-      <Static items={committedLines}>
-        {(line, index) => <StaticLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />}
-      </Static>
+      {isScrollbackActive ? (
+        <Box flexDirection="column" paddingX={1}>
+          {displayedCommittedLines.map((line, index) => <TranscriptLine key={`scrollback-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />)}
+        </Box>
+      ) : (
+        <Static items={displayedCommittedLines}>
+          {(line, index) => <StaticLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />}
+        </Static>
+      )}
       <Box flexDirection="column" flexGrow={grow ? 1 : 0} paddingX={1}>
-        {activeLines.map((line, index) => (
+        {displayedActiveLines.map((line, index) => (
           <TranscriptLine key={`live-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
         ))}
       </Box>
     </>
   )
+}
+
+export function scrollbackPageSize(rows: number): number {
+  return Math.max(5, rows - 12)
+}
+
+export function maxScrollbackOffset(totalLines: number, pageSize: number): number {
+  return Math.max(0, totalLines - Math.max(1, pageSize))
+}
+
+export function scrollbackWindow<T>(items: T[], offset: number, pageSize: number): T[] {
+  const safePageSize = Math.max(1, pageSize)
+  const safeOffset = Math.min(Math.max(0, offset), maxScrollbackOffset(items.length, safePageSize))
+  const end = Math.max(0, items.length - safeOffset)
+  const start = Math.max(0, end - safePageSize)
+  return items.slice(start, end)
 }
 
 type TranscriptLineData = {

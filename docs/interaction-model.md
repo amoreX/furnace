@@ -175,7 +175,7 @@ up/down select · ctrl+b background · esc input
 Background behavior:
 
 - Press Up from an empty input to focus the task panel when tasks are visible.
-- Press `Ctrl+B` to move the active foreground task group to background.
+- Press `b` to move the active foreground task group to background.
 - Completed tasks disappear from the task panel. If the focused task panel becomes empty, focus returns to the input.
 - Backgrounded groups show as `Subagents (backgrounded)` with their task titles underneath, instead of repeating `backgrounded` on every row.
 - Once backgrounded, the parent model can continue.

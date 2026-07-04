@@ -9,6 +9,7 @@ export type FurnacePreferences = {
   model?: string
   modelSettings?: ModelSettings
   notifications?: boolean
+  provider?: string
   pinnedChatIds?: string[]
   sidebarEnabled?: boolean
   skillPaths?: string[]

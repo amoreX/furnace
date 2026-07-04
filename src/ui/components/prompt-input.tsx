@@ -349,7 +349,7 @@ export function PromptInput({
         const match = autocompleteMatches[selectedAutocompleteIndex]
         if (key.tab && browsableActive && onAutocompleteTab?.(match)) return
         const next = applySlashAutocomplete(value, cursorOffset, match)
-        if (key.return && browsableActive) {
+        if (key.return) {
           setValue("")
           setCursorOffset(0)
           setBrowsableAnchor(undefined)
@@ -985,8 +985,7 @@ export function slashAutocompleteMatches(
   const token = slashAutocompleteToken(value, cursorOffset)
   if (!token) return []
   const normalized = token.toLowerCase()
-  const exact = items.some((item) => item.value.toLowerCase() === normalized && !item.browsable)
-  if (exact) return []
+
 
   const spaceIndex = normalized.indexOf(" ")
   const commandPart = spaceIndex < 0 ? normalized : normalized.slice(0, spaceIndex)

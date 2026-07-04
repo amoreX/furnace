@@ -47,6 +47,7 @@ program
   .option("--no-clear", "do not clear the terminal before rendering")
   .option("--session <id>", "resume a specific saved session by id")
   .option("--output-format <format>", "output format for headless mode: text (default) or json")
+  .option("--api-key <key>", "override API key for this session (not persisted)")
   .version(packageVersion)
   .addCommand(
     new Command("completion")
@@ -67,9 +68,14 @@ program
         process.stdout.write(script)
       })
   )
-  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string }) => {
+  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string }) => {
     try {
       const config = await loadConfig()
+      if (options.apiKey?.trim()) {
+        config.apiKey = options.apiKey.trim()
+        config.openRouterApiKey = options.apiKey.trim()
+        config.providerConfig = { ...config.providerConfig, apiKey: options.apiKey.trim() }
+      }
       const cwd = process.cwd()
       const { SessionStore } = await import("./session/store.js")
       const store = SessionStore.open(cwd)

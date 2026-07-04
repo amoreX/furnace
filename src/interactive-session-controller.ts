@@ -6,9 +6,14 @@ import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand } from "./commands.js"
-import { loadConfig, type FurnaceConfig } from "./config.js"
+import { isApiKeyMissing, loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
+import { setStoredKey, getStoredKey, resolveKeyValue } from "./keys.js"
+import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
+import { loadCustomProviders } from "./providers/custom.js"
+import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
+import { createAnthropicProvider } from "./providers/anthropic.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
@@ -48,7 +53,8 @@ type ModelListCache = {
 }
 
 function createModelListCache(config: FurnaceConfig): ModelListCache {
-  const promise = listOpenRouterModels(config)
+  const adapter = config.providerConfig.protocol === "anthropic" ? createAnthropicProvider() : createOpenAICompatibleProvider()
+  const promise = adapter.listModels(config.providerConfig)
   const cache: ModelListCache = { promise, settled: false }
   promise.then(
     () => {
@@ -299,6 +305,12 @@ export async function runInteractive(input: {
   async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[]): Promise<void> {
     const command = parseSlashCommand(prompt)
 
+    // Bare messages (non-slash) need an API key. Slash commands always pass through.
+    if (!command.name.startsWith("/") && isApiKeyMissing(input.config)) {
+      showTransientStatus("No API key configured. Use /login to set one.")
+      return
+    }
+
     if (command.name === "/exit" || command.name === "/quit") {
       currentAbortController()?.abort()
       lofi.stop()
@@ -396,6 +408,56 @@ export async function runInteractive(input: {
     }
     if (command.name === "/permissions") {
       openPermissionsPanel()
+      return
+    }
+    if (command.name === "/login") {
+      const customProviders = await loadCustomProviders()
+      const allProviders = [...BUILTIN_PROVIDERS, ...customProviders.map(({ apiKey: _, ...def }) => def)]
+      const rows: { id: string; displayName: string; status: "configured" | "unconfigured" | "active"; protocol: string }[] = []
+      for (const def of allProviders) {
+        const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
+        const storedKey = await getStoredKey(def.id)
+        const customKey = customProviders.find((p) => p.id === def.id)?.apiKey
+        const hasKey = !!(envKey || (storedKey && resolveKeyValue(storedKey)) || (customKey && resolveKeyValue(customKey)))
+        rows.push({
+          id: def.id,
+          displayName: def.displayName,
+          status: def.id === input.config.provider ? "active" : hasKey ? "configured" : "unconfigured",
+          protocol: def.protocol,
+        })
+      }
+      terminal.showProviderSelector(
+        rows,
+        (providerId) => {
+          const def = resolveProvider(providerId, customProviders)
+          if (!def) return
+          const label = def.displayName
+          terminal.showApiKeySetup(
+            providerId,
+            label,
+            async (key) => {
+              await setStoredKey(providerId, key).catch(() => {})
+              input.config.provider = providerId
+              input.config.apiKey = key
+              input.config.openRouterApiKey = key
+              input.config.providerConfig = { ...def, apiKey: key, siteUrl: input.config.siteUrl, appName: input.config.appName }
+              // Reset model to provider's default when switching providers
+              const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
+              if (newModel !== input.config.model) {
+                input.config.model = newModel
+                input.config.modelSettings = {}
+                await saveGlobalPreferences({ provider: providerId, model: newModel, modelSettings: {} }).catch(() => {})
+                terminal.setModel(newModel, {}, def.displayName)
+              } else {
+                await saveGlobalPreferences({ provider: providerId }).catch(() => {})
+              }
+              showTransientStatus(`Provider set to ${label}. API key saved. Use /model to pick a model.`, 4000)
+            },
+            () => {},
+          )
+        },
+        () => {},
+      )
       return
     }
     if (command.name === "/settings" || command.name === "/prefs") {

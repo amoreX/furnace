@@ -1,5 +1,6 @@
 import type { Theme } from "../components/theme-provider.js"
 import { flexokiTheme } from "./flexoki.js"
+import { generatedThemes, generatedThemeChoices } from "./generated.js"
 
 export type ThemeChoice = {
   description: string
@@ -252,6 +253,12 @@ export const themeChoices: ThemeChoice[] = [
   { name: "nord", displayLabel: "Nord", description: "Cool arctic palette", theme: nordTheme },
   { name: "rosepine", displayLabel: "Rosé Pine", description: "Warm rose dark palette", theme: rosepineTheme },
   { name: "gruvbox", displayLabel: "Gruvbox", description: "Retro earth-tone palette", theme: gruvboxTheme },
+  ...generatedThemes.map((theme, i) => ({
+    name: generatedThemeChoices[i]!.name,
+    displayLabel: generatedThemeChoices[i]!.displayLabel,
+    description: generatedThemeChoices[i]!.description,
+    theme,
+  })),
 ]
 
 export function resolveTheme(name: string | undefined): ThemeChoice {

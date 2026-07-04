@@ -33,6 +33,7 @@ import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import { renderError } from "./ui/terminal.js"
 import { runInteractive, runPiped, runSingleTurn } from "./interactive-session-controller.js"
+import { packageVersion } from "./version.js"
 
 const program = new Command()
 
@@ -46,7 +47,7 @@ program
   .option("--no-clear", "do not clear the terminal before rendering")
   .option("--session <id>", "resume a specific saved session by id")
   .option("--output-format <format>", "output format for headless mode: text (default) or json")
-  .version("0.1.0-alpha.0")
+  .version(packageVersion)
   .addCommand(
     new Command("completion")
       .argument("<shell>", "shell type: bash, zsh, or fish")

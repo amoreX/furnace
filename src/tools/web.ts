@@ -1,5 +1,6 @@
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
+import { packageVersion } from "../version.js"
 import { clamp, optionalEnum, optionalNumber, requiredString } from "./common.js"
 import type { ToolContext } from "./types.js"
 
@@ -147,7 +148,7 @@ function selectWebSearchProvider(seed: string): "exa" | "parallel" {
 }
 
 function parallelAuthHeaders(): Record<string, string> {
-  const headers = { "User-Agent": "furnace/0.1.0-alpha.0" }
+  const headers = { "User-Agent": `furnace/${packageVersion}` }
   return process.env.PARALLEL_API_KEY ? { ...headers, Authorization: `Bearer ${process.env.PARALLEL_API_KEY}` } : headers
 }
 

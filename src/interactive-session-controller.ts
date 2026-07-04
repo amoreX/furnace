@@ -40,6 +40,7 @@ import {
   renderConversation,
   renderDone,
 } from "./ui/terminal.js"
+import { packageName, packageVersion } from "./version.js"
 
 type ModelListCache = {
   promise: Promise<OpenRouterModel[]>
@@ -2291,17 +2292,12 @@ function copyToClipboard(text: string): void {
 
 async function checkForUpdate(): Promise<string | undefined> {
   try {
-    const { createRequire } = await import("node:module")
-    const req = createRequire(import.meta.url)
-    const pkg = req("../package.json") as { version?: string; name?: string }
-    const currentVersion = pkg.version || "0.0.0"
-    const pkgName = pkg.name || "furnace"
-    const res = await fetch(`https://registry.npmjs.org/${pkgName}/latest`, { signal: AbortSignal.timeout(2000) })
+    const res = await fetch(`https://registry.npmjs.org/${packageName}/latest`, { signal: AbortSignal.timeout(2000) })
     if (!res.ok) return undefined
     const data = (await res.json()) as { version?: string }
     const latest = data.version
-    if (!latest || latest === currentVersion) return undefined
-    if (semverGt(latest, currentVersion)) return `Furnace ${latest} available — run npm i -g ${pkgName} to upgrade.`
+    if (!latest || latest === packageVersion) return undefined
+    if (semverGt(latest, packageVersion)) return `Furnace ${latest} available — run npm i -g ${packageName} to upgrade.`
   } catch { /* network unavailable or timeout */ }
   return undefined
 }

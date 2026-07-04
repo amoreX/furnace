@@ -25,13 +25,17 @@ test("termcn theme registry exposes all bundled themes", async () => {
   const { resolveTheme, themeChoices } = await import("../dist/ui/terminal-themes/index.js")
   const names = themeChoices.map((theme) => theme.name)
 
-  assert.deepEqual(names, ["flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"])
-  for (const name of names) {
+  // Hand-crafted themes must be present as the first 8 entries
+  const handCrafted = ["flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
+  assert.deepEqual(names.slice(0, 8), handCrafted)
+  for (const name of handCrafted) {
     assert.equal(resolveTheme(name).name, name)
   }
+  // Generated themes should bring the total to 100+
+  assert.ok(themeChoices.length >= 100, `expected 100+ themes, got ${themeChoices.length}`)
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
 
-  const displayLabels = Object.fromEntries(themeChoices.map((theme) => [theme.name, theme.displayLabel]))
+  const displayLabels = Object.fromEntries(themeChoices.slice(0, 8).map((theme) => [theme.name, theme.displayLabel]))
   assert.deepEqual(displayLabels, {
     flexoki: "Flexoki",
     default: "Default",

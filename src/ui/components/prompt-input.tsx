@@ -345,7 +345,7 @@ export function PromptInput({
         const match = autocompleteMatches[selectedAutocompleteIndex]
         if (key.tab && browsableActive && onAutocompleteTab?.(match)) return
         const next = applySlashAutocomplete(value, cursorOffset, match)
-        if (key.return && browsableActive) {
+        if (key.return) {
           setValue("")
           setCursorOffset(0)
           setBrowsableAnchor(undefined)

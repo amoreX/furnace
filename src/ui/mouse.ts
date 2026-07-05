@@ -1,4 +1,5 @@
 import process from "node:process"
+import { PassThrough } from "node:stream"
 
 const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h"
 const MOUSE_DISABLE = "\x1b[?1000l\x1b[?1006l"
@@ -21,42 +22,93 @@ export type MouseWheelEvent = {
 
 type WheelCallback = (event: MouseWheelEvent) => void
 
-export class MouseInput {
-  private callback?: WheelCallback
-  private onData: (data: Buffer) => void
+type DataEmitter = {
+  on(event: "data", listener: (data: Buffer) => void): DataEmitter
+  off(event: "data", listener: (data: Buffer) => void): DataEmitter
+}
 
-  constructor() {
-    this.onData = (data: Buffer) => {
-      this.parse(data)
-    }
-  }
+export type MouseInputHandle = {
+  start(): void
+  stop(): void
+  onWheel(callback: WheelCallback): void
+}
 
-  start(): void {
-    process.stdin.on("data", this.onData)
-  }
+export function createMouseInput(output: NodeJS.WritableStream, input: DataEmitter = process.stdin): MouseInputHandle {
+  let callback: WheelCallback | undefined
+  let buffer = ""
+  let active = false
+  let onData: ((data: Buffer) => void) | undefined
 
-  stop(): void {
-    process.stdin.off("data", this.onData)
-  }
+  const flush = (): void => {
+    if (!buffer) return
+    let forward = ""
+    let i = 0
+    while (i < buffer.length) {
+      const escIndex = buffer.indexOf("\x1b", i)
+      if (escIndex === -1) {
+        forward += buffer.slice(i)
+        i = buffer.length
+        break
+      }
+      forward += buffer.slice(i, escIndex)
+      i = escIndex
 
-  onWheel(callback: WheelCallback): void {
-    this.callback = callback
-  }
-
-  private parse(data: Buffer): void {
-    const text = data.toString("utf8")
-    let index = 0
-    while (index < text.length) {
-      const sequence = matchSgrMouseSequence(text, index)
-      if (!sequence) {
-        index += 1
+      const sequence = matchSgrMouseSequence(buffer, i)
+      if (sequence) {
+        const event = decodeSgrMouse(sequence.button, sequence.x, sequence.y, sequence.release)
+        if (event) callback?.(event)
+        i = sequence.nextIndex
         continue
       }
-      index = sequence.nextIndex
-      const event = decodeSgrMouse(sequence.button, sequence.x, sequence.y, sequence.release)
-      if (event) this.callback?.(event)
+
+      if (isSgrMousePrefix(buffer.slice(i))) {
+        // Wait for more bytes; keep the prefix in the buffer.
+        break
+      }
+
+      // Not a mouse sequence; forward the ESC byte and continue scanning.
+      forward += buffer[i]
+      i += 1
     }
+
+    if (forward) output.write(forward)
+    buffer = buffer.slice(i)
   }
+
+  onData = (data: Buffer): void => {
+    buffer += data.toString("utf8")
+    flush()
+  }
+
+  return {
+    start() {
+      if (active || !onData) return
+      active = true
+      input.on("data", onData)
+    },
+    stop() {
+      if (!active || !onData) return
+      active = false
+      input.off("data", onData)
+      flush()
+    },
+    onWheel(cb) {
+      callback = cb
+    },
+  }
+}
+
+export function createFilteredStdin(): { stdin: NodeJS.ReadStream & NodeJS.WritableStream; mouseInput: MouseInputHandle } {
+  const stdin = new PassThrough() as unknown as NodeJS.ReadStream & NodeJS.WritableStream
+  stdin.isTTY = true
+  stdin.setRawMode = (_mode: boolean): typeof stdin => {
+    // No-op: Ink will call this on the filtered stdin. The real stdin is set
+    // to raw mode by createFurnaceTerminal when the app starts.
+    return stdin
+  }
+  stdin.isRaw = true
+  const mouseInput = createMouseInput(stdin)
+  return { stdin, mouseInput }
 }
 
 function matchSgrMouseSequence(text: string, start: number): { button: number; x: number; y: number; release: boolean; nextIndex: number } | undefined {
@@ -98,7 +150,19 @@ function matchSgrMouseSequence(text: string, start: number): { button: number; x
   return { button, x, y, release: char === "m", nextIndex: index + 1 }
 }
 
-function decodeSgrMouse(button: number, x: number, y: number, release: boolean): MouseWheelEvent | undefined {
+function isSgrMousePrefix(text: string): boolean {
+  // Prefixes that could lead to a complete SGR mouse sequence. Longer prefixes
+  // are checked first so an incomplete but valid-looking prefix is kept.
+  if (text.startsWith("\x1b[<")) {
+    const rest = text.slice(3)
+    return /^\d*(;\d*){0,2};?\d*$/.test(rest)
+  }
+  if (text === "\x1b[") return true
+  if (text === "\x1b") return true
+  return false
+}
+
+function decodeSgrMouse(button: number, x: number, y: number, _release: boolean): MouseWheelEvent | undefined {
   // SGR mouse button values: 4 = wheel up, 5 = wheel down.
   // Wheel events are normally reported as release ('m'), but accept press ('M') too.
   if (button === 4) return { direction: "up", x, y }

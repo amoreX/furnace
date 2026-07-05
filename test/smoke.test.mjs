@@ -1,16 +1,20 @@
 import { readFile } from "node:fs/promises"
+import { PassThrough } from "node:stream"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
 test("SGR mouse wheel parser emits wheel up and down events", async () => {
-  const { MouseInput } = await import("../dist/ui/mouse.js")
-  const mouse = new MouseInput()
+  const { createMouseInput } = await import("../dist/ui/mouse.js")
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const mouse = createMouseInput(output, input)
   const events = []
   mouse.onWheel((event) => events.push(event))
+  mouse.start()
 
   // Button 4 = wheel up, 5 = wheel down.
-  mouse["parse"](Buffer.from("\x1b[<4;10;5m"))
-  mouse["parse"](Buffer.from("\x1b[<5;20;10M"))
+  input.write(Buffer.from("\x1b[<4;10;5m"))
+  input.write(Buffer.from("\x1b[<5;20;10M"))
 
   assert.deepEqual(events, [
     { direction: "up", x: 10, y: 5 },
@@ -19,17 +23,20 @@ test("SGR mouse wheel parser emits wheel up and down events", async () => {
 })
 
 test("SGR mouse parser ignores non-wheel and malformed sequences", async () => {
-  const { MouseInput } = await import("../dist/ui/mouse.js")
-  const mouse = new MouseInput()
+  const { createMouseInput } = await import("../dist/ui/mouse.js")
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const mouse = createMouseInput(output, input)
   const events = []
   mouse.onWheel((event) => events.push(event))
+  mouse.start()
 
   // Left mouse button (0) should not emit a wheel event.
-  mouse["parse"](Buffer.from("\x1b[<0;5;5M"))
+  input.write(Buffer.from("\x1b[<0;5;5M"))
   // Malformed sequence (missing coordinate) should be ignored.
-  mouse["parse"](Buffer.from("\x1b[<4;10m"))
+  input.write(Buffer.from("\x1b[<4;10m"))
   // Plain keyboard input should pass through without emitting events.
-  mouse["parse"](Buffer.from("hello"))
+  input.write(Buffer.from("hello"))
 
   assert.equal(events.length, 0)
 })

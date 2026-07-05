@@ -7,7 +7,7 @@ import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
-import { disableMouseTracking, enableMouseTracking, MouseInput } from "./mouse.js"
+import { createFilteredStdin, disableMouseTracking, enableMouseTracking } from "./mouse.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
@@ -455,8 +455,42 @@ function visibleTaskRecords(tasks: TaskRecord[]): TaskRecord[] {
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
   const store = new UiStore(options)
   let instance: Instance | undefined
+  const { stdin: filteredStdin, mouseInput } = createFilteredStdin()
+
+  mouseInput.onWheel((event) => {
+    const state = store.getSnapshot()
+    if (!state.mouseEnabled) return
+    if (state.approval || state.question || state.screen.kind !== "chat") return
+
+    const columns = process.stdout.columns || 80
+    const rows = process.stdout.rows || 24
+    const chatBottomRow = rows - bottomDockHeight(state)
+    if (event.y > chatBottomRow) return
+
+    if (state.splitPane) {
+      const dividerX = Math.floor(columns / 2)
+      const pane = buildSplitPaneLayout(state, columns, rows)
+      const pageSize = Math.max(1, pane.paneHeight - 3)
+      if (event.x <= dividerX) {
+        const maxOffset = maxScrollbackOffset(pane.leftPane.committedLines.length, pageSize)
+        store.update((s) => ({ ...s, splitScrollbackLeft: clampScrollbackOffset(s.splitScrollbackLeft, event.direction, maxOffset) }))
+      } else {
+        const maxOffset = maxScrollbackOffset(pane.rightPane.committedLines.length, pageSize)
+        store.update((s) => ({ ...s, splitScrollbackRight: clampScrollbackOffset(s.splitScrollbackRight, event.direction, maxOffset) }))
+      }
+    } else if (state.committedLines.length > 0) {
+      const pageSize = scrollbackPageSize(rows)
+      const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+      store.update((s) => ({ ...s, scrollbackOffset: clampScrollbackOffset(s.scrollbackOffset, event.direction, maxOffset) }))
+    }
+  })
 
   const stop = () => {
+    disableMouseTracking()
+    mouseInput.stop()
+    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+      try { process.stdin.setRawMode(false) } catch { /* ignore */ }
+    }
     instance?.unmount()
   }
 
@@ -493,10 +527,18 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ approval: { ...request, resolve } })
     },
     run() {
+      if (store.getSnapshot().mouseEnabled) {
+        enableMouseTracking()
+      }
+      if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+        process.stdin.setRawMode(true)
+      }
+      mouseInput.start()
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
         alternateScreen: false,
         exitOnCtrlC: false,
         maxFps: 30,
+        stdin: filteredStdin,
       })
       return instance.waitUntilExit().then(() => undefined)
     },
@@ -621,6 +663,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ statusNotice: content })
     },
     setMouseEnabled(enabled) {
+      if (enabled) enableMouseTracking()
+      else disableMouseTracking()
       store.update((state) => ({ ...state, mouseEnabled: enabled }))
     },
     getSnapshot() {
@@ -747,49 +791,17 @@ function FurnaceApp({
   }, [state.title])
 
   React.useEffect(() => {
-    const mouse = new MouseInput()
-    if (state.mouseEnabled) {
-      enableMouseTracking()
-      mouse.start()
-    }
-    mouse.onWheel((event) => {
-      if (!state.mouseEnabled) return
-      if (state.approval || state.question || state.screen.kind !== "chat") return
-      // Coordinates are 1-based from the terminal. The chat region occupies the
-      // rows above the bottom-docked input/status bar. Wheel events below that
-      // are ignored.
-      const chatBottomRow = rows - bottomDockHeight(state)
-      if (event.y > chatBottomRow) return
-      if (state.splitPane) {
-        const dividerX = Math.floor(columns / 2)
-        const pane = buildSplitPaneLayout(state, columns, rows)
-        const pageSize = Math.max(1, pane.paneHeight - 3)
-        if (event.x <= dividerX) {
-          const maxOffset = maxScrollbackOffset(pane.leftPane.committedLines.length, pageSize)
-          store.update((s) => ({ ...s, splitScrollbackLeft: clampScrollbackOffset(s.splitScrollbackLeft, event.direction, maxOffset) }))
-        } else {
-          const maxOffset = maxScrollbackOffset(pane.rightPane.committedLines.length, pageSize)
-          store.update((s) => ({ ...s, splitScrollbackRight: clampScrollbackOffset(s.splitScrollbackRight, event.direction, maxOffset) }))
-        }
-      } else if (state.committedLines.length > 0) {
-        const pageSize = scrollbackPageSize(rows)
-        const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
-        store.update((s) => ({ ...s, scrollbackOffset: clampScrollbackOffset(s.scrollbackOffset, event.direction, maxOffset) }))
-      }
-    })
-    const onAppExit = () => {
-      disableMouseTracking()
-      mouse.stop()
-    }
     const onProcessExit = () => {
       disableMouseTracking()
+      if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+        try { process.stdin.setRawMode(false) } catch { /* ignore */ }
+      }
     }
     process.on("exit", onProcessExit)
     return () => {
       process.off("exit", onProcessExit)
-      onAppExit()
     }
-  }, [columns, rows, state.approval, state.committedLines.length, state.mouseEnabled, state.question, state.screen.kind, state.splitPane, store])
+  }, [])
 
   useInput((_input, key) => {
     if (key.ctrl && _input === "c") {

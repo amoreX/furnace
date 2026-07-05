@@ -41,6 +41,38 @@ test("SGR mouse parser ignores non-wheel and malformed sequences", async () => {
   assert.equal(events.length, 0)
 })
 
+test("SGR mouse parser recognizes wheel events with modifier and motion bits", async () => {
+  const { createMouseInput } = await import("../dist/ui/mouse.js")
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const mouse = createMouseInput(output, input)
+  const events = []
+  mouse.onWheel((event) => events.push(event))
+  mouse.start()
+
+  // Motion bit (64) plus wheel up (4) and down (5).
+  input.write(Buffer.from("\x1b[<68;10;5m"))
+  input.write(Buffer.from("\x1b[<69;20;10M"))
+  // Shift modifier (8) plus wheel up (4).
+  input.write(Buffer.from("\x1b[<12;5;5m"))
+
+  assert.deepEqual(events, [
+    { direction: "up", x: 10, y: 5 },
+    { direction: "down", x: 20, y: 10 },
+    { direction: "up", x: 5, y: 5 },
+  ])
+})
+
+test("clampScrollbackOffset maps wheel direction to scroll offset correctly", async () => {
+  const { clampScrollbackOffset } = await import("../dist/ui/ink-terminal.js")
+
+  // Wheel up reveals older content (increase offset), wheel down returns to live (decrease offset).
+  assert.equal(clampScrollbackOffset(0, "up", 10), 1)
+  assert.equal(clampScrollbackOffset(10, "up", 10), 10)
+  assert.equal(clampScrollbackOffset(5, "down", 10), 4)
+  assert.equal(clampScrollbackOffset(0, "down", 10), 0)
+})
+
 test("project exposes the expected phase 0 commands", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
 

@@ -434,9 +434,11 @@ function normalizeUiState(state: UiState): UiState {
   return state
 }
 
-function clampScrollbackOffset(current: number, direction: "up" | "down", maxOffset: number): number {
-  if (direction === "up") return Math.max(0, current - 1)
-  return Math.min(maxOffset, current + 1)
+export function clampScrollbackOffset(current: number, direction: "up" | "down", maxOffset: number): number {
+  // Wheel up reveals older content (increase offset); wheel down returns toward
+  // live content (decrease offset). Clamp to the valid range.
+  if (direction === "up") return Math.min(maxOffset, current + 1)
+  return Math.max(0, current - 1)
 }
 
 function bottomDockHeight(state: UiState): number {

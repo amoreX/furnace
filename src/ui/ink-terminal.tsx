@@ -7,7 +7,7 @@ import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
-import { createFilteredStdin, disableMouseTracking, enableMouseTracking } from "./mouse.js"
+import { createFilteredStdin, debugLog, disableMouseTracking, enableMouseTracking } from "./mouse.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
@@ -461,13 +461,17 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   mouseInput.onWheel((event) => {
     const state = store.getSnapshot()
+    debugLog?.(`wheel callback mouseEnabled=${state.mouseEnabled} screen=${state.screen.kind} splitPane=${Boolean(state.splitPane)} committed=${state.committedLines.length} y=${event.y}`)
     if (!state.mouseEnabled) return
     if (state.approval || state.question || state.screen.kind !== "chat") return
 
     const columns = process.stdout.columns || 80
     const rows = process.stdout.rows || 24
     const chatBottomRow = rows - bottomDockHeight(state)
-    if (event.y > chatBottomRow) return
+    if (event.y > chatBottomRow) {
+      debugLog?.(`wheel ignored below chat region: y=${event.y} > chatBottomRow=${chatBottomRow}`)
+      return
+    }
 
     if (state.splitPane) {
       const dividerX = Math.floor(columns / 2)
@@ -475,15 +479,20 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       const pageSize = Math.max(1, pane.paneHeight - 3)
       if (event.x <= dividerX) {
         const maxOffset = maxScrollbackOffset(pane.leftPane.committedLines.length, pageSize)
+        debugLog?.(`scroll left ${event.direction} maxOffset=${maxOffset}`)
         store.update((s) => ({ ...s, splitScrollbackLeft: clampScrollbackOffset(s.splitScrollbackLeft, event.direction, maxOffset) }))
       } else {
         const maxOffset = maxScrollbackOffset(pane.rightPane.committedLines.length, pageSize)
+        debugLog?.(`scroll right ${event.direction} maxOffset=${maxOffset}`)
         store.update((s) => ({ ...s, splitScrollbackRight: clampScrollbackOffset(s.splitScrollbackRight, event.direction, maxOffset) }))
       }
     } else if (state.committedLines.length > 0) {
       const pageSize = scrollbackPageSize(rows)
       const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+      debugLog?.(`scroll normal ${event.direction} maxOffset=${maxOffset}`)
       store.update((s) => ({ ...s, scrollbackOffset: clampScrollbackOffset(s.scrollbackOffset, event.direction, maxOffset) }))
+    } else {
+      debugLog?.(`wheel ignored: no committed lines`)
     }
   })
 

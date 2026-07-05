@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import process from "node:process"
 import { PassThrough } from "node:stream"
 
@@ -5,11 +8,19 @@ const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h"
 const MOUSE_DISABLE = "\x1b[?1000l\x1b[?1006l"
 
 export function enableMouseTracking(): void {
-  if (process.stdout.isTTY) process.stdout.write(MOUSE_ENABLE)
+  if (process.stdout.isTTY) {
+    debugLog?.("enable mouse tracking")
+    process.stdout.write(MOUSE_ENABLE)
+  } else {
+    debugLog?.("enable mouse tracking skipped: not TTY")
+  }
 }
 
 export function disableMouseTracking(): void {
-  if (process.stdout.isTTY) process.stdout.write(MOUSE_DISABLE)
+  if (process.stdout.isTTY) {
+    debugLog?.("disable mouse tracking")
+    process.stdout.write(MOUSE_DISABLE)
+  }
 }
 
 export type WheelDirection = "up" | "down"
@@ -33,11 +44,23 @@ export type MouseInputHandle = {
   onWheel(callback: WheelCallback): void
 }
 
+export const debugLog = process.env.FURNACE_MOUSE_DEBUG === "1" ? (message: string) => {
+  const dir = join(homedir(), ".furnace")
+  try { mkdirSync(dir, { recursive: true }) } catch { /* ignore */ }
+  const path = join(dir, "mouse-debug.log")
+  appendFileSync(path, `${Date.now()} ${message}\n`, "utf8")
+} : undefined
+
 export function createMouseInput(output: NodeJS.WritableStream, input: DataEmitter = process.stdin): MouseInputHandle {
   let callback: WheelCallback | undefined
   let buffer = ""
   let active = false
   let onData: ((data: Buffer) => void) | undefined
+
+  if (debugLog) {
+    const path = join(homedir(), ".furnace", "mouse-debug.log")
+    try { writeFileSync(path, "") } catch { /* ignore */ }
+  }
 
   const flush = (): void => {
     if (!buffer) return
@@ -55,14 +78,21 @@ export function createMouseInput(output: NodeJS.WritableStream, input: DataEmitt
 
       const sequence = matchSgrMouseSequence(buffer, i)
       if (sequence) {
+        debugLog?.(`mouse seq button=${sequence.button} x=${sequence.x} y=${sequence.y} release=${sequence.release}`)
         const event = decodeSgrMouse(sequence.button, sequence.x, sequence.y, sequence.release)
-        if (event) callback?.(event)
+        if (event) {
+          debugLog?.(`wheel ${event.direction} x=${event.x} y=${event.y}`)
+          callback?.(event)
+        } else {
+          debugLog?.(`ignored mouse button=${sequence.button}`)
+        }
         i = sequence.nextIndex
         continue
       }
 
       if (isSgrMousePrefix(buffer.slice(i))) {
         // Wait for more bytes; keep the prefix in the buffer.
+        debugLog?.(`partial mouse prefix: ${JSON.stringify(buffer.slice(i))}`)
         break
       }
 
@@ -71,11 +101,15 @@ export function createMouseInput(output: NodeJS.WritableStream, input: DataEmitt
       i += 1
     }
 
-    if (forward) output.write(forward)
+    if (forward) {
+      debugLog?.(`forward ${forward.length} bytes to Ink`)
+      output.write(forward)
+    }
     buffer = buffer.slice(i)
   }
 
   onData = (data: Buffer): void => {
+    debugLog?.(`stdin ${data.length} bytes: ${JSON.stringify(data.toString("utf8"))}`)
     buffer += data.toString("utf8")
     flush()
   }

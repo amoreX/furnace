@@ -193,6 +193,14 @@ export async function runInteractive(input: {
       }
       focusSplitSide(splitActiveSide === "left" ? "right" : "left")
     },
+    onSplitFocus: (side) => {
+      if (!splitSessionId) {
+        showTransientStatus("No split open. Type /split to open one.")
+        return
+      }
+      if (splitActiveSide === side) return
+      focusSplitSide(side)
+    },
     onInputChange: (value) => {
       if (isCurrentSessionRunning()) return
       if (splitSessionId) splitDrafts.set(sessionId, value)

@@ -480,6 +480,87 @@ test("scrollback window pages through committed transcript lines", async () => {
   assert.deepEqual(scrollbackWindow(lines, 999, 5), ["line 1", "line 2", "line 3", "line 4", "line 5"])
 })
 
+test("split pane layout maps active side scrollback offset and pane content", async () => {
+  const { buildSplitPaneLayout } = await import("../dist/ui/ink-terminal.js")
+
+  const baseState = {
+    busy: false,
+    committedLines: [{ kind: "content", text: "main chat line" }],
+    contextTokens: 0,
+    contextWindowTokens: 0,
+    cwd: "/test",
+    focus: "input",
+    forkParentTitle: undefined,
+    inputDisabled: false,
+    inputDraft: "",
+    inputMode: "standard",
+    lofiEnabled: false,
+    model: "test",
+    modelDisplayName: undefined,
+    modelSettings: {},
+    mode: "agent",
+    nextImageLabel: 1,
+    pastedImages: [],
+    pinnedChats: [],
+    planAction: undefined,
+    planPath: undefined,
+    question: undefined,
+    queuedPrompts: [],
+    screen: { kind: "chat" },
+    scrollbackOffset: 0,
+    sidebarEnabled: true,
+    slashCommandItems: [],
+    splitScrollbackLeft: 3,
+    splitScrollbackRight: 7,
+    statusLine: {},
+    statusNotice: undefined,
+    tasks: [],
+    theme: {},
+    themeName: "default",
+    thinking: false,
+    thinkingMessage: "Thinking",
+    title: "Main",
+    toolActivities: [],
+    transcript: [],
+    transcriptGeneration: 0,
+    streamingContent: "",
+  }
+
+  const splitPane = {
+    activeSide: "left",
+    busy: false,
+    committedLines: [{ kind: "content", text: "split chat line" }],
+    contextTokens: 0,
+    contextWindowTokens: 0,
+    inputDraft: "",
+    mode: "agent",
+    queuedCount: 0,
+    sessionId: "split",
+    side: "right",
+    thinking: false,
+    thinkingMessage: "Thinking",
+    title: "Split",
+    toolActivities: [],
+    transcript: [],
+  }
+
+  const state = { ...baseState, splitPane }
+  const { leftPane, rightPane, leftActive } = buildSplitPaneLayout(state, 80, 24)
+
+  assert.equal(leftActive, true)
+  assert.equal(leftPane.scrollbackOffset, 3)
+  assert.equal(rightPane.scrollbackOffset, 0)
+  assert.equal(leftPane.committedLines[0].text, "main chat line")
+  assert.equal(rightPane.committedLines[0].text, "split chat line")
+
+  // Switch active side to right and verify the right offset is applied.
+  const rightActiveState = { ...state, splitPane: { ...splitPane, activeSide: "right" } }
+  const rightActive = buildSplitPaneLayout(rightActiveState, 80, 24)
+  assert.equal(rightActive.leftActive, false)
+  assert.equal(rightActive.leftPane.scrollbackOffset, 0)
+  assert.equal(rightActive.rightPane.scrollbackOffset, 7)
+})
+
 test("lofi mode exposes a terminal chibi animation and stream default", async () => {
   const { lofiChibiFrame } = await import("../dist/ui/components/prompt-input.js")
   const { defaultLofiStreamUrl } = await import("../dist/lofi.js")

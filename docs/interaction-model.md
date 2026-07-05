@@ -107,10 +107,13 @@ Runtime behavior:
 
 1. `/split` opens a new empty chat in the right pane and focuses it.
 2. `/split left` and `/split right` focus a pane; `Ctrl+K` toggles focus between panes.
-3. `/split close` closes the inactive pane and keeps the active pane as the single visible chat.
-4. Split mode only opens or changes focus while both pane sessions are idle. If an agent turn is running, Furnace shows a retry-after-work status instead of changing split state.
-5. `/resume` and pinned chat selection replace the active pane when split mode is open.
-6. The same chat cannot be open in both panes. If `/resume` or pinned selection targets the other pane's chat, Furnace reports that the chat is occupied instead of duplicating it.
+3. `Ctrl+Shift+Left` and `Ctrl+Shift+Right` focus the left or right pane directly.
+4. `PageUp` and `PageDown` scroll the focused pane; each pane keeps its own scroll position when focus switches.
+5. `Esc` returns the focused pane to live content.
+6. `/split close` closes the inactive pane and keeps the active pane as the single visible chat.
+7. Split mode only opens or changes focus while both pane sessions are idle. If an agent turn is running, Furnace shows a retry-after-work status instead of changing split state.
+8. `/resume` and pinned chat selection replace the active pane when split mode is open.
+9. The same chat cannot be open in both panes. If `/resume` or pinned selection targets the other pane's chat, Furnace reports that the chat is occupied instead of duplicating it.
 
 Because split mode is beta, keep changes conservative and preserve normal single-pane session switching semantics outside split mode.
 

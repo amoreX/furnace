@@ -156,6 +156,7 @@ type CreateFurnaceTerminalOptions = {
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onSplitToggle?: () => void
+  onSplitFocus?: (side: "left" | "right") => void
   onInputChange?: (value: string) => void
   inputMode?: "standard" | "vim"
   sidebarEnabled?: boolean
@@ -257,6 +258,8 @@ type UiState = {
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
   scrollbackOffset: number
+  splitScrollbackLeft: number
+  splitScrollbackRight: number
   slashCommandItems: PromptAutocompleteItem[]
   splitPane?: SplitPaneSummary & { committedLines: TranscriptLineData[] }
   statusNotice?: string
@@ -298,6 +301,7 @@ class UiStore {
   }
   readonly splitHandlers: {
     onToggle?: () => void
+    onFocus?: (side: "left" | "right") => void
   }
   readonly onInputChange?: (value: string) => void
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
@@ -327,6 +331,7 @@ class UiStore {
     }
     this.splitHandlers = {
       onToggle: options.onSplitToggle,
+      onFocus: options.onSplitFocus,
     }
     this.onInputChange = options.onInputChange
     this.onAutocompleteTab = options.onAutocompleteTab
@@ -362,6 +367,8 @@ class UiStore {
       queuedPrompts: [],
       screen: { kind: "chat" },
       scrollbackOffset: 0,
+      splitScrollbackLeft: 0,
+      splitScrollbackRight: 0,
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
       splitPane: undefined,
       statusNotice: undefined,
@@ -527,6 +534,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
               committedLines: splitPanePreviewLines(pane.transcript, width, lineBudget),
             }
           : undefined,
+        splitScrollbackLeft: pane ? state.splitScrollbackLeft : 0,
+        splitScrollbackRight: pane ? state.splitScrollbackRight : 0,
       }))
     },
     setTasks(tasks) {
@@ -595,6 +604,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         ...state,
         committedLines: [],
         scrollbackOffset: 0,
+        splitScrollbackLeft: 0,
+        splitScrollbackRight: 0,
         transcriptGeneration: state.transcriptGeneration + 1,
         pastedImages: [],
         nextImageLabel: 1,
@@ -732,20 +743,56 @@ function FurnaceApp({
       onExit()
       app.exit()
     }
-    if (!state.approval && !state.question && state.screen.kind === "chat" && state.committedLines.length > 0) {
-      const pageSize = scrollbackPageSize(rows)
-      const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
-      if (extendedKey.pageUp) {
-        store.update((s) => ({ ...s, scrollbackOffset: Math.min(maxOffset, Math.max(1, s.scrollbackOffset + pageSize)) }))
-        return
-      }
-      if (extendedKey.pageDown) {
-        store.update((s) => ({ ...s, scrollbackOffset: Math.max(0, s.scrollbackOffset - pageSize) }))
-        return
-      }
-      if (key.escape && state.scrollbackOffset > 0) {
-        store.update({ scrollbackOffset: 0 })
-        return
+    if (!state.approval && !state.question && state.screen.kind === "chat") {
+      if (state.splitPane) {
+        const { leftPane, rightPane, leftActive, paneHeight } = buildSplitPaneLayout(state, columns, rows)
+        const activePane = leftActive ? leftPane : rightPane
+        if (activePane.committedLines.length > 0) {
+          const pageSize = Math.max(1, paneHeight - 3)
+          const maxOffset = maxScrollbackOffset(activePane.committedLines.length, pageSize)
+          if (leftActive) {
+            if (extendedKey.pageUp) {
+              store.update((s) => ({ ...s, splitScrollbackLeft: Math.min(maxOffset, Math.max(1, s.splitScrollbackLeft + pageSize)) }))
+              return
+            }
+            if (extendedKey.pageDown) {
+              store.update((s) => ({ ...s, splitScrollbackLeft: Math.max(0, s.splitScrollbackLeft - pageSize) }))
+              return
+            }
+            if (key.escape && state.splitScrollbackLeft > 0) {
+              store.update({ splitScrollbackLeft: 0 })
+              return
+            }
+          } else {
+            if (extendedKey.pageUp) {
+              store.update((s) => ({ ...s, splitScrollbackRight: Math.min(maxOffset, Math.max(1, s.splitScrollbackRight + pageSize)) }))
+              return
+            }
+            if (extendedKey.pageDown) {
+              store.update((s) => ({ ...s, splitScrollbackRight: Math.max(0, s.splitScrollbackRight - pageSize) }))
+              return
+            }
+            if (key.escape && state.splitScrollbackRight > 0) {
+              store.update({ splitScrollbackRight: 0 })
+              return
+            }
+          }
+        }
+      } else if (state.committedLines.length > 0) {
+        const pageSize = scrollbackPageSize(rows)
+        const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+        if (extendedKey.pageUp) {
+          store.update((s) => ({ ...s, scrollbackOffset: Math.min(maxOffset, Math.max(1, s.scrollbackOffset + pageSize)) }))
+          return
+        }
+        if (extendedKey.pageDown) {
+          store.update((s) => ({ ...s, scrollbackOffset: Math.max(0, s.scrollbackOffset - pageSize) }))
+          return
+        }
+        if (key.escape && state.scrollbackOffset > 0) {
+          store.update({ scrollbackOffset: 0 })
+          return
+        }
       }
     }
     if (key.ctrl && _input === "q") {
@@ -757,8 +804,16 @@ function FurnaceApp({
       store.update({ sidebarEnabled: next })
       store.onSidebarToggle?.(next)
     }
-    if (state.splitPane && state.focus !== "input" && key.ctrl && _input === "k") {
+    if (state.splitPane && key.ctrl && _input === "k") {
       store.splitHandlers.onToggle?.()
+      return
+    }
+    if (state.splitPane && key.ctrl && key.shift && key.leftArrow) {
+      store.splitHandlers.onFocus?.("left")
+      return
+    }
+    if (state.splitPane && key.ctrl && key.shift && key.rightArrow) {
+      store.splitHandlers.onFocus?.("right")
       return
     }
     if (key.ctrl && (_input === "t" || _input === "k")) {
@@ -903,7 +958,6 @@ function FurnaceApp({
             onBareTab={(value) => store.onBareTab?.(value) ?? false}
             onAutocompleteHover={(match) => store.onAutocompleteHover?.(match)}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
-            onSplitToggle={state.splitPane ? () => store.splitHandlers.onToggle?.() : undefined}
             onCopy={() => store.onCopy?.()}
             onImageAttach={attachClipboardImage}
             onInterrupt={() => store.onInterrupt?.()}
@@ -957,14 +1011,22 @@ function LofiCorner(): React.ReactNode {
   )
 }
 
-function SplitChatView({ state }: { state: UiState }): React.ReactNode {
-  const theme = useTheme()
-  const { columns, rows } = useWindowSize()
+export function buildSplitPaneLayout(
+  state: UiState,
+  columns: number,
+  rows: number,
+): {
+  leftPane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset: number }
+  rightPane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset: number }
+  leftActive: boolean
+  paneWidth: number
+  paneHeight: number
+} {
   const splitPane = state.splitPane
-  if (!splitPane) return null
+  if (!splitPane) throw new Error("buildSplitPaneLayout called without a split pane")
   const leftActive = splitPane.activeSide === "left"
   const mainSide: SplitPaneSummary["side"] = splitPane.side === "left" ? "right" : "left"
-  const mainPane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset?: number } = {
+  const mainPaneBase = {
     activeSide: splitPane.activeSide,
     busy: state.busy,
     committedLines: state.committedLines,
@@ -976,17 +1038,30 @@ function SplitChatView({ state }: { state: UiState }): React.ReactNode {
     queuedCount: state.queuedPrompts.filter((prompt) => !prompt.hidden).length,
     sessionId: "active",
     side: mainSide,
-    scrollbackOffset: state.scrollbackOffset,
     thinking: state.thinking,
     thinkingMessage: state.thinkingMessage,
     title: state.title,
     toolActivities: state.toolActivities,
     transcript: state.transcript,
   }
-  const leftPane = splitPane.side === "left" ? { ...splitPane, scrollbackOffset: splitPane.activeSide === "left" ? state.scrollbackOffset : 0 } : mainPane
-  const rightPane = splitPane.side === "right" ? { ...splitPane, scrollbackOffset: splitPane.activeSide === "right" ? state.scrollbackOffset : 0 } : mainPane
+  const leftPane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset: number } = {
+    ...(splitPane.side === "left" ? splitPane : mainPaneBase),
+    scrollbackOffset: leftActive ? state.splitScrollbackLeft : 0,
+  }
+  const rightPane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset: number } = {
+    ...(splitPane.side === "right" ? splitPane : mainPaneBase),
+    scrollbackOffset: leftActive ? 0 : state.splitScrollbackRight,
+  }
   const paneWidth = Math.max(24, Math.floor(columns / 2))
   const paneHeight = Math.max(8, rows - 10)
+  return { leftPane, rightPane, leftActive, paneWidth, paneHeight }
+}
+
+function SplitChatView({ state }: { state: UiState }): React.ReactNode {
+  const theme = useTheme()
+  const { columns, rows } = useWindowSize()
+  if (!state.splitPane) return null
+  const { leftPane, rightPane, leftActive, paneWidth, paneHeight } = buildSplitPaneLayout(state, columns, rows)
   return (
     <Box flexDirection="column" width={columns}>
       <Box flexDirection="row" width={columns} height={paneHeight}>
@@ -1053,7 +1128,7 @@ function hintItemsForState(state: UiState): string[] {
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
   if (state.focus === "tasks" && state.tasks.length > 0) return taskHintItems(state)
   const extras: string[] = []
-  if (state.splitPane) extras.push("Ctrl+K toggle split")
+  if (state.splitPane) extras.push("Ctrl+K toggle · Ctrl+Shift+←/→ focus")
   if (state.planAction) extras.push("Up for plan actions")
   if (state.question) extras.push("Up to answer question")
   if (!state.splitPane && state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+K tasks")
@@ -1502,7 +1577,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>{title}</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Ctrl+K to focus"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : store.getSnapshot().splitPane ? "Up to focus" : "Ctrl+K to focus"}</Text>
       </Box>
       {taskPreviewItems(tasks, selected).map((line) => (
         <Box key={line.id} justifyContent="space-between">

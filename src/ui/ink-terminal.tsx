@@ -24,9 +24,6 @@ import { createImageAttachment, type ImageAttachment, type ImageSource } from ".
 import { packageVersion } from "../version.js"
 
 const liveStreamingRenderLimit = 30_000
-const splitPaneMessageLimit = 24
-const splitPaneMessageCharLimit = 8_000
-const splitInactiveLineMultiplier = 3
 
 export type FurnaceTerminal = {
   clearInteractionPrompts(): void
@@ -51,7 +48,6 @@ export type FurnaceTerminal = {
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
-  setSplitPane(pane?: SplitPaneSummary): void
   setTasks(tasks: TaskRecord[]): void
   showModelEditor(
     choice: ModelChoice,
@@ -69,7 +65,6 @@ export type FurnaceTerminal = {
   setTheme(theme: string): void
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
-  clearViewport(): void
   clearTranscriptDisplay(): void
   setStreamingContent(text: string): void
   setStatusNotice(content?: string, tone?: StatusNoticeTone): void
@@ -125,24 +120,6 @@ export type PinnedChatSummary = {
   working: boolean
 }
 
-export type SplitPaneSummary = {
-  activeSide: "left" | "right"
-  busy: boolean
-  contextTokens: number
-  contextWindowTokens: number
-  forkParentTitle?: string
-  inputDraft?: string
-  mode: AgentMode
-  queuedCount: number
-  sessionId: string
-  side: "left" | "right"
-  thinking: boolean
-  thinkingMessage: string
-  title: string
-  toolActivities: ToolActivity[]
-  transcript: TranscriptMessage[]
-}
-
 export type PlanAction = "execute" | "refine" | "stay"
 
 type CreateFurnaceTerminalOptions = {
@@ -156,7 +133,6 @@ type CreateFurnaceTerminalOptions = {
   onPinnedUnpin?: (slot: number) => void
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
-  onSplitToggle?: () => void
   onInputChange?: (value: string) => void
   inputMode?: "standard" | "vim"
   sidebarEnabled?: boolean
@@ -264,7 +240,6 @@ type UiState = {
   screen: UiScreen
   scrollbackOffset: number
   slashCommandItems: PromptAutocompleteItem[]
-  splitPane?: SplitPaneSummary & { committedLines: TranscriptLineData[] }
   statusNotice?: string
   statusNoticeTone: StatusNoticeTone
   statusLine: StatusLinePreferences
@@ -303,9 +278,6 @@ class UiStore {
   readonly modeHandlers: {
     onCycle?: (direction: 1 | -1) => void
   }
-  readonly splitHandlers: {
-    onToggle?: () => void
-  }
   readonly onInputChange?: (value: string) => void
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   readonly onBareTab?: (value: string) => boolean
@@ -331,9 +303,6 @@ class UiStore {
     }
     this.modeHandlers = {
       onCycle: options.onModeCycle,
-    }
-    this.splitHandlers = {
-      onToggle: options.onSplitToggle,
     }
     this.onInputChange = options.onInputChange
     this.onAutocompleteTab = options.onAutocompleteTab
@@ -370,7 +339,6 @@ class UiStore {
       screen: { kind: "chat" },
       scrollbackOffset: 0,
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
-      splitPane: undefined,
       statusNotice: undefined,
       statusNoticeTone: "default",
       statusLine: options.statusLine || {},
@@ -524,19 +492,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setSlashCommandItems(items) {
       store.update({ slashCommandItems: items })
     },
-    setSplitPane(pane) {
-      const width = Math.max(20, Math.floor((process.stdout.columns || 80) / 2) - 4)
-      const lineBudget = Math.max(40, (process.stdout.rows || 40) * splitInactiveLineMultiplier)
-      store.update((state) => ({
-        ...state,
-        splitPane: pane
-          ? {
-              ...pane,
-              committedLines: splitPanePreviewLines(pane.transcript, width, lineBudget),
-            }
-          : undefined,
-      }))
-    },
     setTasks(tasks) {
       store.update({ tasks: visibleTaskRecords(tasks) })
     },
@@ -589,10 +544,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setToolActivities(activities) {
       store.update({ toolActivities: activities })
-    },
-    clearViewport() {
-      instance?.clear()
-      if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H")
     },
     clearTranscriptDisplay() {
       // Bump transcriptGeneration so the Static-backed history remounts fresh —
@@ -765,10 +716,6 @@ function FurnaceApp({
       store.update({ sidebarEnabled: next })
       store.onSidebarToggle?.(next)
     }
-    if (state.splitPane && state.focus !== "input" && key.ctrl && _input === "k") {
-      store.splitHandlers.onToggle?.()
-      return
-    }
     if (key.ctrl && (_input === "t" || _input === "k")) {
       if (state.tasks.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "tasks" ? "input" : "tasks" }))
@@ -855,20 +802,16 @@ function FurnaceApp({
   return (
     <>
       <Box flexDirection="column" width={columns}>
-        {state.splitPane ? (
-          <SplitChatView state={state} />
-        ) : (
-          <LiveChat
-            key={state.transcriptGeneration}
-            committedLines={state.committedLines}
-            flexGrow
-            scrollbackOffset={state.scrollbackOffset}
-            thinking={state.thinking}
-            thinkingMessage={state.thinkingMessage}
-            streamingContent={state.streamingContent}
-            toolActivities={state.toolActivities}
-          />
-        )}
+        <LiveChat
+          key={state.transcriptGeneration}
+          committedLines={state.committedLines}
+          flexGrow
+          scrollbackOffset={state.scrollbackOffset}
+          thinking={state.thinking}
+          thinkingMessage={state.thinkingMessage}
+          streamingContent={state.streamingContent}
+          toolActivities={state.toolActivities}
+        />
         {state.lofiEnabled ? <LofiCorner /> : null}
         {state.forkParentTitle ? (
           <Box paddingX={1}>
@@ -911,7 +854,6 @@ function FurnaceApp({
             onBareTab={(value) => store.onBareTab?.(value) ?? false}
             onAutocompleteHover={(match) => store.onAutocompleteHover?.(match)}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
-            onSplitToggle={state.splitPane ? () => store.splitHandlers.onToggle?.() : undefined}
             onCopy={() => store.onCopy?.()}
             onImageAttach={attachClipboardImage}
             onInterrupt={() => store.onInterrupt?.()}
@@ -965,76 +907,6 @@ function LofiCorner(): React.ReactNode {
   )
 }
 
-function SplitChatView({ state }: { state: UiState }): React.ReactNode {
-  const theme = useTheme()
-  const { columns, rows } = useWindowSize()
-  const splitPane = state.splitPane
-  if (!splitPane) return null
-  const leftActive = splitPane.activeSide === "left"
-  const mainSide: SplitPaneSummary["side"] = splitPane.side === "left" ? "right" : "left"
-  const mainPane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset?: number } = {
-    activeSide: splitPane.activeSide,
-    busy: state.busy,
-    committedLines: state.committedLines,
-    contextTokens: state.contextTokens,
-    contextWindowTokens: state.contextWindowTokens,
-    forkParentTitle: state.forkParentTitle,
-    inputDraft: state.inputDraft,
-    mode: state.mode,
-    queuedCount: state.queuedPrompts.filter((prompt) => !prompt.hidden).length,
-    sessionId: "active",
-    side: mainSide,
-    scrollbackOffset: state.scrollbackOffset,
-    thinking: state.thinking,
-    thinkingMessage: state.thinkingMessage,
-    title: state.title,
-    toolActivities: state.toolActivities,
-    transcript: state.transcript,
-  }
-  const leftPane = splitPane.side === "left" ? { ...splitPane, scrollbackOffset: splitPane.activeSide === "left" ? state.scrollbackOffset : 0 } : mainPane
-  const rightPane = splitPane.side === "right" ? { ...splitPane, scrollbackOffset: splitPane.activeSide === "right" ? state.scrollbackOffset : 0 } : mainPane
-  const paneWidth = Math.max(24, Math.floor(columns / 2))
-  const paneHeight = Math.max(8, rows - 10)
-  return (
-    <Box flexDirection="column" width={columns}>
-      <Box flexDirection="row" width={columns} height={paneHeight}>
-        <SplitPaneView active={leftActive} pane={leftPane} width={paneWidth} height={paneHeight} />
-        <Box width={1} flexDirection="column">
-          <Text color={theme.colors.border}>│</Text>
-        </Box>
-        <SplitPaneView active={!leftActive} pane={rightPane} width={Math.max(24, columns - paneWidth - 1)} height={paneHeight} />
-      </Box>
-    </Box>
-  )
-}
-
-function SplitPaneView({ active, pane, width, height }: { active: boolean; pane: SplitPaneSummary & { committedLines: TranscriptLineData[]; scrollbackOffset?: number }; width: number; height: number }): React.ReactNode {
-  const theme = useTheme()
-  const liveLineBudget = Math.max(1, height - (active ? 3 : 6))
-  return (
-    <Box flexDirection="column" width={width} height={height} borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} paddingX={1}>
-      <Text color={active ? theme.colors.primary : theme.colors.border} bold>{active ? "● " : "○ "}{pane.side}{pane.busy ? " · working" : pane.queuedCount > 0 ? ` · ${pane.queuedCount} queued` : ""}</Text>
-      <LiveChat
-        committedLines={pane.committedLines}
-        compact
-        staticOutput={false}
-        width={Math.max(20, width - 6)}
-        maxLines={liveLineBudget}
-        scrollbackOffset={active ? pane.scrollbackOffset ?? 0 : 0}
-        thinking={pane.thinking}
-        thinkingMessage={pane.thinkingMessage}
-        streamingContent=""
-        toolActivities={pane.toolActivities}
-      />
-      {!active ? (
-        <Box borderStyle="single" borderColor={theme.colors.border} paddingX={1}>
-          <Text color={theme.colors.mutedForeground} wrap="truncate">inactive</Text>
-        </Box>
-      ) : null}
-    </Box>
-  )
-}
-
 function approvalHintItems(): string[] {
   return ["Up/down to navigate", "Enter to select", "Esc to deny"]
 }
@@ -1061,10 +933,9 @@ function hintItemsForState(state: UiState): string[] {
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
   if (state.focus === "tasks" && state.tasks.length > 0) return taskHintItems(state)
   const extras: string[] = []
-  if (state.splitPane) extras.push("Ctrl+K toggle split")
   if (state.planAction) extras.push("Up for plan actions")
   if (state.question) extras.push("Up to answer question")
-  if (!state.splitPane && state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+K tasks")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+K tasks")
   if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
   return [...extras, "Tab to switch mode", "Ctrl+b sidebar", ...hintItems(state.screen.kind)]
 }
@@ -1837,16 +1708,6 @@ function cachedLiveLines(cache: LiveRenderCache, toolActivities: ToolActivity[],
 export function liveStreamingPreview(text: string): string {
   if (text.length <= liveStreamingRenderLimit) return text
   return `… streaming preview truncated for performance; full response is saved when complete …\n\n${text.slice(-liveStreamingRenderLimit)}`
-}
-
-function splitPanePreviewLines(transcript: TranscriptMessage[], width: number, lineBudget: number): TranscriptLineData[] {
-  const startIndex = Math.max(0, transcript.length - splitPaneMessageLimit)
-  const messages = transcript.slice(startIndex).map((message) => {
-    if (typeof message.content !== "string" || message.content.length <= splitPaneMessageCharLimit) return message
-    const content = `… earlier message content hidden in split preview …\n\n${message.content.slice(-splitPaneMessageCharLimit)}`
-    return { ...message, content }
-  })
-  return scrollbackWindow(messages.flatMap((message, index) => messageToLines(message, startIndex + index, width)), 0, lineBudget)
 }
 
 type TranscriptLineData = {

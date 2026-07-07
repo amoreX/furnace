@@ -25,7 +25,6 @@ export function createSessionTerminalBridge(input: {
   pendingPlanActions: Map<string, { onSelect: (action: "execute" | "refine" | "stay") => void; planPath: string }>
   pendingQuestions: Map<string, { request: AskQuestionRequest; resolve: (response: AskQuestionResponse) => void }>
   runtimeUi: Map<string, SessionRuntimeUi>
-  onRuntimeUpdate?: (sessionId: string) => void
   targetSessionId: string
 }): FurnaceTerminal {
   const visible = input.isVisible
@@ -41,7 +40,6 @@ export function createSessionTerminalBridge(input: {
     },
     clearToolActivities() {
       runtimeUiFor(input.runtimeUi, targetSessionId).toolActivities = []
-      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.clearToolActivities()
     },
     clearPlanActions() {
@@ -90,27 +88,23 @@ export function createSessionTerminalBridge(input: {
     setSessionMeta(meta) { if (visible()) terminal.setSessionMeta(meta) },
     setStreamingContent(text) {
       runtimeUiFor(input.runtimeUi, targetSessionId).streamingContent = liveStreamingPreview(text)
-      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setStreamingContent(text)
     },
     setThinking(thinking, message = "Thinking") {
       const runtimeUi = runtimeUiFor(input.runtimeUi, targetSessionId)
       runtimeUi.thinking = thinking
       runtimeUi.thinkingMessage = message
-      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setThinking(thinking, message)
     },
     setTitle(title) { if (visible()) terminal.setTitle(title) },
     setToolActivities(activities) {
       runtimeUiFor(input.runtimeUi, targetSessionId).toolActivities = activities
-      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setToolActivities(activities)
     },
     setTranscript(transcript) {
       const runtimeUi = runtimeUiFor(input.runtimeUi, targetSessionId)
       runtimeUi.streamingContent = ""
       runtimeUi.toolActivities = []
-      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setTranscript(transcript)
     },
     showPlanActions(planPath, onSelect) {

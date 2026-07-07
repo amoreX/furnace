@@ -36,7 +36,7 @@ import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./task-ui-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
-import { createFurnaceTerminal, type FurnaceTerminal, type PinnedChatSummary, type QueuedPrompt, type SplitPaneSummary, type ToolActivity } from "./ui/ink-terminal.js"
+import { createFurnaceTerminal, type FurnaceTerminal, type PinnedChatSummary, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
 import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
 import type { ImageAttachment } from "./utils/images.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
@@ -90,10 +90,6 @@ export async function runInteractive(input: {
   let previewedTheme: string | undefined
   const runningSessionIds = new Set<string>()
   let activeDisplaySessionId = sessionId
-  let splitSessionId: string | undefined
-  let splitActiveSide: "left" | "right" = "left"
-  let splitSide: "left" | "right" = "right"
-  const splitDrafts = new Map<string, string>()
   let pinnedChatIds = normalizePinnedChatIds(input.config.pinnedChatIds)
   const activeAbortControllers = new Map<string, AbortController>()
   const unreadCompletedSessionIds = new Set<string>()
@@ -187,16 +183,8 @@ export async function runInteractive(input: {
       const current = currentPlanModeState(input.store.getActivePath(sessionId)).mode
       void switchMode(current === "plan" ? "agent" : "plan", { reason: "user", seed: direction > 0 ? "plan" : "agent" }).catch((error) => showTransientStatus(formatError(error)))
     },
-    onSplitToggle: () => {
-      if (!splitSessionId) {
-        showTransientStatus("No split open. Type /split to open one.")
-        return
-      }
-      focusSplitSide(splitActiveSide === "left" ? "right" : "left")
-    },
     onInputChange: (value) => {
       if (isCurrentSessionRunning()) return
-      if (splitSessionId) splitDrafts.set(sessionId, value)
       const scope = argumentScopeFor(value)
       if (!scope) {
         if (currentAutocompleteScope !== undefined) {
@@ -284,7 +272,6 @@ export async function runInteractive(input: {
     title: initialSession.title,
     onSubmit: (prompt, images) => {
       const submittedSessionId = sessionId
-      if (splitSessionId) splitDrafts.set(submittedSessionId, "")
       void handleInteractiveSubmit(prompt, images).catch((error) => {
         runningSessionIds.delete(submittedSessionId)
         activeAbortControllers.delete(submittedSessionId)
@@ -322,11 +309,6 @@ export async function runInteractive(input: {
       showTransientStatus("No API key configured. Use /login to set one.")
       return
     }
-    if (command.name === "/split") {
-      handleSplitCommand(command.argument)
-      return
-    }
-
     if (command.name === "/exit" || command.name === "/quit") {
       currentAbortController()?.abort()
       lofi.stop()
@@ -377,10 +359,6 @@ export async function runInteractive(input: {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)
         return
       }
-      if (command.name === "/split") {
-        handleSplitCommand(command.argument)
-        return
-      }
       if (command.name === "/plan" || command.name === "/agent" || command.name === "/mode") {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)
         return
@@ -419,7 +397,6 @@ export async function runInteractive(input: {
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
       activeDisplaySessionId = next.id
-      if (splitSessionId === next.id) closeSplit()
       unreadCompletedSessionIds.delete(next.id)
       terminal.clearTranscriptDisplay()
       refreshCurrentSession()
@@ -830,136 +807,20 @@ export async function runInteractive(input: {
     switchToSession(target.id)
   }
 
-  function handleSplitCommand(argument: string): void {
-    const requested = argument.trim().toLowerCase()
-    if (requested !== "close" && requested !== "off" && (isCurrentSessionRunning() || (splitSessionId ? isSessionRunning(splitSessionId) : false))) {
-      showTransientStatus("Split changes are available after the active agent work finishes.", 6000)
-      return
-    }
-    if (requested === "close" || requested === "off") {
-      closeSplit()
-      showTransientStatus("Split closed.")
-      return
-    }
-    if (requested === "left" || requested === "right") {
-      focusSplitSide(requested)
-      showTransientStatus(`Focused ${requested} split.`)
-      return
-    }
-    if (splitSessionId) {
-      showTransientStatus("A split is already open. Use /split left, /split right, or /split close.", 6000)
-      return
-    }
-    const next = input.store.createSession({ cwd: input.cwd, title: "New Chat" })
-    splitSessionId = next.id
-    splitSide = "right"
-    splitActiveSide = "right"
-    splitDrafts.set(next.id, "")
-    terminal.clearViewport()
-    syncSplitPane()
-    showTransientStatus("Opened split chat (beta feature). Press Ctrl+K to toggle focus; /split close to close.", 7000)
-  }
-
-  function focusSplitSide(side: "left" | "right"): void {
-    splitActiveSide = side
-    if (!splitSessionId) return
-    if (side === splitSide) {
-      const previousActiveSessionId = sessionId
-      splitDrafts.set(previousActiveSessionId, terminalDraftPlaceholder())
-      sessionId = splitSessionId
-      activeDisplaySessionId = sessionId
-      splitSessionId = previousActiveSessionId
-      splitSide = side === "left" ? "right" : "left"
-      terminal.clearTranscriptDisplay()
-      refreshCurrentSession()
-      terminal.setInputDraft(splitDrafts.get(sessionId) || "")
-      restoreSessionRuntimeUi(sessionId)
-      restoreSessionInteractionState(sessionId)
-      syncQueuedPrompts()
-      flushPendingBackgroundPrompts()
-    } else {
-      refreshSplitPane()
-    }
-  }
-
-  function terminalDraftPlaceholder(): string {
-    // The UI reports drafts through onInputChange; this fallback keeps command-only
-    // focus changes safe even when the active draft was empty or unchanged.
-    return splitDrafts.get(sessionId) || ""
-  }
-
-  function closeSplit(): void {
-    if (!splitSessionId) return
-    const closingSessionId = splitSessionId
-    splitDrafts.delete(closingSessionId)
-    splitSessionId = undefined
-    activeDisplaySessionId = sessionId
-    terminal.clearViewport()
-    terminal.setSplitPane(undefined)
-    refreshCurrentSession()
-    terminal.setInputDraft(splitDrafts.get(sessionId) || terminalDraftPlaceholder())
-    restoreSessionRuntimeUi(sessionId)
-    restoreSessionInteractionState(sessionId)
-  }
-
-  function refreshSplitPane(): void {
-    if (!splitSessionId) {
-      terminal.setSplitPane(undefined)
-      return
-    }
-    syncSplitPane()
-  }
-
-  function syncSplitPane(): void {
-    if (!splitSessionId) {
-      terminal.setSplitPane(undefined)
-      return
-    }
-    const session = input.store.getSession(splitSessionId)
-    const state = currentPlanModeState(input.store.getActivePath(splitSessionId))
-    const usage = estimateContextUsageFor(splitSessionId)
-    const runtimeUi = runtimeUiFor(sessionRuntimeUi, splitSessionId)
-    const forkParentTitle = session.relationType === "fork" && session.parentSessionId ? sessionTitleById(input.store, session.parentSessionId) : undefined
-    terminal.setSplitPane({
-      activeSide: splitActiveSide,
-      busy: isSessionRunning(splitSessionId),
-      contextTokens: usage.tokens,
-      contextWindowTokens: usage.window,
-      forkParentTitle,
-      inputDraft: splitDrafts.get(splitSessionId) || "",
-      mode: state.mode,
-      queuedCount: promptQueue(splitSessionId).filter((prompt) => !prompt.hidden).length,
-      sessionId: splitSessionId,
-      side: splitSide,
-      thinking: runtimeUi.thinking || isSessionRunning(splitSessionId),
-      thinkingMessage: runtimeUi.thinkingMessage || "Thinking",
-      title: session.title,
-      toolActivities: runtimeUi.toolActivities,
-      transcript: entriesToTranscript(input.store.getActivePath(splitSessionId)),
-    } satisfies SplitPaneSummary)
-  }
-
   function switchToSession(targetSessionId: string): void {
-    if (targetSessionId === splitSessionId) {
-      showTransientStatus("That chat is already occupied in the other split. Press Ctrl+K to switch to it, or /split close first.", 7000)
-      return
-    }
     unreadCompletedSessionIds.delete(targetSessionId)
     if (targetSessionId === sessionId) {
       refreshCurrentSession()
-      terminal.setInputDraft(splitDrafts.get(sessionId) || "")
       restoreSessionRuntimeUi(targetSessionId)
       restoreSessionInteractionState(targetSessionId)
       return
     }
-    if (splitSessionId) splitDrafts.set(sessionId, terminalDraftPlaceholder())
     sessionId = targetSessionId
     activeDisplaySessionId = targetSessionId
-    if (!splitSessionId) process.stdout.write("\x1b[2J\x1b[H")
+    process.stdout.write("\x1b[2J\x1b[H")
     terminal.clearTranscriptDisplay()
     refreshCurrentSession()
     syncQueuedPrompts()
-    terminal.setInputDraft(splitDrafts.get(sessionId) || "")
     restoreSessionRuntimeUi(targetSessionId)
     restoreSessionInteractionState(targetSessionId)
     flushPendingBackgroundPrompts()
@@ -1086,9 +947,6 @@ export async function runInteractive(input: {
       pendingPlanActions,
       pendingQuestions,
       runtimeUi: sessionRuntimeUi,
-      onRuntimeUpdate: (updatedSessionId) => {
-        if (updatedSessionId === splitSessionId) syncSplitPane()
-      },
       targetSessionId,
     })
   }
@@ -1559,7 +1417,6 @@ export async function runInteractive(input: {
   function syncQueuedPrompts(): void {
     terminal.setQueuedPrompts(promptQueue().filter((prompt) => !prompt.hidden))
     syncPinnedChats()
-    syncSplitPane()
   }
 
   function refreshCurrentSession(): void {
@@ -1572,7 +1429,6 @@ export async function runInteractive(input: {
     syncPinnedChats()
     const usage = estimateContextUsage()
     terminal.setContextUsage(usage.tokens, usage.window)
-    syncSplitPane()
   }
 
   function estimateContextUsage(): { tokens: number; window: number } {

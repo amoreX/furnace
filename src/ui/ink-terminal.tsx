@@ -21,6 +21,7 @@ import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
 import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
 import { createImageAttachment, type ImageAttachment, type ImageSource } from "../utils/images.js"
+import { packageVersion } from "../version.js"
 
 const liveStreamingRenderLimit = 30_000
 const splitPaneMessageLimit = 24
@@ -1753,6 +1754,7 @@ function LiveChat({
                 </Text>
               )}
           <Newline />
+          <Text color={theme.colors.mutedForeground}>v{packageVersion}</Text>
           <Text color={theme.colors.mutedForeground}>Welcome to Furnace. Let's turn up the heat.</Text>
           <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
         </Box>

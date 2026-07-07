@@ -225,7 +225,7 @@ Each tool has a schema, permission metadata, execution logic, and bounded model-
 
 Sessions are stored locally in SQLite at `.furnace/furnace.sqlite` inside the current workspace and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
 
-The `.furnace/` directory is local runtime state and should stay gitignored. Deleting `.furnace/furnace.sqlite` removes saved Furnace conversations for that workspace.
+The `.furnace/` directory is local runtime state and should stay out of version control. In git workspaces, Furnace adds `.furnace/` to the repo's local `.git/info/exclude` file so it does not appear in `git status` without changing committed `.gitignore` files. Deleting `.furnace/furnace.sqlite` removes saved Furnace conversations for that workspace.
 
 Current session behavior:
 
@@ -267,7 +267,7 @@ Local data storage:
 
 - Conversation history, tool calls, tool results, todo state, fork metadata, file-read tracking, and image attachment metadata are stored in `.furnace/furnace.sqlite` for the current workspace.
 - Large compressed tool-output originals are stored separately under `.furnace/context-store/`.
-- `.furnace/` is intended to be local-only state and is ignored by this repo's `.gitignore`.
+- `.furnace/` is intended to be local-only state. Furnace excludes it through local git excludes when possible, and this repo also ignores it in `.gitignore`.
 
 Defaults:
 

@@ -60,6 +60,7 @@ nvm use
   - compression retrieval: `context_retrieve`.
 - `src/permissions.ts` enforces default permissions. Read/search/question/skill/task/todo/web tools are allowed by default; write/edit/bash/skill management ask by default. Plan mode denies most mutations except writing/editing the active plan artifact and safe read-only shell commands.
 - `src/session/store.ts` persists sessions and entries in SQLite using a Pi-style active-leaf tree. It records messages, tool calls/results, compactions, todo state, image attachments, branch/fork metadata, and file-read receipts/snapshots for stale-write warnings.
+- `src/git-exclude.ts` keeps project `.furnace/` runtime state out of `git status` by adding local `.git/info/exclude` entries. Prefer local excludes over modifying a user's committed `.gitignore`.
 - `src/session/context.ts` converts active session entries into model messages and user-visible transcript rows, including image blocks and compacted context references.
 - `src/session/compaction.ts` implements model-assisted session compaction with deterministic fallback, `firstKeptEntryId` semantics, file details, secret redaction, and file-read-state clearing after compaction.
 - `src/compression/*` implements Headroom-lite tool-output compression and request-local compression transforms. Full originals are stored under `.furnace/context-store/` and retrieved by `context_retrieve`.
@@ -117,7 +118,7 @@ nvm use
 - Compress large command/tool outputs before model replay and preserve full originals separately under `.furnace/context-store/`.
 - In plan mode, keep implementation locked down: only the active plan artifact can be written/edited, and only safe read-only shell commands are allowed.
 - Do not request or print secrets.
-- Do not modify `.git/`, secret files, or local SQLite stores unless the user explicitly asks for that exact operation.
+- Do not modify `.git/`, secret files, or local SQLite stores unless the user explicitly asks for that exact operation. The one product exception is Furnace's local `.git/info/exclude` entry for `.furnace/` runtime state.
 
 ## Documentation Expectations
 

@@ -22,8 +22,11 @@ import type {
   QueuedPrompt,
   ToolActivity,
   PlanAction,
-} from "./ink-terminal.js"
-import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./components/prompt-input.js"
+  PromptAutocompleteItem,
+  PromptAutocompleteMatch,
+  ProviderDisplayRow,
+  StatusNoticeTone,
+} from "./terminal-types.js"
 import { resolveTheme } from "./terminal-themes/index.js"
 import {
   getPiMarkdownTheme,
@@ -33,7 +36,7 @@ import {
   getPiStatusStyle,
   getPiBorderColor,
 } from "./pi-themes.js"
-import type { Theme } from "./components/theme-provider.js"
+import type { Theme } from "./themes/types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
 import type { FurnacePreferences, ModelSettings, StatusLinePreferences } from "../preferences.js"
@@ -44,17 +47,6 @@ import type { ImageAttachment, ImageSource } from "../utils/images.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
-
-type StatusNoticeTone = "default" | "warning" | "error" | "success"
-
-type ProviderDisplayRow = {
-  canDelete: boolean
-  id: string
-  displayName: string
-  sourceLabel: string
-  status: "configured" | "unconfigured" | "active"
-  protocol: string
-}
 
 export type CreateFurnaceTerminalOptions = {
   cwd: string

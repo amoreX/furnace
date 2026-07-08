@@ -21,7 +21,7 @@ Near-midnight sessions can technically be "yesterday" while still feeling recent
 
 Current implementation:
 
-- Interactive history formatting lives in `src/ui/ink-terminal.tsx`.
+- Interactive history formatting lives in `src/ui/pi-terminal.ts`.
 - Piped `/history` formatting lives in `src/cli.ts`.
 
 ## Tool Registry Documentation
@@ -49,6 +49,26 @@ Current influences:
 - Headroom: content-type-aware tool-output compression, CCR-style local artifact handles, request-local compression transforms for oversized tool results, and read-result lifecycle compression after a file has gone quiet.
 - Anthropic/OpenRouter: prompt cache-control hints on stable prompt blocks and provider-reported cache read/write usage where available.
 - Cursor and Claude Code: Furnace discovers their existing user, managed, and plugin-cache skill roots so installed skills can be reused locally.
+
+## Pi TUI Adoption
+
+Furnace's interactive UI is built on Pi's `@earendil-works/pi-tui` library. It replaces the previous Ink/React stack with a differential-rendered terminal UI that is closer to the terminal, more reliable, and consistent with Pi's proven interaction patterns.
+
+Harness provenance:
+
+- Pi contributed the `TUI`, `ProcessTerminal`, `Container`, `Input`, `SelectList`, `Markdown`, `Box`, and `Text` primitives used for all interactive rendering.
+- Pi's `InteractiveMode` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` provided the component patterns for user/assistant messages, tool activity indicators, footers, selectors, and dialogs.
+
+Local adaptation:
+
+- The existing `FurnaceTerminal` interface (now in `src/ui/terminal-types.ts`) was kept as the adapter boundary. `src/interactive-session-controller.ts` still drives the UI through that contract, and the engine, session store, permission model, and slash command definitions were not changed.
+- A new `src/ui/pi-terminal.ts` implements `FurnaceTerminal` using Pi's primitives.
+- Furnace's theme definitions are mapped to Pi's `MarkdownTheme`, `EditorTheme`, `SelectListTheme`, and `SettingsListTheme` in `src/ui/pi-themes.ts` so existing user theme preferences remain stable.
+- The Pi TUI package is consumed as an npm dependency and externalized from the esbuild bundle so its native prebuilds are resolved at runtime.
+- `createFurnaceTerminal` is imported dynamically inside `runInteractive` only, so headless and piped modes never load the TUI or its native prebuilds.
+- The previous Ink components under `src/ui/components/` and `src/ui/pi-terminal.ts` were removed once the Pi adapter was wired and tested.
+
+License: Pi's TUI is MIT licensed.
 
 ## Headroom-lite Context Compression
 
@@ -192,7 +212,7 @@ Current implementation:
 - `src/plan-mode.ts` owns mode reconstruction, plan path generation, plan guidance, and execution handoff text.
 - `src/permissions.ts` enforces the mode-aware safety clamp.
 - `src/cli.ts` wires slash commands, mode entries, subagent inheritance, and the execute/refine/stay bridge.
-- `src/ui/ink-terminal.tsx` and `src/ui/components/prompt-input.tsx` render mode labels, Tab cycling, and the post-plan action panel.
+- `src/ui/pi-terminal.ts` and `src/ui/pi-terminal.ts` render mode labels, Tab cycling, and the post-plan action panel.
 
 ## Tool Call Persistence
 
@@ -287,7 +307,7 @@ Current implementation:
 
 - `src/permissions.ts` owns permission rules, default actions, and session-scoped approvals.
 - `src/agent/loop.ts` checks permission before calling `executeToolCall()`.
-- `src/ui/ink-terminal.tsx` renders the themed approval prompt and resolves the pending request.
+- `src/ui/pi-terminal.ts` renders the themed approval prompt and resolves the pending request.
 - `src/cli.ts` keeps one `SessionPermissionStore` for the interactive run and routes `/reset-perms` to the active conversation id.
 
 ## Ask Questions
@@ -316,7 +336,7 @@ Current implementation:
 - `src/questions.ts` owns request normalization and result formatting.
 - `src/tools/registry.ts` registers `ask_question`.
 - `src/agent/loop.ts` passes the question prompt callback into tool execution.
-- `src/ui/ink-terminal.tsx` renders the question panel and resolves the pending request.
+- `src/ui/pi-terminal.ts` renders the question panel and resolves the pending request.
 
 ## Queued Prompts
 
@@ -342,8 +362,8 @@ Current behavior:
 Current implementation:
 
 - `src/cli.ts` owns the interactive queue and drains it FIFO.
-- `src/ui/ink-terminal.tsx` renders the queue panel and input focus switching.
-- `src/ui/components/prompt-input.tsx` supports controlled drafts so queued prompts can be restored for editing.
+- `src/ui/pi-terminal.ts` renders the queue panel and input focus switching.
+- `src/ui/pi-terminal.ts` supports controlled drafts so queued prompts can be restored for editing.
 
 ## Subagent Delegation
 
@@ -372,7 +392,7 @@ Current implementation:
 - `src/tasks/types.ts` defines task records and runner interfaces.
 - `src/tools/registry.ts` registers `task` and `task_status`.
 - `src/cli.ts` wires child session creation, inherited permissions, child `runAgentTurn()` execution, and background completion prompts.
-- `src/ui/ink-terminal.tsx` renders the subagent panel and background-promotion hints.
+- `src/ui/pi-terminal.ts` renders the subagent panel and background-promotion hints.
 - `src/prompts/subagent-system.md` is the child system prompt.
 
 ## Forking And Branch-Aware History

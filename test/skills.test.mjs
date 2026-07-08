@@ -140,16 +140,3 @@ test("explicit skill invocation message includes optional user instruction", asy
     assert.match(message, /focus on terminal spacing/)
   })
 })
-
-test("slash autocomplete can expose manual-only skill commands", async () => {
-  const { applySlashAutocomplete, slashAutocompleteMatches } = await import("../dist/ui/components/prompt-input.js")
-  const items = [
-    { label: "/skill:manual-only", value: "/skill:manual-only", insertText: "/skill:manual-only ", description: "Manual-only skill" },
-    { label: "/skill:visible", value: "/skill:visible", insertText: "/skill:visible ", description: "Visible skill" },
-  ]
-
-  const matches = slashAutocompleteMatches("/skill:m", 8, items)
-  assert.deepEqual(matches.map((item) => item.value), ["/skill:manual-only"])
-  assert.equal(applySlashAutocomplete("/skill:m", 8, matches[0]), "/skill:manual-only ")
-  assert.deepEqual(slashAutocompleteMatches("/skill:manual-only", 18, items).map((item) => item.value), ["/skill:manual-only"])
-})

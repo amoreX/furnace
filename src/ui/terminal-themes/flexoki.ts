@@ -1,4 +1,4 @@
-import type { Theme } from "../components/theme-provider.js"
+import type { Theme } from "../themes/types.js"
 
 export const flexokiTheme: Theme = {
   border: {

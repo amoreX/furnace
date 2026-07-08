@@ -1,4 +1,4 @@
-import type { Theme } from "../components/theme-provider.js"
+import type { Theme } from "../themes/types.js"
 
 const spacing = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 6: 6, 8: 8 }
 const typography = { base: "", bold: true, lg: "bold", sm: "dim", xl: "bold" } as const

@@ -5,7 +5,7 @@ import type {
   SelectListTheme,
   SettingsListTheme,
 } from "@earendil-works/pi-tui"
-import type { Theme } from "./components/theme-provider.js"
+import type { Theme } from "./themes/types.js"
 
 function hexToRgb(hex: string): { b: number; g: number; r: number } | undefined {
   const clean = hex.replace("#", "")

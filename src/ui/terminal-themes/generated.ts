@@ -2,7 +2,7 @@
 // Source: https://github.com/mbadolato/iTerm2-Color-Schemes
 // Converted from iTerm2 YAML color schemes to Furnace Theme objects.
 
-import type { Theme } from "../components/theme-provider.js"
+import type { Theme } from "../themes/types.js"
 
 export const generatedThemes: Theme[] = [
   {"name":"12-bit-rainbow","colors":{"background":"#040404","foreground":"#feffff","muted":"#000000","mutedForeground":"#685656","border":"#685656","primary":"#00b0c0","primaryForeground":"#feffff","secondary":"#20b0c0","secondaryForeground":"#feffff","accent":"#801070","accentForeground":"#feffff","success":"#40d080","successForeground":"#040404","warning":"#e09040","warningForeground":"#feffff","error":"#a03050","errorForeground":"#feffff","info":"#3060b0","infoForeground":"#feffff","selection":"#606060","selectionForeground":"#ffffff","focusRing":"#00b0c0"},"spacing":{"0":0,"1":1,"2":2,"3":3,"4":4,"6":6,"8":8},"typography":{"base":"","bold":true,"lg":"bold","sm":"dim","xl":"bold"},"border":{"color":"#685656","focusColor":"#00b0c0","style":"round"}},

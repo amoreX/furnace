@@ -1,7 +1,7 @@
 import { slashCommandDefinitions } from "./commands.js"
 import type { CustomCommand } from "./custom-commands/types.js"
 import type { Skill } from "./skills/types.js"
-import type { PromptAutocompleteItem } from "./ui/components/prompt-input.js"
+import type { PromptAutocompleteItem } from "./ui/terminal-types.js"
 
 export function slashAutocompleteItems(skills: Skill[], customCmds: CustomCommand[] = []): PromptAutocompleteItem[] {
   return [

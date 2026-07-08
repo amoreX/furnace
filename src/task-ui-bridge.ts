@@ -1,4 +1,5 @@
-import { liveStreamingPreview, type FurnaceTerminal, type ToolActivity } from "./ui/ink-terminal.js"
+import type { FurnaceTerminal, ToolActivity } from "./ui/terminal-types.js"
+import { liveStreamingPreview } from "./ui/streaming.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 

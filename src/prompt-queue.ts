@@ -1,4 +1,4 @@
-import type { QueuedPrompt } from "./ui/ink-terminal.js"
+import type { QueuedPrompt } from "./ui/terminal-types.js"
 import type { ImageAttachment } from "./utils/images.js"
 
 export type PromptQueueInput = string | { hidden?: boolean; images?: ImageAttachment[]; source?: string; text: string }

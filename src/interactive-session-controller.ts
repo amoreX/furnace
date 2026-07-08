@@ -37,7 +37,7 @@ import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./task-ui-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
-import { createFurnaceTerminal, type FurnaceTerminal, type PinnedChatSummary, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
+import type { FurnaceTerminal, PinnedChatSummary, QueuedPrompt, ToolActivity } from "./ui/ink-terminal.js"
 import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
 import type { ImageAttachment } from "./utils/images.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
@@ -144,6 +144,7 @@ export async function runInteractive(input: {
       terminal.setTasks(snapshot.tasks)
     },
   })
+  const { createFurnaceTerminal } = await import("./ui/pi-terminal.js")
   terminal = createFurnaceTerminal({
     cwd: input.cwd,
     inputMode: input.config.inputMode,

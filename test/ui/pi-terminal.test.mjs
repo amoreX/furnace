@@ -3,12 +3,33 @@ import assert from "node:assert/strict"
 
 const { createFurnaceTerminal } = await import("../../dist/ui/pi-terminal.js")
 
+function createMockTerminal() {
+  return {
+    start: () => {},
+    stop: () => {},
+    drainInput: async () => {},
+    write: () => {},
+    moveBy: () => {},
+    hideCursor: () => {},
+    showCursor: () => {},
+    clearLine: () => {},
+    clearFromCursor: () => {},
+    clearScreen: () => {},
+    setTitle: () => {},
+    setProgress: () => {},
+    get columns() { return 80 },
+    get rows() { return 24 },
+    get kittyProtocolActive() { return false },
+  }
+}
+
 test("createFurnaceTerminal returns all required FurnaceTerminal methods", () => {
   const terminal = createFurnaceTerminal({
     cwd: "/tmp",
     model: "openai/gpt-4o",
     modelSettings: {},
     onSubmit: () => {},
+    terminal: createMockTerminal(),
     themeName: "default",
     title: "Test",
   })
@@ -68,6 +89,7 @@ test("setTranscript and setStreamingContent do not throw", () => {
     model: "openai/gpt-4o",
     modelSettings: {},
     onSubmit: () => {},
+    terminal: createMockTerminal(),
     themeName: "default",
     title: "Test",
   })

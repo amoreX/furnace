@@ -13,6 +13,7 @@ import {
   type Component,
   type SelectListTheme,
   type AutocompleteItem,
+  type Terminal,
 } from "@earendil-works/pi-tui"
 import type {
   FurnaceTerminal,
@@ -82,6 +83,7 @@ export type CreateFurnaceTerminalOptions = {
   typingIndicator?: "block" | "underscore" | "bar"
   title: string
   onSubmit: (text: string, images?: ImageAttachment[]) => void
+  terminal?: Terminal
 }
 
 class PromptInput extends Input {
@@ -99,7 +101,7 @@ class PromptInput extends Input {
 }
 
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
-  const terminal = new ProcessTerminal()
+  const terminal = options.terminal ?? new ProcessTerminal()
   const ui = new TUI(terminal, true)
 
   const themeChoice = resolveTheme(options.themeName)

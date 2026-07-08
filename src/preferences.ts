@@ -17,6 +17,7 @@ export type FurnacePreferences = {
   statusShowContext?: boolean
   statusShowContextPercent?: boolean
   statusContextMode?: "off" | "tokens" | "tokens-percent" | "percent"
+  statusShowCost?: boolean
   statusShowCwd?: boolean
   statusShowFast?: boolean
   statusShowForkParent?: boolean
@@ -36,6 +37,7 @@ export type StatusLinePreferences = Pick<FurnacePreferences,
   | "statusShowContext"
   | "statusShowContextPercent"
   | "statusContextMode"
+  | "statusShowCost"
   | "statusShowCwd"
   | "statusShowFast"
   | "statusShowForkParent"

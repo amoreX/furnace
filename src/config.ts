@@ -100,6 +100,7 @@ function statusLinePreferences(preferences: Awaited<ReturnType<typeof loadPrefer
     statusShowContext: preferences.statusShowContext,
     statusShowContextPercent: preferences.statusShowContextPercent,
     statusContextMode: preferences.statusContextMode,
+    statusShowCost: preferences.statusShowCost,
     statusShowCwd: preferences.statusShowCwd,
     statusShowFast: preferences.statusShowFast,
     statusShowForkParent: preferences.statusShowForkParent,

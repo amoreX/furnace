@@ -7,6 +7,7 @@ import { runAgentTurn } from "./agent/loop.js"
 import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand } from "./commands.js"
 import { isApiKeyMissing, loadConfig, type FurnaceConfig } from "./config.js"
+import { calculateUsageCostUsd, summarizeUsageCosts } from "./usage/cost.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { setStoredKey, getStoredKey, removeStoredKey, resolveKeyValue } from "./keys.js"
@@ -1356,42 +1357,24 @@ export async function runInteractive(input: {
 
   async function showCostSummary(): Promise<void> {
     const activePath = input.store.getActivePath(sessionId)
-    type UsageData = { promptTokens?: number; completionTokens?: number; costUsd?: number | null }
-    // Resolve pricing for cost computation
-    const models = await modelListCache.promise.catch(() => [])
-    const modelEntry = models.find((m) => m.id === input.config.model)
-    const pricing = modelEntry?.pricing
-
-    const sumEntries = (entries: ReturnType<typeof input.store.getActivePath>): { prompt: number; completion: number; cost: number; unknown: number } => {
-      let prompt = 0; let completion = 0; let cost = 0; let unknown = 0
-      for (const e of entries.filter((e) => e.type === "message" && e.role === "assistant")) {
-        const u = (e.data as { usage?: UsageData }).usage
-        if (!u) { unknown++; continue }
-        prompt += u.promptTokens ?? 0
-        completion += u.completionTokens ?? 0
-        // Recompute cost with current pricing if costUsd was saved as null
-        if (u.costUsd !== null && u.costUsd !== undefined) {
-          cost += u.costUsd
-        } else if (pricing) {
-          cost += (u.promptTokens ?? 0) * pricing.prompt + (u.completionTokens ?? 0) * pricing.completion
-        }
-      }
-      return { prompt, completion, cost, unknown }
-    }
-
-    const session = sumEntries(activePath)
+    const session = summarizeUsageCosts(activePath)
     const allSessions = input.store.listSessions(input.cwd)
-    const lifetime = { prompt: 0, completion: 0, cost: 0, unknown: 0 }
-    for (const sess of allSessions) {
-      const s = sumEntries(input.store.getActivePath(sess.id))
-      lifetime.prompt += s.prompt; lifetime.completion += s.completion; lifetime.cost += s.cost; lifetime.unknown += s.unknown
-    }
-    const fmt = (n: number): string => `$${n.toFixed(4)}`
-    const hasPricing = Boolean(pricing)
+    const lifetime = summarizeUsageCosts(allSessions.flatMap((sess) => input.store.getActivePath(sess.id)))
     const fmtTokens = (p: number, c: number): string => `${formatTokenCompact(p)} prompt + ${formatTokenCompact(c)} completion = ${formatTokenCompact(p + c)} tokens`
+    const fmtUnknown = (unknown: number): string => unknown > 0 ? ` (${unknown} turn${unknown === 1 ? "" : "s"} with unknown cost)` : ""
+    const providerLines = session.byProvider.length === 0
+      ? ["Providers: none yet"]
+      : [
+        "Providers:",
+        ...session.byProvider.map((provider) => `- ${provider.provider}: ${formatCostUsd(provider.costUsd)} · ${fmtTokens(provider.promptTokens, provider.completionTokens)}${fmtUnknown(provider.unknownCostTurns)}`),
+      ]
     const lines = [
-      `Session:  ${fmtTokens(session.prompt, session.completion)}, ~${hasPricing ? fmt(session.cost) : "?"} USD${session.unknown > 0 ? ` (${session.unknown} turns with unknown cost)` : ""}`,
-      `Lifetime: ${fmtTokens(lifetime.prompt, lifetime.completion)}, ~${hasPricing ? fmt(lifetime.cost) : "?"} USD${lifetime.unknown > 0 ? ` (${lifetime.unknown} turns with unknown cost)` : ""}`,
+      `Session:  ${formatCostUsd(session.costUsd)} · ${fmtTokens(session.promptTokens, session.completionTokens)}${fmtUnknown(session.unknownCostTurns)}`,
+      `Cache:    ${formatTokenCompact(session.cacheReadTokens)} read + ${formatTokenCompact(session.cacheWriteTokens)} written tokens reported by provider`,
+      `Lifetime: ${formatCostUsd(lifetime.costUsd)} · ${fmtTokens(lifetime.promptTokens, lifetime.completionTokens)}${fmtUnknown(lifetime.unknownCostTurns)}`,
+      `Cache:    ${formatTokenCompact(lifetime.cacheReadTokens)} read + ${formatTokenCompact(lifetime.cacheWriteTokens)} written tokens reported by provider`,
+      "",
+      ...providerLines,
     ]
     terminal.setTranscript([...entriesToTranscript(activePath), { role: "assistant", content: lines.join("\n") }])
   }
@@ -1429,6 +1412,7 @@ export async function runInteractive(input: {
     syncPinnedChats()
     const usage = estimateContextUsage()
     terminal.setContextUsage(usage.tokens, usage.window)
+    updateTerminalCostUsage(terminal, input.store, sessionId)
   }
 
   function estimateContextUsage(): { tokens: number; window: number } {
@@ -1527,6 +1511,7 @@ export async function runInteractive(input: {
           if (activeDisplaySessionId === turnSessionId) {
             const usage = estimateContextUsageFor(turnSessionId)
             terminal.setContextUsage(usage.tokens, usage.window)
+            updateTerminalCostUsage(terminal, input.store, turnSessionId)
           }
         }
       }
@@ -1941,14 +1926,24 @@ export async function runSingleTurn(input: {
     throw error
   }
   const assistantText = await visibleAssistantTextForMode(input.cwd, agentResult.content, planState)
+  const pricing = await currentModelPricing(input.config, input.config.model)
 
   const turnUsage = agentResult.usage
-    ? { promptTokens: agentResult.usage.promptTokens, completionTokens: agentResult.usage.completionTokens, costUsd: null as number | null }
+    ? {
+      cacheReadTokens: agentResult.usage.cacheReadTokens,
+      cacheWriteTokens: agentResult.usage.cacheWriteTokens,
+      promptTokens: agentResult.usage.promptTokens,
+      completionTokens: agentResult.usage.completionTokens,
+      costUsd: typeof agentResult.usage.costUsd === "number" ? agentResult.usage.costUsd : calculateUsageCostUsd(agentResult.usage, pricing),
+      model: input.config.model,
+      provider: input.config.provider,
+    }
     : undefined
 
-  input.store.appendMessage(input.sessionId, "assistant", assistantText, { model: input.config.model })
+  input.store.appendMessage(input.sessionId, "assistant", assistantText, { model: input.config.model, usage: turnUsage })
   if (input.terminal) {
     input.terminal.setThinking(false)
+    updateTerminalCostUsage(input.terminal, input.store, input.sessionId)
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     if (planState.mode === "plan" && planState.planPath) {
       input.onPlanReady?.(planState.planPath)
@@ -1958,6 +1953,9 @@ export async function runSingleTurn(input: {
       content: agentResult.content,
       model: input.config.model,
       sessionId: input.sessionId,
+      cacheReadTokens: agentResult.usage?.cacheReadTokens ?? null,
+      cacheWriteTokens: agentResult.usage?.cacheWriteTokens ?? null,
+      costUsd: turnUsage?.costUsd ?? null,
       promptTokens: agentResult.usage?.promptTokens ?? null,
       completionTokens: agentResult.usage?.completionTokens ?? null,
     }
@@ -2235,6 +2233,7 @@ function statusLinePreferencesFromPrefs(prefs: FurnacePreferences): StatusLinePr
     statusShowContext: prefs.statusShowContext,
     statusShowContextPercent: prefs.statusShowContextPercent,
     statusContextMode: prefs.statusContextMode,
+    statusShowCost: prefs.statusShowCost,
     statusShowCwd: prefs.statusShowCwd,
     statusShowFast: prefs.statusShowFast,
     statusShowForkParent: prefs.statusShowForkParent,
@@ -2339,6 +2338,16 @@ function updateTerminalContextUsage(
   terminal?.setContextUsage(estimateRequestTokens(messages, tools), config.modelSettings.contextLength ?? 200000)
 }
 
+function updateTerminalCostUsage(terminal: FurnaceTerminal | undefined, store: SessionStore, sessionId: string): void {
+  if (!terminal) return
+  terminal.setCostUsage(summarizeUsageCosts(store.getActivePath(sessionId)).costUsd)
+}
+
+async function currentModelPricing(config: Awaited<ReturnType<typeof loadConfig>>, modelId: string): Promise<{ prompt: number; completion: number } | undefined> {
+  const models = await listOpenRouterModels(config).catch(() => [])
+  return models.find((model) => model.id === modelId)?.pricing
+}
+
 function formatCompactionSkip(reason: string | undefined): string {
   if (reason === "below_threshold") return "context is below the automatic threshold"
   if (reason === "empty_session") return "session is empty"
@@ -2416,6 +2425,14 @@ function formatTokenCompact(tokens: number): string {
     return Number.isInteger(v) ? `${v}K` : `${v.toFixed(1)}K`
   }
   return String(tokens)
+}
+
+function formatCostUsd(value: number): string {
+  if (value <= 0) return "$0.0000"
+  if (value < 0.0001) return "<$0.0001"
+  if (value < 1) return `$${value.toFixed(4)}`
+  if (value < 100) return `$${value.toFixed(2)}`
+  return `$${Math.round(value).toLocaleString()}`
 }
 
 function simpleDiff(filePath: string, before: string, after: string): string {

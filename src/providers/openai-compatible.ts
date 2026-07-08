@@ -23,7 +23,7 @@ type ChatCompletionChunk = {
     }
     finish_reason?: string | null
   }>
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  usage?: { cost?: number; prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }
   error?: { message?: string }
 }
 
@@ -70,6 +70,19 @@ function buildRequestOptions(provider: ResolvedProvider, settings: ModelSettings
   return options
 }
 
+function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => {
+    const { cacheControl, ...rest } = message
+    if (provider.id === "openrouter" && cacheControl === "ephemeral" && typeof message.content === "string") {
+      return {
+        ...rest,
+        content: [{ type: "text" as const, text: message.content, cache_control: { type: "ephemeral" as const } }],
+      }
+    }
+    return rest
+  })
+}
+
 function parseChunk(data: string): ChatCompletionChunk {
   try {
     return JSON.parse(data) as ChatCompletionChunk
@@ -93,7 +106,7 @@ export function createOpenAICompatibleProvider(): Provider {
         headers: buildHeaders(provider),
         body: JSON.stringify({
           model,
-          messages,
+          messages: prepareMessages(provider, messages),
           ...buildRequestOptions(provider, settings),
           stream: true,
         }),
@@ -142,7 +155,7 @@ export function createOpenAICompatibleProvider(): Provider {
         headers: buildHeaders(provider),
         body: JSON.stringify({
           model,
-          messages,
+          messages: prepareMessages(provider, messages),
           max_tokens: options.maxTokens,
           ...buildRequestOptions(provider, settings),
           stream: false,
@@ -174,7 +187,7 @@ export function createOpenAICompatibleProvider(): Provider {
         headers: buildHeaders(provider),
         body: JSON.stringify({
           model,
-          messages,
+          messages: prepareMessages(provider, messages),
           tools,
           tool_choice: options.toolChoice || "auto",
           ...buildRequestOptions(provider, settings),
@@ -212,7 +225,12 @@ export function createOpenAICompatibleProvider(): Provider {
             if (parsed.error?.message) throw new Error(parsed.error.message)
             const delta = parsed.choices?.[0]?.delta
             if (parsed.usage?.prompt_tokens !== undefined) {
-              usageData = { promptTokens: parsed.usage.prompt_tokens ?? 0, completionTokens: parsed.usage.completion_tokens ?? 0 }
+              usageData = {
+                cacheReadTokens: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0,
+                completionTokens: parsed.usage.completion_tokens ?? 0,
+                costUsd: typeof parsed.usage.cost === "number" ? parsed.usage.cost : undefined,
+                promptTokens: parsed.usage.prompt_tokens ?? 0,
+              }
             }
             if (delta?.content) {
               textContent += delta.content

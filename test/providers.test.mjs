@@ -106,5 +106,61 @@ test("providers", async (t) => {
     assert.equal(anthropic.protocol, "anthropic")
   })
 
+  await t.test("OpenRouter requests serialize cache-control hints", async () => {
+    const { createOpenAICompatibleProvider } = await import("../dist/providers/openai-compatible.js")
+    const originalFetch = globalThis.fetch
+    let body
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 })
+    }
+    try {
+      const provider = createOpenAICompatibleProvider()
+      await provider.completeChat(
+        {
+          id: "openrouter",
+          displayName: "OpenRouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          protocol: "openai-compatible",
+          apiKey: "fake-key",
+        },
+        "test-model",
+        [{ role: "system", content: "stable system", cacheControl: "ephemeral" }],
+        {},
+      )
+      assert.deepEqual(body.messages[0].content, [{ type: "text", text: "stable system", cache_control: { type: "ephemeral" } }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  await t.test("non-OpenRouter compatible requests strip cache-control hints", async () => {
+    const { createOpenAICompatibleProvider } = await import("../dist/providers/openai-compatible.js")
+    const originalFetch = globalThis.fetch
+    let body
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 })
+    }
+    try {
+      const provider = createOpenAICompatibleProvider()
+      await provider.completeChat(
+        {
+          id: "openai",
+          displayName: "OpenAI",
+          baseUrl: "https://api.openai.com/v1",
+          protocol: "openai-compatible",
+          apiKey: "fake-key",
+        },
+        "test-model",
+        [{ role: "system", content: "stable system", cacheControl: "ephemeral" }],
+        {},
+      )
+      assert.deepEqual(body.messages[0], { role: "system", content: "stable system" })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   await rm(tmpHome, { recursive: true, force: true })
 })

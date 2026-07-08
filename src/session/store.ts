@@ -21,7 +21,16 @@ import type {
   TodoStateEntryData,
   ToolCallEntryData,
   ToolResultEntryData,
+  TurnUsage,
 } from "./types.js"
+
+type AppendMessageOptions = {
+  hidden?: boolean
+  images?: ImageAttachment[]
+  model?: string
+  source?: string
+  usage?: TurnUsage
+}
 
 type SessionRow = {
   id: string
@@ -209,7 +218,7 @@ export class SessionStore {
     sessionId: string,
     role: "user" | "assistant",
     content: string,
-    modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string; images?: ImageAttachment[] },
+    modelOrOptions?: string | AppendMessageOptions,
   ): EntryRecord<MessageEntryData> {
     const options = typeof modelOrOptions === "string" ? { model: modelOrOptions } : modelOrOptions || {}
     const { images: imageAttachments, ...entryOptions } = options

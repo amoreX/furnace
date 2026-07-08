@@ -14,8 +14,10 @@ import type { ModelSettings } from "../preferences.js"
 
 // Anthropic message format (internal to this adapter)
 type AnthropicContent =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+
+type AnthropicSystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
 
 type AnthropicMessage = {
   role: "user" | "assistant"
@@ -36,7 +38,7 @@ type AnthropicToolUse = {
 
 // SSE event types from Anthropic streaming
 type AnthropicEvent =
-  | { type: "message_start"; message: { usage?: { input_tokens?: number; output_tokens?: number } } }
+  | { type: "message_start"; message: { usage?: { cache_creation_input_tokens?: number; cache_read_input_tokens?: number; input_tokens?: number; output_tokens?: number } } }
   | { type: "content_block_start"; index: number; content_block: { type: "text" | "tool_use"; id?: string; name?: string } }
   | { type: "content_block_delta"; index: number; delta: { type: "text_delta"; text: string } | { type: "input_json_delta"; partial_json: string } }
   | { type: "content_block_stop"; index: number }
@@ -75,7 +77,9 @@ function buildBody(
   }
 
   if (systemMessages.length > 0) {
-    body.system = systemMessages.join("\n\n")
+    body.system = systemMessages.length === 1 && !systemMessages[0]?.cache_control
+      ? systemMessages[0]?.text ?? ""
+      : systemMessages
   }
 
   if (settings.reasoningEffort && settings.reasoningEffort !== "none") {
@@ -103,16 +107,21 @@ function buildBody(
 }
 
 function convertMessages(messages: ChatMessage[]): {
-  systemMessages: string[]
+  systemMessages: AnthropicSystemBlock[]
   converted: AnthropicMessage[]
 } {
-  const systemMessages: string[] = []
+  const systemMessages: AnthropicSystemBlock[] = []
   const converted: AnthropicMessage[] = []
 
   for (const msg of messages) {
     if (msg.role === "system") {
       if (typeof msg.content === "string") {
-        systemMessages.push(msg.content)
+        systemMessages.push({ type: "text", text: msg.content, ...(msg.cacheControl === "ephemeral" ? { cache_control: { type: "ephemeral" as const } } : {}) })
+      } else if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type !== "text") continue
+          systemMessages.push({ type: "text", text: block.text, ...(block.cache_control ? { cache_control: block.cache_control } : {}) })
+        }
       }
       continue
     }
@@ -160,7 +169,7 @@ function convertMessages(messages: ChatMessage[]): {
 
 function convertContentBlock(block: ContentBlock): AnthropicContent {
   if (block.type === "text") {
-    return { type: "text", text: block.text }
+    return { type: "text", text: block.text, ...(block.cache_control ? { cache_control: block.cache_control } : {}) }
   }
   // image_url → Anthropic image format
   const url = block.image_url.url
@@ -319,6 +328,8 @@ export function createAnthropicProvider(): Provider {
 
             if (event.type === "message_start" && event.message?.usage) {
               usageData = {
+                cacheReadTokens: event.message.usage.cache_read_input_tokens ?? 0,
+                cacheWriteTokens: event.message.usage.cache_creation_input_tokens ?? 0,
                 promptTokens: event.message.usage.input_tokens ?? 0,
                 completionTokens: event.message.usage.output_tokens ?? 0,
               }
@@ -344,6 +355,8 @@ export function createAnthropicProvider(): Provider {
 
             if (event.type === "message_delta" && event.usage?.output_tokens !== undefined) {
               usageData = {
+                cacheReadTokens: usageData?.cacheReadTokens ?? 0,
+                cacheWriteTokens: usageData?.cacheWriteTokens ?? 0,
                 promptTokens: usageData?.promptTokens ?? 0,
                 completionTokens: event.usage.output_tokens,
               }

@@ -46,4 +46,31 @@ test("anthropic adapter", async (t) => {
     // Empty models array falls through to HTTP call which will fail
     await assert.rejects(async () => provider.listModels(resolved))
   })
+
+  await t.test("completeChat serializes cache-control system blocks", async () => {
+    const provider = createAnthropicProvider()
+    const originalFetch = globalThis.fetch
+    let body
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), { status: 200 })
+    }
+    try {
+      await provider.completeChat(
+        {
+          id: "anthropic",
+          displayName: "Anthropic",
+          baseUrl: "https://api.anthropic.com",
+          protocol: "anthropic",
+          apiKey: "fake-key",
+        },
+        "claude-test",
+        [{ role: "system", content: "stable system", cacheControl: "ephemeral" }],
+        {},
+      )
+      assert.deepEqual(body.system, [{ type: "text", text: "stable system", cache_control: { type: "ephemeral" } }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })

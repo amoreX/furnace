@@ -35,7 +35,8 @@ test("model messages include transient runtime context", () => {
 
   assert.equal(messages[0].role, "system")
   assert.equal(messages[0].content, "base system")
-  assert.equal(messages[1].role, "system")
+  assert.equal(messages[0].cacheControl, "ephemeral")
+  assert.equal(messages[1].role, "user")
   assert.match(messages[1].content, /Current year: 2026/)
   assert.deepEqual(messages[2], { role: "user", content: "latest FIFA news" })
 })
@@ -64,7 +65,7 @@ test("hidden messages are replayed to the model but omitted from transcript", ()
 
   assert.deepEqual(entriesToTranscript(entries), [{ role: "user", content: "visible user prompt", imageCount: 0 }])
   assert.deepEqual(entriesToModelMessages("base system", entries), [
-    { role: "system", content: "base system" },
+    { role: "system", content: "base system", cacheControl: "ephemeral" },
     { role: "user", content: "visible user prompt" },
     { role: "user", content: "background subagent completion" },
   ])
@@ -112,7 +113,7 @@ test("model messages replay persisted tool calls and results", () => {
   ])
 
   assert.deepEqual(messages, [
-    { role: "system", content: "base system" },
+    { role: "system", content: "base system", cacheControl: "ephemeral" },
     { role: "user", content: "read notes" },
     {
       role: "assistant",
@@ -290,6 +291,7 @@ test("model messages project latest compaction summary plus kept suffix", () => 
   const messages = entriesToModelMessages("base system", entries)
 
   assert.equal(messages[0].role, "system")
+  assert.equal(messages[0].cacheControl, "ephemeral")
   assert.equal(messages[1].role, "user")
   assert.match(messages[1].content, /Old work was summarized/)
   assert.deepEqual(messages.slice(2), [

@@ -3,12 +3,13 @@ import type { ModelSettings } from "../preferences.js"
 export type Protocol = "openai-compatible" | "anthropic"
 
 export type ContentBlock =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
   | { type: "image_url"; image_url: { url: string } }
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool"
   content: string | ContentBlock[] | null
+  cacheControl?: "ephemeral"
   name?: string
   tool_call_id?: string
   tool_calls?: ChatToolCall[]
@@ -45,7 +46,10 @@ export type ModelInfo = {
 }
 
 export type Usage = {
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
   completionTokens: number
+  costUsd?: number
   promptTokens: number
 }
 

@@ -12,6 +12,10 @@ test("local repo prompts do not force websearch", () => {
   assert.equal(shouldForceWebSearch([{ role: "user", content: "current git status" }]), false)
 })
 
+test("runtime context messages do not force websearch by themselves", () => {
+  assert.equal(shouldForceWebSearch([{ role: "user", content: "<runtime_context>\nlatest, current, recent, today, and now\n</runtime_context>" }]), false)
+})
+
 test("agent turn compacts and retries once after context overflow", async () => {
   const originalFetch = globalThis.fetch
   let calls = 0

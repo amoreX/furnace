@@ -11,6 +11,7 @@ export type AppShellProps = {
 export type AppShellHeaderProps = {
   appName?: string
   contextUsage?: string
+  costUsage?: string
   cwd: string
   model: string
   subtitle?: string
@@ -36,12 +37,12 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
   )
 }
 
-function Header({ appName, contextUsage, cwd, model, settings, status, subtitle, title }: AppShellHeaderProps): React.ReactNode {
+function Header({ appName, contextUsage, costUsage, cwd, model, settings, status, subtitle, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
   const { columns } = useWindowSize()
   const leftHeader = appName ?? ""
   const modelText = model ? truncateMiddle(model, Math.max(1, columns - leftHeader.length - 8)) : ""
-  const statusParts = [contextUsage, settings].filter(Boolean)
+  const statusParts = [contextUsage, costUsage, settings].filter(Boolean)
   const statusText = statusParts.length > 0 ? statusParts.join(" · ") : truncateEnd(status ?? "", 80)
   const locationText = [cwd, title].filter(Boolean).join(" · ")
   return (

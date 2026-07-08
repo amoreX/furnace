@@ -19,11 +19,15 @@ export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[]
 }
 
 export function entriesToModelMessages(systemPrompt: string, entries: EntryRecord[], runtimeContext?: RuntimeContextInput): OpenRouterMessage[] {
-  return [
-    { role: "system", content: systemPrompt },
-    ...(runtimeContext ? [{ role: "system" as const, content: buildRuntimeContext(runtimeContext) }] : []),
-    ...projectEntriesForModel(entries).flatMap((entry) => (isProjectedMessage(entry) ? [entry] : entryToModelMessage(entry))),
-  ]
+  const projectedMessages = projectEntriesForModel(entries).flatMap((entry) => (isProjectedMessage(entry) ? [entry] : entryToModelMessage(entry)))
+  const messages: OpenRouterMessage[] = [{ role: "system", content: systemPrompt, cacheControl: "ephemeral" }, ...projectedMessages]
+  if (!runtimeContext) return messages
+
+  const runtimeMessage: OpenRouterMessage = { role: "user", content: buildRuntimeContext(runtimeContext) }
+  const latestUserIndex = latestUserMessageIndex(projectedMessages)
+  if (latestUserIndex < 0) return [...messages, runtimeMessage]
+  const insertionIndex = 1 + latestUserIndex
+  return [...messages.slice(0, insertionIndex), runtimeMessage, ...messages.slice(insertionIndex)]
 }
 
 export function projectEntriesForModel(entries: EntryRecord[]): Array<EntryRecord | OpenRouterMessage> {
@@ -174,11 +178,20 @@ export function buildRuntimeContext(input: RuntimeContextInput): string {
   })
 
   return [
+    "<runtime_context>",
     "Runtime context:",
     `- Current date/time: ${formatter.format(now)}`,
     `- Current ISO timestamp: ${now.toISOString()}`,
     `- Current year: ${now.getFullYear()}`,
     `- Current workspace: ${input.cwd}`,
     "- Interpret words like latest, current, recent, today, and now relative to this timestamp.",
+    "</runtime_context>",
   ].join("\n")
+}
+
+function latestUserMessageIndex(messages: OpenRouterMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return index
+  }
+  return -1
 }

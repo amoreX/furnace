@@ -37,6 +37,10 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   const tools = input.tools || toolDefinitions
   let iteration = 0
   let overflowRecoveryAttempted = false
+  let accumulatedCacheReadTokens = 0
+  let accumulatedCacheWriteTokens = 0
+  let accumulatedCostUsd = 0
+  let hasActualCostUsd = false
   let accumulatedPromptTokens = 0
   let lastCompletionTokens = 0
 
@@ -62,12 +66,24 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     }
 
     if (response.usage) {
+      accumulatedCacheReadTokens += response.usage.cacheReadTokens ?? 0
+      accumulatedCacheWriteTokens += response.usage.cacheWriteTokens ?? 0
+      if (typeof response.usage.costUsd === "number") {
+        accumulatedCostUsd += response.usage.costUsd
+        hasActualCostUsd = true
+      }
       accumulatedPromptTokens += response.usage.promptTokens
       lastCompletionTokens = response.usage.completionTokens
     }
     if (response.toolCalls.length === 0) {
-      const usage = accumulatedPromptTokens > 0 || lastCompletionTokens > 0
-        ? { promptTokens: accumulatedPromptTokens, completionTokens: lastCompletionTokens }
+      const usage = hasUsage(accumulatedPromptTokens, lastCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
+        ? {
+          cacheReadTokens: accumulatedCacheReadTokens,
+          cacheWriteTokens: accumulatedCacheWriteTokens,
+          costUsd: hasActualCostUsd ? accumulatedCostUsd : undefined,
+          promptTokens: accumulatedPromptTokens,
+          completionTokens: lastCompletionTokens,
+        }
         : undefined
       return { content: response.content, usage }
     }
@@ -114,8 +130,14 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       )
       input.onToolResult?.(call, result.content)
       if (isBackgroundedTaskToolResult(result.name, result.content)) {
-        const usage = accumulatedPromptTokens > 0 || lastCompletionTokens > 0
-          ? { promptTokens: accumulatedPromptTokens, completionTokens: lastCompletionTokens }
+        const usage = hasUsage(accumulatedPromptTokens, lastCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
+          ? {
+            cacheReadTokens: accumulatedCacheReadTokens,
+            cacheWriteTokens: accumulatedCacheWriteTokens,
+            costUsd: hasActualCostUsd ? accumulatedCostUsd : undefined,
+            promptTokens: accumulatedPromptTokens,
+            completionTokens: lastCompletionTokens,
+          }
           : undefined
         return { backgrounded: true, content: "Subagents are running in the background. I'll continue when they finish.", usage }
       }
@@ -134,7 +156,7 @@ function abortError(): DOMException {
 }
 
 export function shouldForceWebSearch(messages: OpenRouterMessage[]): boolean {
-  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user" && !messageContainsRuntimeContext(message))
   const contentText = latestUserMessage
     ? typeof latestUserMessage.content === "string"
       ? latestUserMessage.content
@@ -147,4 +169,12 @@ export function shouldForceWebSearch(messages: OpenRouterMessage[]): boolean {
 
   const isLocalQuestion = /\b(this repo|this repository|codebase|workspace|working tree|git status|branch|commit|diff|file|folder|directory)\b/i.test(contentText)
   return !isLocalQuestion
+}
+
+function hasUsage(promptTokens: number, completionTokens: number, cacheReadTokens: number, cacheWriteTokens: number): boolean {
+  return promptTokens > 0 || completionTokens > 0 || cacheReadTokens > 0 || cacheWriteTokens > 0
+}
+
+function messageContainsRuntimeContext(message: OpenRouterMessage): boolean {
+  return typeof message.content === "string" && message.content.includes("<runtime_context>")
 }

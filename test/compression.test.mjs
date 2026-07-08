@@ -50,3 +50,28 @@ test("request transform compresses oversized historical tool messages only once"
     assert.equal(second.messages[1].content, first.messages[1].content)
   })
 })
+
+test("request transform matures quiet read results into retrievable artifacts", async () => {
+  await withWorkspace(async (cwd) => {
+    const fullRead = Array.from({ length: 320 }, (_, index) => `${index + 1}|line ${index + 1}`).join("\n")
+    const messages = [
+      { role: "system", content: "system" },
+      { role: "assistant", content: null, tool_calls: [{ id: "call_read", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "src/large.ts" }) } }] },
+      { role: "tool", name: "read", tool_call_id: "call_read", content: fullRead },
+      { role: "user", content: "ok" },
+      { role: "assistant", content: "noted" },
+      { role: "user", content: "next" },
+      { role: "assistant", content: "sure" },
+      { role: "user", content: "continue" },
+      { role: "assistant", content: "done" },
+    ]
+
+    const transformed = await applyHeadroomLiteRequestTransforms({ cwd, messages })
+
+    assert.equal(transformed.stats.maturedReadResults, 1)
+    assert.match(transformed.messages[2].content, /Read result matured \(Headroom-lite\)/)
+    assert.match(transformed.messages[2].content, /Path: src\/large\.ts/)
+    assert.match(transformed.messages[2].content, /Full read artifact: ctx_[a-f0-9]{24}/)
+    assert.match(transformed.messages[2].content, /context_retrieve/)
+  })
+})

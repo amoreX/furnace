@@ -33,9 +33,13 @@ export type EntryRecord<TData = unknown> = {
 }
 
 export type TurnUsage = {
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
   completionTokens: number
   costUsd: number | null
+  model?: string
   promptTokens: number
+  provider?: string
 }
 
 export type MessageEntryData = {

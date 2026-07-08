@@ -38,6 +38,7 @@ export type FurnaceTerminal = {
   waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
   setContextUsage(tokens: number, window: number): void
+  setCostUsage(costUsd?: number): void
   setInputDraft(value: string): void
   setInputDisabled(disabled: boolean): void
   setStatusLinePreferences(preferences: StatusLinePreferences): void
@@ -220,6 +221,7 @@ type UiState = {
   sidebarEnabled: boolean
   contextTokens: number
   contextWindowTokens: number
+  costUsageUsd?: number
   contextUsage?: ContextUsage
   cwd: string
   focus: UiFocus
@@ -319,6 +321,7 @@ class UiStore {
       sidebarEnabled: options.sidebarEnabled !== false,
       contextTokens: 0,
       contextWindowTokens: 0,
+      costUsageUsd: undefined,
       contextUsage: undefined,
       cwd: options.cwd,
       focus: "input",
@@ -461,6 +464,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setContextUsage(tokens, window) {
       store.update({ contextTokens: Math.max(0, tokens), contextWindowTokens: Math.max(0, window) })
+    },
+    setCostUsage(costUsd) {
+      store.update({ costUsageUsd: typeof costUsd === "number" ? Math.max(0, costUsd) : undefined })
     },
     setInputDraft(value) {
       store.update({ focus: "input", inputDraft: value })
@@ -642,6 +648,7 @@ function statusLinePreferencesFromPrefs(prefs: import("../preferences.js").Furna
     statusShowContext: prefs.statusShowContext,
     statusShowContextPercent: prefs.statusShowContextPercent,
     statusContextMode: prefs.statusContextMode,
+    statusShowCost: prefs.statusShowCost,
     statusShowCwd: prefs.statusShowCwd,
     statusShowFast: prefs.statusShowFast,
     statusShowForkParent: prefs.statusShowForkParent,
@@ -883,6 +890,7 @@ function FurnaceApp({
           <AppShell.Header
             appName={showStatusPart(state.statusLine, "statusShowAppName") ? "Furnace" : undefined}
             contextUsage={showContextStatus(state.statusLine) ? formatContextUsage(state.contextTokens, state.contextWindowTokens, state.statusLine) : undefined}
+            costUsage={showStatusPart(state.statusLine, "statusShowCost") && typeof state.costUsageUsd === "number" ? formatCostUsd(state.costUsageUsd) : undefined}
             cwd={showStatusPart(state.statusLine, "statusShowCwd") ? shortenHome(state.cwd) : ""}
             model={showStatusPart(state.statusLine, "statusShowModel") ? state.modelDisplayName || state.model : ""}
             settings={formatHeaderSettings(state)}
@@ -2888,6 +2896,7 @@ const SETTINGS_ROWS: Array<{
   { label: "Cwd", prefKey: "statusShowCwd", options: ["on", "off"] },
   { label: "Title", prefKey: "statusShowTitle", options: ["on", "off"] },
   { label: "Context", prefKey: "statusShowContext", options: ["on", "percent", "percent only", "off"] },
+  { label: "Cost", prefKey: "statusShowCost", options: ["on", "off"] },
   { label: "Mode", prefKey: "statusShowMode", options: ["on", "off"] },
   { label: "Window", prefKey: "statusShowWindow", options: ["on", "off"] },
   { label: "Theme", prefKey: "statusShowTheme", options: ["on", "off"] },
@@ -3159,6 +3168,14 @@ function formatContextUsage(tokens: number, window: number, preferences: StatusL
   const base = `${formatTokenCompact(tokens)}/${formatTokenCompact(window)}`
   if (mode !== "tokens-percent" || window <= 0) return base
   return `${base} (${percent.toFixed(1)}%)`
+}
+
+function formatCostUsd(value: number): string {
+  if (value <= 0) return "$0.0000"
+  if (value < 0.0001) return "<$0.0001"
+  if (value < 1) return `$${value.toFixed(4)}`
+  if (value < 100) return `$${value.toFixed(2)}`
+  return `$${Math.round(value).toLocaleString()}`
 }
 
 function formatTokenCompact(value: number): string {

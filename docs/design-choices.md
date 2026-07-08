@@ -46,7 +46,8 @@ Current influences:
 - Pi-style skills: Furnace uses `SKILL.md` directories, explicit `/skill:<name>` invocation, and `disable-model-invocation` manual-only behavior.
 - OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, the idea that subagents are launched through a normal model-callable task tool linked to child sessions, and compact skill guidance plus a `skill` tool.
 - Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, subagent batching/fan-out, background completion re-entry, hidden/scaffolded explicit skill invocation, guarded skill management, and the future direction for SQLite FTS session search.
-- Headroom: content-type-aware tool-output compression, CCR-style local artifact handles, and request-local compression transforms for oversized tool results.
+- Headroom: content-type-aware tool-output compression, CCR-style local artifact handles, request-local compression transforms for oversized tool results, and read-result lifecycle compression after a file has gone quiet.
+- Anthropic/OpenRouter: prompt cache-control hints on stable prompt blocks and provider-reported cache read/write usage where available.
 - Cursor and Claude Code: Furnace discovers their existing user, managed, and plugin-cache skill roots so installed skills can be reused locally.
 
 ## Headroom-lite Context Compression
@@ -79,18 +80,49 @@ Current implementation:
 - `src/compression/request-transform.ts` runs pre-model request compression.
 - `src/tools/registry.ts` integrates oversized tool-output compression and registers `context_retrieve`.
 
-## Runtime Context Injection
+## Token-Saving Request Layout
 
-Every model turn receives a transient runtime-context system message with the current date/time, ISO timestamp, current year, and workspace path.
+Furnace keeps provider requests cache-friendly without hiding important runtime facts from the model.
 
 Reasoning:
 
-Models can answer stale facts from memory unless they know what "latest", "current", "recent", "today", or "now" means for this run. Sending fresh runtime context with each message lets the agent form correct web searches and date-sensitive answers without storing volatile timestamps in the session transcript.
+Repeated full file reads and mutating prompt prefixes silently dominate coding-agent context cost. Headroom's read lifecycle idea is to keep fresh reads verbatim while they are active, then replace old reads with an artifact marker once the file has been quiet. Anthropic and OpenRouter prompt caching reward stable request prefixes, so volatile data should not be prepended ahead of stable system/tool instructions.
+
+Harness provenance:
+
+- Headroom contributed the file-read maturation pattern: preserve full reads locally, but replace older quiet reads in model requests with a retrieval handle and compact preview.
+- Anthropic and OpenRouter contributed the provider-facing `cache_control` pattern for stable prompt sections and cache usage counters.
+- Pi/OpenCode/Hermes influenced the broader direction of treating session history as durable state and provider requests as request-local projections.
+
+Current behavior:
+
+- The durable session transcript still stores full tool results.
+- Before model calls, quiet historical `read` results larger than the maturation threshold are stored under `.furnace/context-store/ctx_<sha>.txt` and replaced with a `Read result matured (Headroom-lite).` marker plus a `context_retrieve` hint.
+- Fresh reads and files with recent read/write/edit activity remain verbatim in the request.
+- The base system prompt is marked cacheable for providers that understand cache-control hints.
+- Volatile runtime context is inserted near the latest user message instead of into the stable system-prefix block.
+- OpenRouter requests serialize cache hints as text content blocks; other OpenAI-compatible providers receive plain messages.
+- Anthropic requests serialize cache hints as system text blocks and record reported cache read/write token counts.
+
+Current implementation:
+
+- `src/compression/request-transform.ts` performs quiet read-result maturation and oversized output compression.
+- `src/session/context.ts` marks the base system prompt as cacheable and places runtime context near the latest user message.
+- `src/providers/openai-compatible.ts` and `src/providers/anthropic.ts` serialize provider-specific cache hints and usage counters.
+- `/cost` displays provider-reported cache read/write tokens when present.
+
+## Runtime Context Injection
+
+Every model turn receives a transient runtime-context message with the current date/time, ISO timestamp, current year, and workspace path.
+
+Reasoning:
+
+Models can answer stale facts from memory unless they know what "latest", "current", "recent", "today", or "now" means for this run. Sending fresh runtime context with each message lets the agent form correct web searches and date-sensitive answers without storing volatile timestamps in the session transcript. The runtime context is intentionally kept out of the stable system-prefix cache block.
 
 Current implementation:
 
 - `src/session/context.ts` builds the runtime context in `buildRuntimeContext()`.
-- `entriesToModelMessages()` injects the runtime-context system message after the base system prompt.
+- `entriesToModelMessages()` injects the runtime-context user message near the latest user message.
 - `src/cli.ts` passes the current workspace when building per-turn model messages.
 
 ## Skills

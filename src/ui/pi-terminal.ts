@@ -190,13 +190,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let streamingContainer = new Container()
   let runResolve: (() => void) | undefined
 
-  // Header shows title, cwd, model, and status.
+  // Header shows only the session title; model/mode live in the footer.
   const rebuildHeader = () => {
     header.clear()
-    const left = currentTitle
-    const right = [currentModelDisplayName, currentMode === "plan" ? "plan" : undefined].filter(Boolean).join(" · ")
-    const headerText = right ? `${left}  ${right}` : left
-    header.addChild(new Text(borderColor(headerText), 0, 0))
+    header.addChild(new Text(borderColor(currentTitle), 0, 0))
   }
 
   // Footer shows cwd, context, cost, lofi, and mode.

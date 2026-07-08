@@ -79,9 +79,6 @@ export class FooterComponent implements Component {
     if (this.data.gitBranch) {
       pwd = `${pwd} (${this.data.gitBranch})`
     }
-    if (this.data.sessionName) {
-      pwd = `${pwd} • ${this.data.sessionName}`
-    }
 
     const statsParts: string[] = []
     if (this.data.inputTokens > 0) statsParts.push(`↑${formatTokens(this.data.inputTokens)}`)

@@ -15,6 +15,7 @@ export type FooterData = {
   contextWindow: number
   contextPercent: number | null
   model: string
+  mode?: string
   lofi?: boolean
 }
 
@@ -84,6 +85,7 @@ export class FooterComponent implements Component {
     if (this.data.inputTokens > 0) statsParts.push(`↑${formatTokens(this.data.inputTokens)}`)
     if (this.data.outputTokens > 0) statsParts.push(`↓${formatTokens(this.data.outputTokens)}`)
     if (this.data.costUsd > 0) statsParts.push(`$${this.data.costUsd.toFixed(4)}`)
+    if (this.data.mode && this.data.mode !== "agent") statsParts.push(this.data.mode)
     if (this.data.lofi) statsParts.push("lofi")
 
     const contextPercent = this.data.contextPercent ?? null

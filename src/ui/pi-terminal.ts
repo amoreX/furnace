@@ -150,7 +150,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
   const footer = new FooterComponent(footerData, theme)
 
-  // Pi-style vertical stack: header, sidebar (optional), chat, status, editor, footer.
+  // Pi-style vertical stack: sidebar (optional), chat, status, editor, footer.
   const renderLayout = () => {
     sidebarContainer.clear()
     if (sidebarEnabled) {
@@ -158,7 +158,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     }
   }
 
-  ui.addChild(header)
   ui.addChild(sidebarContainer)
   ui.addChild(chatContainer)
   ui.addChild(statusContainer)
@@ -202,6 +201,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     footerData.gitBranch = getCurrentGitBranch(options.cwd)
     footerData.sessionName = currentTitle
     footerData.model = currentModelDisplayName
+    footerData.mode = currentMode
     footerData.lofi = lofiEnabled
     if (contextUsage) {
       footerData.contextTokens = contextUsage.tokens

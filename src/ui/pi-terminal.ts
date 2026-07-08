@@ -45,7 +45,7 @@ import { ToolActivityComponent } from "./pi-components/tool-activity.js"
 import type { Theme } from "./themes/types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
-import type { FurnacePreferences, ModelSettings, StatusLinePreferences } from "../preferences.js"
+import type { FurnacePreferences, ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import type { AgentMode } from "../plan-mode.js"
@@ -524,32 +524,64 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     })
   }
 
-  // Selectors and dialogs (minimal implementations; U7 will expand them).
+  // Selectors and dialogs.
   const showModelEditor = (
     choice: ModelChoice,
     settings: ModelSettings,
     onSelect: (model: string, settings: ModelSettings, done: boolean) => void,
     onCancel: () => void,
   ) => {
-    const items: AutocompleteItem[] = [{ value: choice.id, label: choice.name }]
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
-    selector.onSelect = (item) => {
-      onSelect(item.value, settings, true)
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    selector.onCancel = () => {
-      onCancel()
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
+    const supportsReasoning = choice.supportedParameters.includes("reasoning")
+    const supportsFast = choice.supportedParameters.includes("fast")
+    let updatedSettings: ModelSettings = { ...settings }
+
+    const settingItems = [
+      ...(supportsReasoning
+        ? [{
+            id: "reasoning",
+            label: "Reasoning effort",
+            currentValue: settings.reasoningEffort ?? "none",
+            values: ["none", "low", "medium", "high", "xhigh"],
+          }]
+        : []),
+      ...(supportsFast
+        ? [{
+            id: "fast",
+            label: "Fast mode",
+            currentValue: settings.fast ? "on" : "off",
+            values: ["on", "off"],
+          }]
+        : []),
+      { id: "done", label: "Done", currentValue: "", values: [] },
+    ]
+
+    const list = new SettingsList(
+      settingItems,
+      MAX_VISIBLE_SETTINGS_LIST,
+      settingsListTheme,
+      (id, value) => {
+        if (id === "reasoning") updatedSettings.reasoningEffort = value as ReasoningEffort
+        if (id === "fast") updatedSettings.fast = value === "on"
+        if (id === "done") {
+          onSelect(choice.id, updatedSettings, true)
+          editorContainer.clear()
+          editorContainer.addChild(inputRow)
+          ui.setFocus(input)
+          ui.requestRender()
+        }
+      },
+      () => {
+        onCancel()
+        editorContainer.clear()
+        editorContainer.addChild(inputRow)
+        ui.setFocus(input)
+        ui.requestRender()
+      },
+    )
     editorContainer.clear()
-    editorContainer.addChild(selector)
-    ui.setFocus(selector)
+    editorContainer.addChild(new Text(statusStyle.info(`Model: ${choice.name}`), 0, 0))
+    editorContainer.addChild(list)
+    ui.setFocus(list)
     ui.requestRender()
   }
 

@@ -17,7 +17,7 @@
   "scripts": {
     "check-node": "./scripts/with-node22.sh node scripts/ensure-node-version.mjs",
     "dev": "./scripts/with-node22.sh tsx src/cli.ts",
-    "build": "./scripts/with-node22.sh sh -c 'node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --alias:react-devtools-core=./scripts/react-devtools-core-stub.mjs'",
+    "build": "./scripts/with-node22.sh sh -c 'node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --external:@earendil-works/pi-tui --alias:react-devtools-core=./scripts/react-devtools-core-stub.mjs'",
     "start": "./scripts/with-node22.sh node dist/cli.js",
     "typecheck": "./scripts/with-node22.sh tsc -p tsconfig.json --noEmit",
     "test": "npm run build && ./scripts/with-node22.sh node --test",
@@ -43,6 +43,7 @@
   },
   "homepage": "https://github.com/amoreX/furnace#readme",
   "dependencies": {
+    "@earendil-works/pi-tui": "0.80.3",
     "better-sqlite3": "^12.11.1",
     "cli-spinners": "^3.4.0",
     "commander": "^14.0.2",

@@ -1,4 +1,5 @@
 import {
+  Box,
   Container,
   Editor,
   Input,
@@ -506,7 +507,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       ui.requestRender()
     }
     editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.warning(`Approve ${request.toolName}? ${request.args}`), 0, 0))
+    editorContainer.addChild(new Text(statusStyle.warning("Permission required"), 0, 0))
+    const argsBox = new Box(1, 0, bgColor(activeTheme.colors.muted))
+    argsBox.addChild(new Text(fgColor(activeTheme.colors.foreground)(`${request.toolName} ${request.args}`), 0, 0))
+    editorContainer.addChild(argsBox)
     editorContainer.addChild(selector)
     ui.setFocus(selector)
     ui.requestRender()

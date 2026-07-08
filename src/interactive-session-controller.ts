@@ -50,6 +50,7 @@ import {
 import { packageName, packageVersion } from "./version.js"
 
 type ModelListCache = {
+  models?: OpenRouterModel[]
   promise: Promise<OpenRouterModel[]>
   settled: boolean
 }
@@ -59,7 +60,8 @@ function createModelListCache(config: FurnaceConfig): ModelListCache {
   const promise = adapter.listModels(config.providerConfig)
   const cache: ModelListCache = { promise, settled: false }
   promise.then(
-    () => {
+    (models) => {
+      cache.models = models
       cache.settled = true
     },
     () => {
@@ -590,6 +592,7 @@ export async function runInteractive(input: {
       if (cache !== modelListCache) return
       const match = models.find((model) => model.id === input.config.model)
       terminal.setModel(input.config.model, input.config.modelSettings, match?.name)
+      refreshCurrentSession()
     }).catch(() => {
       if (cache !== modelListCache) return
       terminal.setModel(input.config.model, input.config.modelSettings)
@@ -1423,8 +1426,7 @@ export async function runInteractive(input: {
     const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(targetSessionId)))
     const messages = entriesToModelMessages(systemPrompt, input.store.getActivePath(targetSessionId), { cwd: input.cwd })
     const tokens = estimateRequestTokens(messages, toolDefinitions)
-    const settings = resolveCompactionSettings(input.config)
-    return { tokens, window: settings.contextWindow }
+    return { tokens, window: effectiveContextWindow(input.config, modelListCache.models) }
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
@@ -1476,6 +1478,7 @@ export async function runInteractive(input: {
         try {
           await runSingleTurn({
             config: input.config,
+            contextWindow: effectiveContextWindow(input.config, modelListCache.models),
             cwd: input.cwd,
             hiddenUserMessage: next.hidden,
             hiddenUserMessageSource: next.hidden ? next.source || "hidden_prompt" : undefined,
@@ -1743,6 +1746,7 @@ export async function runPiped(input: {
 
 export async function runSingleTurn(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
+  contextWindow?: number
   cwd: string
   hiddenUserMessage?: boolean
   hiddenUserMessageSource?: string
@@ -1752,6 +1756,7 @@ export async function runSingleTurn(input: {
   prompt: string
   sessionId: string
   signal?: AbortSignal
+  skipTitle?: boolean
   onPlanReady?: (planPath: string) => void
   store: SessionStore
   taskRunner?: TaskManager
@@ -1803,7 +1808,7 @@ export async function runSingleTurn(input: {
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     input.terminal.setThinking(true, "Thinking")
   }
-  if (!input.hiddenUserMessage) await maybeTitleSession(input.store, input.sessionId, input.config, input.prompt)
+  if (!input.hiddenUserMessage && !input.skipTitle) await maybeTitleSession(input.store, input.sessionId, input.config, input.prompt)
   input.terminal?.setTitle(input.store.getSession(input.sessionId).title)
 
   const activePath = input.store.getActivePath(input.sessionId)
@@ -1813,16 +1818,17 @@ export async function runSingleTurn(input: {
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
   const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState)
   const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
-  updateTerminalContextUsage(input.terminal, input.config, messages, toolDefinitions)
+  updateTerminalContextUsage(input.terminal, input.config, messages, toolDefinitions, input.contextWindow)
 
   if (input.terminal) input.terminal.setTranscript(transcript)
-  else renderAssistantStart(transcript)
+  else if (input.outputFormat !== "json") renderAssistantStart(transcript)
 
   const toolActivities: ToolActivity[] = []
   const terminal = input.terminal
   let streamingText = ""
   terminal?.setStreamingContent("")
   let agentResult
+  const startedAt = Date.now()
   try {
     agentResult = await runAgentTurn({
     config: input.config,
@@ -1870,7 +1876,7 @@ export async function runSingleTurn(input: {
         tools: activeTools,
       })
       const transformed = await applyHeadroomLiteRequestTransforms({ cwd: input.cwd, messages: compacted })
-      updateTerminalContextUsage(input.terminal, input.config, transformed.messages, activeTools)
+      updateTerminalContextUsage(input.terminal, input.config, transformed.messages, activeTools, input.contextWindow)
       return transformed.messages
     },
     onContextOverflow: (_currentMessages, activeTools) => compactMessagesAfterOverflow({
@@ -1949,15 +1955,35 @@ export async function runSingleTurn(input: {
       input.onPlanReady?.(planState.planPath)
     }
   } else if (input.outputFormat === "json") {
+    const promptTokens = agentResult.usage?.promptTokens ?? null
+    const cacheReadTokens = agentResult.usage?.cacheReadTokens ?? null
+    const cacheWriteTokens = agentResult.usage?.cacheWriteTokens ?? null
+    const completionTokens = agentResult.usage?.completionTokens ?? null
+    const promptTokensIncludeCache = input.config.provider === "openrouter"
+    const freshInputTokens = promptTokens === null
+      ? null
+      : promptTokensIncludeCache
+        ? Math.max(promptTokens - (cacheReadTokens ?? 0), 0)
+        : promptTokens
     const output = {
       content: agentResult.content,
       model: input.config.model,
+      provider: input.config.provider,
       sessionId: input.sessionId,
-      cacheReadTokens: agentResult.usage?.cacheReadTokens ?? null,
-      cacheWriteTokens: agentResult.usage?.cacheWriteTokens ?? null,
+      cacheReadTokens,
+      cacheWriteTokens,
       costUsd: turnUsage?.costUsd ?? null,
-      promptTokens: agentResult.usage?.promptTokens ?? null,
-      completionTokens: agentResult.usage?.completionTokens ?? null,
+      promptTokens,
+      inputTokens: freshInputTokens,
+      completionTokens,
+      totalTokens: promptTokens !== null
+        ? (freshInputTokens ?? 0)
+          + (completionTokens ?? 0)
+          + (cacheReadTokens ?? 0)
+          + (cacheWriteTokens ?? 0)
+        : null,
+      toolCalls: toolActivities.length,
+      elapsedMs: Date.now() - startedAt,
     }
     process.stdout.write(JSON.stringify(output, null, 2) + "\n")
   } else {
@@ -2334,8 +2360,17 @@ function updateTerminalContextUsage(
   config: Awaited<ReturnType<typeof loadConfig>>,
   messages: OpenRouterMessage[],
   tools: OpenRouterToolDefinition[],
+  contextWindow?: number,
 ): void {
-  terminal?.setContextUsage(estimateRequestTokens(messages, tools), config.modelSettings.contextLength ?? 200000)
+  terminal?.setContextUsage(estimateRequestTokens(messages, tools), contextWindow ?? effectiveContextWindow(config))
+}
+
+function effectiveContextWindow(config: Awaited<ReturnType<typeof loadConfig>>, models: OpenRouterModel[] = []): number {
+  const configured = config.modelSettings.contextLength
+  if (typeof configured === "number" && configured > 0) return configured
+  const modelContext = models.find((model) => model.id === config.model)?.contextLength
+  if (typeof modelContext === "number" && modelContext > 0) return modelContext
+  return resolveCompactionSettings(config).contextWindow
 }
 
 function updateTerminalCostUsage(terminal: FurnaceTerminal | undefined, store: SessionStore, sessionId: string): void {

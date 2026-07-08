@@ -71,7 +71,12 @@ function buildRequestOptions(provider: ResolvedProvider, settings: ModelSettings
 }
 
 function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[]): ChatMessage[] {
-  return messages.map((message) => {
+  const prepared = promptCacheDisabled()
+    ? stripPromptCacheControl(messages)
+    : provider.id === "openrouter"
+      ? markLatestUserMessageCacheable(messages)
+      : messages
+  return prepared.map((message) => {
     const { cacheControl, ...rest } = message
     if (provider.id === "openrouter" && cacheControl === "ephemeral" && typeof message.content === "string") {
       return {
@@ -81,6 +86,53 @@ function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[]): C
     }
     return rest
   })
+}
+
+function promptCacheDisabled(): boolean {
+  return process.env.FURNACE_DISABLE_PROMPT_CACHE === "1"
+}
+
+function stripPromptCacheControl(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => {
+    const { cacheControl: _cacheControl, ...rest } = message
+    if (!Array.isArray(rest.content)) return rest
+    return {
+      ...rest,
+      content: rest.content.map((block) => {
+        if (block.type !== "text") return block
+        const { cache_control: _cache_control, ...textBlock } = block
+        return textBlock
+      }),
+    }
+  })
+}
+
+function markLatestUserMessageCacheable(messages: ChatMessage[]): ChatMessage[] {
+  const index = findLatestTextUserMessageIndex(messages)
+  if (index < 0) return messages
+  return messages.map((message, messageIndex) => {
+    if (messageIndex !== index || message.cacheControl === "ephemeral") return message
+    if (typeof message.content === "string") return { ...message, cacheControl: "ephemeral" }
+    if (!Array.isArray(message.content)) return message
+    const blocks = [...message.content]
+    for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
+      const block = blocks[blockIndex]
+      if (block?.type !== "text") continue
+      blocks[blockIndex] = { ...block, cache_control: { type: "ephemeral" } }
+      return { ...message, content: blocks }
+    }
+    return message
+  })
+}
+
+function findLatestTextUserMessageIndex(messages: ChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]
+    if (message?.role !== "user") continue
+    if (typeof message.content === "string" && message.content.trim()) return i
+    if (Array.isArray(message.content) && message.content.some((block) => block.type === "text" && block.text.trim())) return i
+  }
+  return -1
 }
 
 function parseChunk(data: string): ChatCompletionChunk {

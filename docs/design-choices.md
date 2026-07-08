@@ -91,7 +91,7 @@ Repeated full file reads and mutating prompt prefixes silently dominate coding-a
 Harness provenance:
 
 - Headroom contributed the file-read maturation pattern: preserve full reads locally, but replace older quiet reads in model requests with a retrieval handle and compact preview.
-- Anthropic and OpenRouter contributed the provider-facing `cache_control` pattern for stable prompt sections and cache usage counters.
+- Anthropic and OpenRouter contributed the provider-facing `cache_control` pattern for stable prompt sections, latest user-message cache breakpoints, and cache usage counters.
 - Pi/OpenCode/Hermes influenced the broader direction of treating session history as durable state and provider requests as request-local projections.
 
 Current behavior:
@@ -100,9 +100,11 @@ Current behavior:
 - Before model calls, quiet historical `read` results larger than the maturation threshold are stored under `.furnace/context-store/ctx_<sha>.txt` and replaced with a `Read result matured (Headroom-lite).` marker plus a `context_retrieve` hint.
 - Fresh reads and files with recent read/write/edit activity remain verbatim in the request.
 - The base system prompt is marked cacheable for providers that understand cache-control hints.
+- The latest text user message is also marked cacheable for Anthropic/OpenRouter so warm repeated benchmark or tool-loop turns can reuse more of the prompt prefix.
 - Volatile runtime context is inserted near the latest user message instead of into the stable system-prefix block.
 - OpenRouter requests serialize cache hints as text content blocks; other OpenAI-compatible providers receive plain messages.
 - Anthropic requests serialize cache hints as system text blocks and record reported cache read/write token counts.
+- `FURNACE_DISABLE_PROMPT_CACHE=1` strips all Furnace cache-control hints for debugging or provider compatibility checks.
 
 Current implementation:
 

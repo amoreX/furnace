@@ -7,6 +7,7 @@ import { resolve } from "node:path"
 import { Command } from "commander"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { loadConfig, type FurnaceConfig } from "./config.js"
+import { getStoredKey, resolveKeyValue } from "./keys.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
@@ -20,6 +21,8 @@ import type { SessionStore } from "./session/store.js"
 import type { MessageEntryData, SessionRecord } from "./session/types.js"
 import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-commands/loader.js"
 import type { CustomCommand } from "./custom-commands/types.js"
+import { loadCustomProviders } from "./providers/custom.js"
+import { resolveProvider } from "./providers/registry.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
@@ -48,6 +51,10 @@ program
   .option("--session <id>", "resume a specific saved session by id")
   .option("--output-format <format>", "output format for headless mode: text (default) or json")
   .option("--api-key <key>", "override API key for this session (not persisted)")
+  .option("--provider <provider>", "override provider for this session (not persisted)")
+  .option("--model <model>", "override model for this session (not persisted)")
+  .option("--permission-mode <mode>", "permission mode for headless runs: default or bypassPermissions")
+  .option("--no-title", "skip automatic chat title generation")
   .version(packageVersion)
   .addCommand(
     new Command("completion")
@@ -68,13 +75,37 @@ program
         process.stdout.write(script)
       })
   )
-  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string }) => {
+  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string; provider?: string; model?: string; permissionMode?: string; title?: boolean }) => {
     try {
       const config = await loadConfig()
+      if (options.provider?.trim()) {
+        const providerId = options.provider.trim()
+        const customProviders = await loadCustomProviders()
+        const providerDef = resolveProvider(providerId, customProviders)
+        if (!providerDef) throw new Error(`Unknown provider: ${providerId}`)
+        const envKey = providerDef.envVar ? process.env[providerDef.envVar]?.trim() : undefined
+        const storedKey = envKey ? undefined : resolveKeyValue((await getStoredKey(providerId)) || "")
+        const customProvider = customProviders.find((provider) => provider.id === providerId)
+        const customKey = (!envKey && !storedKey && customProvider?.apiKey) ? resolveKeyValue(customProvider.apiKey) : undefined
+        const apiKey = envKey || storedKey || customKey || (config.provider === providerId ? config.apiKey : "")
+        config.provider = providerId
+        config.apiKey = apiKey
+        config.openRouterApiKey = apiKey
+        config.providerConfig = {
+          ...providerDef,
+          apiKey,
+          siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
+          appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
+        }
+      }
       if (options.apiKey?.trim()) {
         config.apiKey = options.apiKey.trim()
         config.openRouterApiKey = options.apiKey.trim()
         config.providerConfig = { ...config.providerConfig, apiKey: options.apiKey.trim() }
+      }
+      if (options.model?.trim()) {
+        config.model = options.model.trim()
+        config.modelSettings = {}
       }
       const cwd = process.cwd()
       const { SessionStore } = await import("./session/store.js")
@@ -92,10 +123,13 @@ program
       }
       const prompt = options.print || promptParts.join(" ")
       const outputFormat = options.outputFormat?.toLowerCase() === "json" ? "json" : "text"
+      const permissions = options.permissionMode === "bypassPermissions"
+        ? new SessionPermissionStore([{ action: "allow", permission: "*", pattern: "*" }])
+        : undefined
 
       try {
         if (prompt.trim()) {
-          await runSingleTurn({ config, cwd, prompt, sessionId: session.id, store, outputFormat })
+          await runSingleTurn({ config, cwd, permissions, prompt, sessionId: session.id, skipTitle: options.title === false, store, outputFormat })
           return
         }
 

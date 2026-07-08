@@ -125,11 +125,53 @@ test("providers", async (t) => {
           apiKey: "fake-key",
         },
         "test-model",
-        [{ role: "system", content: "stable system", cacheControl: "ephemeral" }],
+        [
+          { role: "system", content: "stable system", cacheControl: "ephemeral" },
+          { role: "user", content: "cache this latest prompt" },
+        ],
         {},
       )
       assert.deepEqual(body.messages[0].content, [{ type: "text", text: "stable system", cache_control: { type: "ephemeral" } }])
+      assert.deepEqual(body.messages[1].content, [{ type: "text", text: "cache this latest prompt", cache_control: { type: "ephemeral" } }])
     } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  await t.test("OpenRouter prompt cache can be disabled by env var", async () => {
+    const { createOpenAICompatibleProvider } = await import("../dist/providers/openai-compatible.js")
+    const originalFetch = globalThis.fetch
+    const originalDisable = process.env.FURNACE_DISABLE_PROMPT_CACHE
+    let body
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 })
+    }
+    process.env.FURNACE_DISABLE_PROMPT_CACHE = "1"
+    try {
+      const provider = createOpenAICompatibleProvider()
+      await provider.completeChat(
+        {
+          id: "openrouter",
+          displayName: "OpenRouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          protocol: "openai-compatible",
+          apiKey: "fake-key",
+        },
+        "test-model",
+        [
+          { role: "system", content: "stable system", cacheControl: "ephemeral" },
+          { role: "user", content: "do not cache this prompt" },
+        ],
+        {},
+      )
+      assert.deepEqual(body.messages, [
+        { role: "system", content: "stable system" },
+        { role: "user", content: "do not cache this prompt" },
+      ])
+    } finally {
+      if (originalDisable === undefined) delete process.env.FURNACE_DISABLE_PROMPT_CACHE
+      else process.env.FURNACE_DISABLE_PROMPT_CACHE = originalDisable
       globalThis.fetch = originalFetch
     }
   })
@@ -153,10 +195,14 @@ test("providers", async (t) => {
           apiKey: "fake-key",
         },
         "test-model",
-        [{ role: "system", content: "stable system", cacheControl: "ephemeral" }],
+        [
+          { role: "system", content: "stable system", cacheControl: "ephemeral" },
+          { role: "user", content: "plain user prompt" },
+        ],
         {},
       )
       assert.deepEqual(body.messages[0], { role: "system", content: "stable system" })
+      assert.deepEqual(body.messages[1], { role: "user", content: "plain user prompt" })
     } finally {
       globalThis.fetch = originalFetch
     }

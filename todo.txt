@@ -1,14 +1,12 @@
 ToDo
 
 session management :
-	- ghost tui pinning chats [NEXT NEXT NEXT]
 	- vault typeshi per session
 	- session search / SQLite FTS over messages, tool names, and tool calls
 	- session_search tool to search old sessions and scroll around matches
 
 functionality :
 	- memory long term of sorts
-- Stresstesting to be bug free  [NEXT NEXT NEXT] -> [RELEASE RELEASE RELEASE]
 - Auto doc structure (from harness engineering)
 
 Gimmicks : 

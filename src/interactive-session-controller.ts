@@ -28,6 +28,7 @@ import type { MessageEntryData, SessionRecord } from "./session/types.js"
 import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-commands/loader.js"
 import type { CustomCommand } from "./custom-commands/types.js"
 import { PromptQueueStore, type PromptQueueInput } from "./prompt-queue.js"
+import { generateRepoIndex, shouldOfferRepoIndex } from "./repo-index.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
@@ -102,9 +103,10 @@ export async function runInteractive(input: {
   const sessionRuntimeUi = new Map<string, SessionRuntimeUi>()
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
+  let repoIndexOnboardingRunning = false
   const initialSession = input.store.getSession(sessionId)
   let terminal!: FurnaceTerminal
-  const isCurrentSessionRunning = (): boolean => runningSessionIds.has(sessionId)
+  const isCurrentSessionRunning = (): boolean => repoIndexOnboardingRunning || runningSessionIds.has(sessionId)
   const isSessionRunning = (id: string): boolean => runningSessionIds.has(id)
   const currentAbortController = (): AbortController | undefined => activeAbortControllers.get(sessionId)
   const taskManager: TaskManager = new TaskManager({
@@ -290,6 +292,9 @@ export async function runInteractive(input: {
   applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   syncPersistentStatusNotice()
   syncModelDisplayFromCache()
+  void maybeRunRepoIndexOnboarding().catch((error) => {
+    showTransientStatus(`Repo indexing failed: ${formatError(error)}`, 6000)
+  })
 
   // Non-blocking startup update check
   void checkForUpdate().then((notice) => {
@@ -358,6 +363,10 @@ export async function runInteractive(input: {
         showTransientStatus("/compact is available after the current turn finishes.")
         return
       }
+      if (command.name === "/init") {
+        showTransientStatus("/init is available after the current turn finishes.")
+        return
+      }
       if (command.name === "/fork" || command.name === "/clone") {
         showTransientStatus(`${command.name} is available after the current turn finishes.`)
         return
@@ -413,6 +422,10 @@ export async function runInteractive(input: {
     }
     if (command.name === "/login") {
       await openLoginPanel()
+      return
+    }
+    if (command.name === "/init") {
+      await runRepoIndexInitialization({ manual: true })
       return
     }
     if (command.name === "/settings" || command.name === "/prefs") {
@@ -573,6 +586,55 @@ export async function runInteractive(input: {
   function missingApiKeyNotice(): string | undefined {
     if (!isApiKeyMissing(input.config)) return undefined
     return `No API key configured for ${input.config.providerConfig.displayName}. Type /login to save one to ~/.furnace/auth.json.`
+  }
+
+  async function maybeRunRepoIndexOnboarding(): Promise<void> {
+    if (isApiKeyMissing(input.config)) return
+    if (!(await shouldOfferRepoIndex(input.cwd))) return
+
+    const response = await terminal.requestQuestions({
+      questions: [
+        {
+          allowCustom: false,
+          allowMultiple: false,
+          allowRefuse: false,
+          id: "repo_index",
+          prompt: "Initialize Furnace for this git repo? Furnace will spend a little time learning the codebase and save a local `.furnace/repo-index.md` guide.",
+          options: [
+            { id: "yes", label: "Yes, learn this repo now" },
+            { id: "no", label: "Not now" },
+          ],
+        },
+      ],
+    })
+    const answer = response.answers.find((item) => item.questionId === "repo_index")
+    if (response.rejected || answer?.optionId !== "yes") return
+
+    await runRepoIndexInitialization({ manual: false })
+  }
+
+  async function runRepoIndexInitialization(options: { manual: boolean }): Promise<void> {
+    if (isApiKeyMissing(input.config)) {
+      showTransientStatus("No API key configured. Use /login first, then run /init.", 6000)
+      return
+    }
+
+    repoIndexOnboardingRunning = true
+    terminal.setBusy(true)
+    terminal.setInputDisabled(true)
+    terminal.setThinking(true, "Learning about repo")
+    terminal.setStatusNotice(options.manual ? "Learning about this folder. This may take a little time." : "Learning about repo. This may take a little time.")
+    try {
+      const models = modelListCache.models || await modelListCache.promise.catch(() => [])
+      await generateRepoIndex({ config: input.config, cwd: input.cwd, models })
+      showTransientStatus("Repo index saved to .furnace/repo-index.md.", 6000)
+    } finally {
+      repoIndexOnboardingRunning = false
+      terminal.setInputDisabled(false)
+      terminal.setBusy(false)
+      terminal.setThinking(false)
+      syncPersistentStatusNotice()
+    }
   }
 
   function refreshModelListCache(): void {

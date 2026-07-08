@@ -7,6 +7,7 @@ export type AskQuestionOption = {
 export type AskQuestionItem = {
   allowCustom: boolean
   allowMultiple: boolean
+  allowRefuse?: boolean
   id: string
   options: AskQuestionOption[]
   prompt: string

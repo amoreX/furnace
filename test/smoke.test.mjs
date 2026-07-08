@@ -203,6 +203,19 @@ test("question prompt exposes option, custom, and refusal choices", async () => 
     ["option:0", "custom", "refuse"],
   )
   assert.equal(choices[0].description, "smallest useful version")
+
+  const requiredChoice = questionChoiceItems({
+    id: "repo_index",
+    prompt: "Initialize Furnace?",
+    allowCustom: false,
+    allowMultiple: false,
+    allowRefuse: false,
+    options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }],
+  })
+  assert.deepEqual(
+    requiredChoice.map((choice) => choice.value),
+    ["option:0", "option:1"],
+  )
 })
 
 test("multi-select question prompt exposes a guarded continue choice", async () => {
@@ -290,6 +303,7 @@ test("slash autocomplete filters and inserts command text", async () => {
   assert.equal(isKnownSlashCommand("/agent"), true)
   assert.equal(isKnownSlashCommand("/mode"), true)
   assert.equal(isKnownSlashCommand("/skills"), true)
+  assert.equal(isKnownSlashCommand("/init"), true)
   assert.equal(isKnownSlashCommand("/quit"), true)
   assert.equal(isKnownSlashCommand("/permissions"), true)
   assert.equal(isKnownSlashCommand("/reset-perms"), false)

@@ -34,6 +34,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/lofi", description: "Toggle lofi mode" },
   { name: "/settings", aliases: ["/prefs"], description: "View and change app preferences" },
   { name: "/login", description: "Set or update your API key" },
+  { name: "/init", description: "Learn this repo and write .furnace/repo-index.md" },
   { name: "/permissions", description: "Clear conversation approvals" },
   { name: "/status", description: "Show session status (model, mode, context, cwd)" },
   { name: "/export", description: "Export conversation to file", insertText: "/export ", usage: "/export [json] [path]" },

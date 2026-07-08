@@ -1257,7 +1257,7 @@ export function questionChoiceItems(question: AskQuestionItem, answers: AskQuest
       disabled: answers.length === 0,
     })
   }
-  items.push({ label: "Refuse to answer", value: "refuse", description: "Continue without this answer" })
+  if (question.allowRefuse !== false) items.push({ label: "Refuse to answer", value: "refuse", description: "Continue without this answer" })
   return items
 }
 

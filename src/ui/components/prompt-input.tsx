@@ -532,6 +532,14 @@ export function PromptInput({
   const borderColor = enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border
   const prefixColor = enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground
 
+  if (inputOverride) {
+    return (
+      <Box width={columns} flexDirection="column">
+        {inputOverride}
+      </Box>
+    )
+  }
+
   if (splitMode) {
     const SIDEBAR_WIDTH = 44
     const INPUT_HEIGHT = 9                      // total left panel height (borders included)

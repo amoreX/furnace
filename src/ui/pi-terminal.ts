@@ -595,14 +595,22 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     onClearAll: () => void,
     onCancel: () => void,
   ) => {
-    const items: AutocompleteItem[] = grants.map((g, index) => ({
-      value: String(index),
-      label: g.kind === "allow_all" ? "Allow all" : g.rule.permission,
-    }))
+    const items: AutocompleteItem[] = [
+      ...grants.map((g, index) => ({
+        value: String(index),
+        label: g.kind === "allow_all" ? "Allow all" : g.rule.permission,
+        description: g.kind === "allow_all" ? "All tools" : g.rule.pattern,
+      })),
+      { value: "__clear_all__", label: "Clear all session grants" },
+    ]
     const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
     selector.onSelect = (item) => {
-      const grant = grants[Number(item.value)]
-      if (grant) onRemove(grant)
+      if (item.value === "__clear_all__") {
+        onClearAll()
+      } else {
+        const grant = grants[Number(item.value)]
+        if (grant) onRemove(grant)
+      }
       onCancel()
       editorContainer.clear()
       editorContainer.addChild(inputRow)
@@ -617,7 +625,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       ui.requestRender()
     }
     editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info("Permissions"), 0, 0))
+    editorContainer.addChild(new Text(statusStyle.info("Permissions — select a grant to remove"), 0, 0))
     editorContainer.addChild(selector)
     ui.setFocus(selector)
     ui.requestRender()

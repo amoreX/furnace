@@ -7,15 +7,39 @@ export type RuntimeContextInput = {
 }
 
 export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[] {
-  return entries.flatMap((entry) => {
-    if (entry.type !== "message") return []
-    if (entry.role !== "user" && entry.role !== "assistant") return []
+  const transcript: TranscriptMessage[] = []
+  const pendingToolCalls = new Map<string, TranscriptMessage>()
+  for (const entry of entries) {
+    if (entry.type === "tool_call") {
+      const data = entry.data as ToolCallEntryData
+      const item: TranscriptMessage = {
+        role: "assistant",
+        content: "",
+        toolCall: { args: data.arguments, name: data.name, toolCallId: data.toolCallId },
+      }
+      pendingToolCalls.set(data.toolCallId, item)
+      transcript.push(item)
+      continue
+    }
+    if (entry.type === "tool_result") {
+      const data = entry.data as ToolResultEntryData
+      const item = pendingToolCalls.get(data.toolCallId)
+      if (item?.toolCall) {
+        item.toolCall.result = data.content
+        item.toolCall.isError = data.content.startsWith("Error")
+        pendingToolCalls.delete(data.toolCallId)
+      }
+      continue
+    }
+    if (entry.type !== "message") continue
+    if (entry.role !== "user" && entry.role !== "assistant") continue
 
     const data = entry.data as MessageEntryData
-    if (data.hidden) return []
+    if (data.hidden) continue
     const imageCount = data.images?.length || 0
-    return [{ role: entry.role, content: data.content, imageCount }]
-  })
+    transcript.push({ role: entry.role, content: data.content, imageCount })
+  }
+  return transcript
 }
 
 export function entriesToModelMessages(systemPrompt: string, entries: EntryRecord[], runtimeContext?: RuntimeContextInput): OpenRouterMessage[] {

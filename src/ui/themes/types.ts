@@ -23,6 +23,15 @@ export type ColorTokens = {
   focusRing: string
   selection: string
   selectionForeground: string
+  // Message backgrounds (Pi-style)
+  userMessageBg?: string
+  userMessageText?: string
+  // Tool activity backgrounds (Pi-style)
+  toolPendingBg?: string
+  toolSuccessBg?: string
+  toolErrorBg?: string
+  toolTitle?: string
+  toolOutput?: string
 }
 
 export type SpacingTokens = {

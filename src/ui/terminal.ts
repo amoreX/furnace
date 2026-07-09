@@ -147,6 +147,7 @@ function renderTranscriptArea(transcript: TranscriptMessage[], reserveLines = 0)
 
 function renderTranscript(transcript: TranscriptMessage[], width = Math.max(60, output.columns || 80)): void {
   for (const message of transcript) {
+    if (message.toolCall) continue
     const text = contentToString(message.content)
     if (message.role === "user") renderUserBlock(text, width)
     else renderAssistantBlock(text, width)
@@ -172,6 +173,7 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number): s
   const lines: string[] = []
 
   for (const message of transcript) {
+    if (message.toolCall) continue
     const label = message.role === "user" ? "> user " : "─ assistant "
     // Keep these fixed-area transcript lines plain. They are clipped to the
     // terminal width, and clipping ANSI-colored strings can leak escape codes.

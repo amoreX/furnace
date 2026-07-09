@@ -141,8 +141,18 @@ export type FileReadFileKey = {
   sessionId: string
 }
 
+export type TranscriptToolCall = {
+  args: string
+  isError?: boolean
+  name: string
+  result?: string
+  toolCallId: string
+}
+
 export type TranscriptMessage = {
   role: "user" | "assistant"
   content: string
   imageCount?: number
+  /** When present, this item represents a historical tool execution (rendered pi-style in the TUI). */
+  toolCall?: TranscriptToolCall
 }

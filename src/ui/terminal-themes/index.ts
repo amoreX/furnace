@@ -27,6 +27,44 @@ const typography = {
   xl: "bold",
 } as const
 
+export const piDarkTheme: Theme = {
+  border: { color: "#5f87ff", focusColor: "#00d7ff", style: "round" },
+  colors: {
+    accent: "#8abeb7",
+    accentForeground: "#18181e",
+    background: "#18181e",
+    border: "#5f87ff",
+    error: "#cc6666",
+    errorForeground: "#18181e",
+    focusRing: "#00d7ff",
+    foreground: "#d4d4d4",
+    info: "#00d7ff",
+    infoForeground: "#18181e",
+    muted: "#343541",
+    mutedForeground: "#808080",
+    primary: "#5f87ff",
+    primaryForeground: "#18181e",
+    secondary: "#b5bd68",
+    secondaryForeground: "#18181e",
+    selection: "#3a3a4a",
+    selectionForeground: "#d4d4d4",
+    success: "#b5bd68",
+    successForeground: "#18181e",
+    warning: "#ffff00",
+    warningForeground: "#18181e",
+    userMessageBg: "#343541",
+    userMessageText: "#d4d4d4",
+    toolPendingBg: "#282832",
+    toolSuccessBg: "#283228",
+    toolErrorBg: "#3c2828",
+    toolTitle: "#d4d4d4",
+    toolOutput: "#808080",
+  },
+  name: "pi-dark",
+  spacing,
+  typography,
+}
+
 export const defaultTheme: Theme = {
   border: { color: "#4B5563", focusColor: "#8B5CF6", style: "round" },
   colors: {
@@ -245,6 +283,7 @@ export const gruvboxTheme: Theme = {
 }
 
 export const themeChoices: ThemeChoice[] = [
+  { name: "pi-dark", displayLabel: "Pi Dark", description: "Exact Pi dark palette", theme: piDarkTheme },
   { name: "synthwave-84", displayLabel: "Synthwave '84", description: "Retro neon glow palette", theme: extraThemes[7]! },
   { name: "flexoki", displayLabel: "Flexoki", description: "Warm, low-contrast palette", theme: flexokiTheme },
   { name: "default", displayLabel: "Default", description: "Default TermCN palette", theme: defaultTheme },
@@ -282,7 +321,7 @@ export const themeChoices: ThemeChoice[] = [
 
 export function resolveTheme(name: string | undefined): ThemeChoice {
   const normalized = normalizeThemeName(name || "")
-  return themeChoices.find((choice) => choice.name === normalized) || themeChoices[0]!
+  return themeChoices.find((choice) => choice.name === normalized) || themeChoices.find((choice) => choice.name === "pi-dark") || themeChoices[0]!
 }
 
 export function findTheme(name: string): ThemeChoice | undefined {

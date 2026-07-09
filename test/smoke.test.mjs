@@ -25,12 +25,12 @@ test("termcn theme registry exposes all bundled themes", async () => {
   const { resolveTheme, themeChoices } = await import("../dist/ui/terminal-themes/index.js")
   const names = themeChoices.map((theme) => theme.name)
 
-  // synthwave-84 is the default (first entry)
-  assert.equal(names[0], "synthwave-84")
-  assert.equal(resolveTheme(undefined).name, "synthwave-84")
+  // pi-dark is the default (first entry) to match Pi's exact palette
+  assert.equal(names[0], "pi-dark")
+  assert.equal(resolveTheme(undefined).name, "pi-dark")
 
   // Core hand-crafted themes must be present
-  const core = ["synthwave-84", "flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
+  const core = ["pi-dark", "synthwave-84", "flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
   for (const name of core) {
     assert.equal(resolveTheme(name).name, name)
   }

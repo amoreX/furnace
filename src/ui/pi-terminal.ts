@@ -1,23 +1,60 @@
+/**
+ * Furnace interactive terminal, composed exactly like pi's interactive mode
+ * (https://github.com/earendil-works/pi — MIT License, Copyright (c) 2025
+ * Mario Zechner). Layout, components, streaming, tool rendering, status
+ * indicators, and selector chrome mirror pi's interactive-mode.ts; the data
+ * flows through furnace's FurnaceTerminal contract and furnace's own themes.
+ */
 import {
-  Box,
   Container,
-  Editor,
   Input,
   Key,
-  Markdown,
-  type MarkdownTheme,
   matchesKey,
   ProcessTerminal,
   SelectList,
   SettingsList,
+  setKeybindings,
   Spacer,
   Text,
+  TruncatedText,
   TUI,
-  type Component,
-  type SelectListTheme,
   type AutocompleteItem,
+  type Component,
   type Terminal,
 } from "@earendil-works/pi-tui"
+import {
+  getEditorTheme,
+  getMarkdownTheme,
+  getSelectListTheme,
+  getSettingsListTheme,
+  initTheme,
+  onThemeChange,
+  setTheme as setPiTheme,
+  theme,
+} from "./pi/theme.js"
+import { KeybindingsManager } from "./pi/keybindings.js"
+import { FooterDataProvider } from "./pi/footer-data-provider.js"
+import {
+  FooterComponent,
+  type AgentSession as FooterAgentSession,
+  type FooterContextUsage,
+  type FooterModel,
+  type FooterSessionEntry,
+} from "./pi/components/footer.js"
+import { CustomEditor } from "./pi/components/custom-editor.js"
+import { DynamicBorder } from "./pi/components/dynamic-border.js"
+import { keyHint, keyText, rawKeyHint } from "./pi/components/keybinding-hints.js"
+import {
+  IdleStatus,
+  WorkingStatusIndicator,
+  type StatusIndicator,
+} from "./pi/components/status-indicator.js"
+import { UserMessageComponent } from "./pi/components/user-message.js"
+import { AssistantMessageComponent, type AssistantMessage } from "./pi/components/assistant-message.js"
+import { ToolExecutionComponent } from "./pi/components/tool-execution.js"
+import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
+import { resolveTheme } from "./terminal-themes/index.js"
+import { packageVersion } from "../version.js"
 import type {
   FurnaceTerminal,
   ModelChoice,
@@ -30,20 +67,6 @@ import type {
   ProviderDisplayRow,
   StatusNoticeTone,
 } from "./terminal-types.js"
-import { resolveTheme } from "./terminal-themes/index.js"
-import {
-  getPiMarkdownTheme,
-  getPiEditorTheme,
-  getPiSelectListTheme,
-  getPiSettingsListTheme,
-  getPiStatusStyle,
-  getPiBorderColor,
-} from "./pi-themes.js"
-import { AssistantMessageComponent, bgColor, fgColor, UserMessageComponent } from "./pi-components/messages.js"
-import { FooterComponent, getCurrentGitBranch, type FooterData } from "./pi-components/footer.js"
-import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
-import { ToolActivityComponent } from "./pi-components/tool-activity.js"
-import type { Theme } from "./themes/types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
 import type { FurnacePreferences, ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
@@ -54,6 +77,53 @@ import type { ImageAttachment, ImageSource } from "../utils/images.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
+
+/** Pi's Expandable contract (interactive-mode.ts). */
+interface Expandable {
+  setExpanded(expanded: boolean): void
+}
+
+function isExpandable(obj: unknown): obj is Expandable {
+  return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof (obj as Expandable).setExpanded === "function"
+}
+
+/** FURNACE banner from main's ink terminal, rendered width-aware in the header. */
+const FURNACE_BANNER = [
+  "███████╗██╗   ██╗██████╗ ███╗   ██╗███████╗ ██████╗███████╗",
+  "██╔════╝██║   ██║██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
+  "█████╗  ██║   ██║██████╔╝██╔██╗ ██║███████╗██║     █████╗  ",
+  "██╔══╝  ██║   ██║██╔══██╗██║╚██╗██║██╔══██║██║     ██╔══╝  ",
+  "██║     ╚██████╔╝██║  ██║██║ ╚████║██║  ██║╚██████╗███████╗",
+  "╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝",
+]
+const FURNACE_BANNER_WIDTH = 65
+
+class FurnaceBannerComponent implements Component {
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    if (width >= FURNACE_BANNER_WIDTH) {
+      return FURNACE_BANNER.map((row) => ` ${theme.bold(theme.fg("accent", row))}`)
+    }
+    return [` ${theme.bold(theme.fg("accent", "FURNACE"))}`]
+  }
+}
+
+/** Pi's ExpandableText (interactive-mode.ts) — used for the startup header. */
+class ExpandableText extends Text implements Expandable {
+  private readonly getCollapsedText: () => string
+  private readonly getExpandedText: () => string
+
+  constructor(getCollapsedText: () => string, getExpandedText: () => string, expanded = false, paddingX = 0, paddingY = 0) {
+    super(expanded ? getExpandedText() : getCollapsedText(), paddingX, paddingY)
+    this.getCollapsedText = getCollapsedText
+    this.getExpandedText = getExpandedText
+  }
+
+  setExpanded(expanded: boolean): void {
+    this.setText(expanded ? this.getExpandedText() : this.getCollapsedText())
+  }
+}
 
 export type CreateFurnaceTerminalOptions = {
   cwd: string
@@ -86,227 +156,335 @@ export type CreateFurnaceTerminalOptions = {
 }
 
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
+  // Theme must be initialized before any component reads the global theme proxy.
+  initTheme(resolveTheme(options.themeName).name)
+
+  const keybindings = KeybindingsManager.create()
+  setKeybindings(keybindings)
+
   const terminal = options.terminal ?? new ProcessTerminal()
   const ui = new TUI(terminal, true)
 
-  const themeChoice = resolveTheme(options.themeName)
-  const theme = themeChoice.theme
-  const markdownTheme = getPiMarkdownTheme(theme)
-  const editorTheme = getPiEditorTheme(theme)
-  const selectListTheme = getPiSelectListTheme(theme)
-  const settingsListTheme = getPiSettingsListTheme(theme)
-  const statusStyle = getPiStatusStyle(theme)
-  const borderColor = getPiBorderColor(theme)
+  // ---------------------------------------------------------------------------
+  // Session state mirrored into the pi footer
+  // ---------------------------------------------------------------------------
 
-  const header = new Container()
-  const chatContainer = new Container()
-  const statusContainer = new Container()
-  const editorContainer = new Container()
-  const sidebar = new Container()
-  const sidebarContainer = new Container()
-  const inputRow = new Container()
-  const input = new Editor(ui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 10 })
-  const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
-  input.setAutocompleteProvider(slashProvider)
-
-  // Global keybindings: interrupt, clear input, clear screen.
-  ui.addInputListener((data) => {
-    if (matchesKey(data, Key.ctrl("c"))) {
-      options.onInterrupt?.()
-      return { consume: true }
-    }
-    if (matchesKey(data, Key.ctrl("u"))) {
-      input.setText("")
-      ui.requestRender()
-      return { consume: true }
-    }
-    if (matchesKey(data, Key.ctrl("l"))) {
-      ui.requestRender()
-      return { consume: true }
-    }
-    return undefined
-  })
-
-  let activeTheme = theme
-  let activeMarkdownTheme = markdownTheme
-  let activeSelectListTheme = selectListTheme
-
-  inputRow.addChild(input)
-  editorContainer.addChild(inputRow)
-
-  let sidebarEnabled = options.sidebarEnabled ?? false
-
-  const footerData: FooterData = {
-    cwd: options.cwd,
-    gitBranch: getCurrentGitBranch(options.cwd),
-    sessionName: options.title,
-    inputTokens: 0,
-    outputTokens: 0,
-    costUsd: 0,
-    contextTokens: 0,
-    contextWindow: 0,
-    contextPercent: null,
-    model: options.model,
-  }
-  const footer = new FooterComponent(footerData, theme)
-
-  // Pi-style vertical stack: sidebar (optional), chat, status, editor, footer.
-  const renderLayout = () => {
-    sidebarContainer.clear()
-    if (sidebarEnabled) {
-      sidebarContainer.addChild(sidebar)
-    }
-  }
-
-  ui.addChild(sidebarContainer)
-  ui.addChild(chatContainer)
-  ui.addChild(statusContainer)
-  ui.addChild(editorContainer)
-  ui.addChild(footer)
-  let inputDisabled = false
-  let busy = false
-  let thinking = false
-  let thinkingMessage = "Thinking"
-  let lofiEnabled = false
   let currentTitle = options.title
   let currentModel = options.model
-  let currentModelDisplayName = options.model
+  let currentModelSettings: ModelSettings = { ...options.modelSettings }
   let currentMode: AgentMode = "agent"
-  let currentPlanPath: string | undefined
+  let lofiEnabled = false
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
-  let statusNotice: { content: string; tone: StatusNoticeTone } | undefined
-  let slashCommandItems: PromptAutocompleteItem[] = []
-  let pinnedChats: PinnedChatSummary[] = []
-  let queuedPrompts: QueuedPrompt[] = []
-  let toolActivities: ToolActivity[] = []
-  let tasks: TaskRecord[] = []
-  let sessionMeta: { forkParentTitle?: string; title: string } | undefined
-  let statusLinePreferences: StatusLinePreferences = options.statusLine ?? {}
 
-  let imageAttachments: ImageAttachment[] = []
-  let streamingComponent: AssistantMessageComponent | undefined
-  let streamingContainer = new Container()
-  let runResolve: (() => void) | undefined
-
-  // Header shows only the session title; model/mode live in the footer.
-  const rebuildHeader = () => {
-    header.clear()
-    header.addChild(new Text(borderColor(currentTitle), 0, 0))
+  const parseModelRef = (ref: string): { provider: string; id: string } => {
+    const slash = ref.indexOf("/")
+    if (slash === -1) return { provider: "", id: ref }
+    return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) }
   }
 
-  // Footer shows cwd, context, cost, lofi, and mode.
-  const rebuildFooter = () => {
-    footerData.cwd = options.cwd
-    footerData.gitBranch = getCurrentGitBranch(options.cwd)
-    footerData.sessionName = currentTitle
-    footerData.model = currentModelDisplayName
-    footerData.mode = currentMode
-    footerData.lofi = lofiEnabled
-    if (contextUsage) {
-      footerData.contextTokens = contextUsage.tokens
-      footerData.contextWindow = contextUsage.window
-      footerData.contextPercent = (contextUsage.tokens / contextUsage.window) * 100
-    } else {
-      footerData.contextTokens = 0
-      footerData.contextWindow = 0
-      footerData.contextPercent = null
+  const footerModel = (): FooterModel => {
+    const { provider, id } = parseModelRef(currentModel)
+    return {
+      id,
+      provider,
+      contextWindow: contextUsage?.window ?? 0,
+      reasoning: currentModelSettings.reasoningEffort !== undefined,
     }
-    footerData.costUsd = costUsd ?? 0
-    footer.setData(footerData)
   }
 
-  rebuildHeader()
-  rebuildFooter()
-  renderLayout()
-
-  // Wire input submission.
-  input.onSubmit = (text) => {
-    if (inputDisabled) return
-    const trimmed = text.trim()
-    if (!trimmed) return
-    options.onSubmit(trimmed, imageAttachments)
-    imageAttachments = []
-    input.setText("")
+  const footerSession: FooterAgentSession = {
+    get state() {
+      return {
+        model: footerModel(),
+        thinkingLevel: thinkingLevelFromSettings(currentModelSettings),
+      }
+    },
+    sessionManager: {
+      getEntries(): FooterSessionEntry[] {
+        if (costUsd === undefined) return []
+        return [
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: costUsd } },
+            },
+          },
+        ]
+      },
+      getCwd: () => options.cwd,
+      getSessionName: () => currentTitle,
+    },
+    modelRegistry: {
+      isUsingOAuth: () => false,
+    },
+    getContextUsage(): FooterContextUsage | undefined {
+      if (!contextUsage || contextUsage.window <= 0) return undefined
+      return {
+        tokens: contextUsage.tokens,
+        contextWindow: contextUsage.window,
+        percent: (contextUsage.tokens / contextUsage.window) * 100,
+      }
+    },
   }
 
-  input.onChange = (value) => {
-    options.onInputChange?.(value)
+  // ---------------------------------------------------------------------------
+  // Layout — mirrors pi interactive-mode init(): header, chat, pending,
+  // status, widgets above, editor, widgets below, footer.
+  // ---------------------------------------------------------------------------
+
+  const headerContainer = new Container()
+  const sidebarContainer = new Container()
+  const chatContainer = new Container()
+  const pendingMessagesContainer = new Container()
+  const statusContainer = new Container()
+  const widgetContainerAbove = new Container()
+  const editorContainer = new Container()
+  const widgetContainerBelow = new Container()
+
+  const editor = new CustomEditor(ui, getEditorTheme(), keybindings, {
+    paddingX: 1,
+    autocompleteMaxVisible: 10,
+  })
+  const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
+  editor.setAutocompleteProvider(slashProvider)
+  editorContainer.addChild(editor)
+
+  const footerDataProvider = new FooterDataProvider(options.cwd)
+  const footer = new FooterComponent(footerSession, footerDataProvider)
+
+  // Startup header: FURNACE banner + version, then pi-style keybinding hints.
+  const logo = () => theme.fg("dim", `v${packageVersion}`)
+  const expandedInstructions = () =>
+    [
+      keyHint("app.interrupt", "to interrupt"),
+      keyHint("app.clear", "to clear"),
+      rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
+      keyHint("app.exit", "to exit (empty)"),
+      keyHint("app.tools.expand", "to expand tools"),
+      keyHint("app.editor.external", "for external editor"),
+      rawKeyHint("/", "for commands"),
+      keyHint("app.message.dequeue", "to edit all queued messages"),
+      rawKeyHint("drop files", "to attach"),
+    ].join("\n")
+  const compactInstructions = () =>
+    [
+      keyHint("app.interrupt", "interrupt"),
+      rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
+      rawKeyHint("/", "commands"),
+      keyHint("app.tools.expand", "more"),
+    ].join(theme.fg("muted", " · "))
+  const builtInHeader = new ExpandableText(
+    () => `${logo()}\n${compactInstructions()}`,
+    () => `${logo()}\n${expandedInstructions()}`,
+    false,
+    1,
+    0,
+  )
+  headerContainer.addChild(new Spacer(1))
+  headerContainer.addChild(new FurnaceBannerComponent())
+  headerContainer.addChild(new Spacer(1))
+  headerContainer.addChild(builtInHeader)
+  headerContainer.addChild(new Spacer(1))
+
+  // Widget containers default to a single spacer, like pi's renderWidgets().
+  widgetContainerAbove.addChild(new Spacer(1))
+
+  ui.addChild(headerContainer)
+  ui.addChild(sidebarContainer)
+  ui.addChild(chatContainer)
+  ui.addChild(pendingMessagesContainer)
+  ui.addChild(statusContainer)
+  ui.addChild(widgetContainerAbove)
+  ui.addChild(editorContainer)
+  ui.addChild(widgetContainerBelow)
+  ui.addChild(footer)
+  ui.setFocus(editor)
+
+  terminal.setTitle(`${currentTitle} — furnace`)
+
+  // ---------------------------------------------------------------------------
+  // Status indicators (pi's showStatusIndicator/clearStatusIndicator)
+  // ---------------------------------------------------------------------------
+
+  const idleStatus = new IdleStatus()
+  let activeStatusIndicator: StatusIndicator | undefined
+  let statusNoticeText: Text | undefined
+  let statusNotice: { content: string; tone: StatusNoticeTone } | undefined
+
+  const rebuildStatusContainer = () => {
+    statusContainer.clear()
+    if (activeStatusIndicator) {
+      statusContainer.addChild(activeStatusIndicator)
+    } else if (ui.getClearOnShrink()) {
+      statusContainer.addChild(idleStatus)
+    }
+    if (statusNotice) {
+      const tone = statusNotice.tone
+      const color = tone === "error" ? "error" : tone === "warning" ? "warning" : tone === "success" ? "success" : "dim"
+      statusNoticeText = new Text(theme.fg(color, statusNotice.content), 1, 0)
+      statusContainer.addChild(statusNoticeText)
+    }
   }
 
-  // Rebuild transcript from TranscriptMessage array.
+  const showStatusIndicator = (indicator: StatusIndicator) => {
+    activeStatusIndicator?.dispose()
+    activeStatusIndicator = indicator
+    rebuildStatusContainer()
+  }
+
+  const clearStatusIndicator = () => {
+    activeStatusIndicator?.dispose()
+    activeStatusIndicator = undefined
+    rebuildStatusContainer()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chat rendering — mirrors pi's addMessageToChat/renderSessionItems
+  // ---------------------------------------------------------------------------
+
+  let toolOutputExpanded = false
+  let streamingComponent: AssistantMessageComponent | undefined
+  const pendingTools = new Map<string, ToolExecutionComponent>()
+  let imageAttachments: ImageAttachment[] = []
+  let inputDisabled = false
+  let thinking = false
+
+  const toolOptions = () => ({ showImages: true, imageWidthCells: 60 })
+
+  const parseToolArgs = (args: string): unknown => {
+    try {
+      return JSON.parse(args)
+    } catch {
+      return args
+    }
+  }
+
+  const assistantMessageFromText = (text: string): AssistantMessage => ({
+    role: "assistant",
+    content: text ? [{ type: "text", text }] : [],
+    stopReason: "stop",
+  })
+
+  const addUserMessage = (text: string) => {
+    if (chatContainer.children.length > 0) {
+      chatContainer.addChild(new Spacer(1))
+    }
+    chatContainer.addChild(new UserMessageComponent(text, getMarkdownTheme(), 1))
+  }
+
+  const addToolComponent = (id: string, name: string, args: string): ToolExecutionComponent => {
+    const component = new ToolExecutionComponent(name, id, parseToolArgs(args), toolOptions(), undefined, ui, options.cwd)
+    component.setExpanded(toolOutputExpanded)
+    chatContainer.addChild(component)
+    return component
+  }
+
+  const resultFromText = (text: string, isError: boolean) => ({
+    content: [{ type: "text", text }],
+    isError,
+  })
+
   const setTranscript = (transcript: TranscriptMessage[]) => {
     chatContainer.clear()
     streamingComponent = undefined
-    streamingContainer.clear()
-    transcript.forEach((message, index) => {
+    pendingTools.clear()
+    for (const message of transcript) {
+      if (message.toolCall) {
+        const call = message.toolCall
+        const component = addToolComponent(call.toolCallId, call.name, call.args)
+        component.setArgsComplete()
+        component.markExecutionStarted()
+        if (call.result !== undefined) {
+          component.updateResult(resultFromText(call.result, call.isError ?? false))
+        }
+        continue
+      }
       if (message.role === "user") {
-        const text = typeof message.content === "string" ? message.content : "[image]"
-        chatContainer.addChild(new UserMessageComponent(text, activeTheme, activeMarkdownTheme))
-      } else if (message.role === "assistant") {
-        const text = typeof message.content === "string" ? message.content : "[message]"
-        chatContainer.addChild(new AssistantMessageComponent(text, activeMarkdownTheme))
+        const suffix = message.imageCount ? theme.fg("dim", `\n[${message.imageCount} image${message.imageCount > 1 ? "s" : ""} attached]`) : ""
+        addUserMessage(message.content + suffix)
+      } else if (message.role === "assistant" && message.content) {
+        chatContainer.addChild(new AssistantMessageComponent(assistantMessageFromText(message.content), false, getMarkdownTheme(), "Thinking...", 1))
       }
-      if (index < transcript.length - 1) {
-        chatContainer.addChild(new Spacer(1))
-      }
-    })
-    rebuildStatusContainer()
+    }
     ui.requestRender()
   }
 
   const setStreamingContent = (text: string) => {
-    let component = streamingComponent
-    if (!component) {
-      component = new AssistantMessageComponent("", activeMarkdownTheme)
-      streamingContainer.clear()
-      streamingContainer.addChild(component)
-      chatContainer.addChild(streamingContainer)
-      chatContainer.addChild(new Spacer(1))
-      streamingComponent = component
+    if (!text) {
+      // Pi finalizes the current streaming block when a tool call begins; the
+      // next text delta starts a fresh assistant block below the tools.
+      streamingComponent = undefined
+      return
     }
-    component.setText(text)
+    if (!streamingComponent) {
+      streamingComponent = new AssistantMessageComponent(undefined, false, getMarkdownTheme(), "Thinking...", 1)
+      chatContainer.addChild(streamingComponent)
+    }
+    streamingComponent.updateContent(assistantMessageFromText(text))
     ui.requestRender()
+  }
+
+  const setToolActivities = (activities: ToolActivity[]) => {
+    for (const activity of activities) {
+      let component = pendingTools.get(activity.id)
+      if (!component) {
+        component = addToolComponent(activity.id, activity.name, activity.args)
+        component.setArgsComplete()
+        pendingTools.set(activity.id, component)
+      }
+      if (activity.status === "running") {
+        component.markExecutionStarted()
+      } else if (activity.result !== undefined || activity.status === "failed") {
+        component.updateResult(resultFromText(activity.result ?? "", activity.status === "failed"))
+      }
+    }
+    ui.requestRender()
+  }
+
+  const clearToolActivities = () => {
+    pendingTools.clear()
   }
 
   const clearTranscriptDisplay = () => {
     chatContainer.clear()
     streamingComponent = undefined
+    pendingTools.clear()
     ui.requestRender()
   }
 
-  // Status notices, thinking/busy indicators, and tool activities.
-  const rebuildStatusContainer = () => {
-    statusContainer.clear()
-    if (thinking) {
-      statusContainer.addChild(new Text(statusStyle.dim(`${thinkingMessage}...`), 0, 0))
-    } else if (busy) {
-      statusContainer.addChild(new Text(statusStyle.dim("Working..."), 0, 0))
+  const setToolsExpanded = (expanded: boolean) => {
+    toolOutputExpanded = expanded
+    builtInHeader.setExpanded(expanded)
+    for (const child of chatContainer.children) {
+      if (isExpandable(child)) {
+        child.setExpanded(expanded)
+      }
     }
-    if (statusNotice) {
-      const style =
-        statusNotice.tone === "error"
-          ? statusStyle.error
-          : statusNotice.tone === "warning"
-            ? statusStyle.warning
-            : statusStyle.info
-      statusContainer.addChild(new Text(style(statusNotice.content), 0, 0))
-    }
-    for (const activity of toolActivities) {
-      statusContainer.addChild(new ToolActivityComponent(activity, activeTheme))
-    }
+    ui.requestRender()
   }
+
+  // ---------------------------------------------------------------------------
+  // Working indicator / status notices
+  // ---------------------------------------------------------------------------
 
   const setThinking = (value: boolean, message?: string) => {
     thinking = value
-    if (message) thinkingMessage = message
-    rebuildStatusContainer()
+    if (value) {
+      showStatusIndicator(new WorkingStatusIndicator(ui, `${message ?? "Thinking"}...`))
+    } else {
+      clearStatusIndicator()
+    }
     ui.requestRender()
   }
 
   const setBusy = (value: boolean) => {
-    busy = value
-    rebuildStatusContainer()
+    if (value && !thinking) {
+      showStatusIndicator(new WorkingStatusIndicator(ui, "Working..."))
+    } else if (!value && !thinking) {
+      clearStatusIndicator()
+    }
     ui.requestRender()
   }
 
@@ -316,168 +494,299 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
-  const setToolActivities = (activities: ToolActivity[]) => {
-    toolActivities = activities
-    rebuildStatusContainer()
-    ui.requestRender()
-  }
+  // ---------------------------------------------------------------------------
+  // Pending (queued) prompts — pi's updatePendingMessagesDisplay
+  // ---------------------------------------------------------------------------
 
-  const clearToolActivities = () => {
-    toolActivities = []
-    rebuildStatusContainer()
-    ui.requestRender()
-  }
+  let queuedPrompts: QueuedPrompt[] = []
 
-  // Sidebar / pinned chats.
-  const rebuildSidebar = () => {
-    sidebar.clear()
-    if (!sidebarEnabled) return
-    for (const chat of pinnedChats) {
-      const prefix = chat.active ? "> " : "  "
-      const line = `${prefix}${chat.title || chat.lastPrompt || "(empty)"}`
-      sidebar.addChild(new Text(chat.active ? fgColor(activeTheme.colors.accent)(line) : fgColor(activeTheme.colors.foreground)(line), 0, 0))
+  const updatePendingMessagesDisplay = () => {
+    pendingMessagesContainer.clear()
+    const visible = queuedPrompts.filter((prompt) => !prompt.hidden)
+    if (visible.length === 0) return
+    pendingMessagesContainer.addChild(new Spacer(1))
+    for (const prompt of visible) {
+      pendingMessagesContainer.addChild(new TruncatedText(theme.fg("dim", `Follow-up: ${prompt.text}`), 1, 0))
     }
+    const dequeueKeys = keybindings.getKeys("app.message.dequeue")
+    if (dequeueKeys.length > 0) {
+      pendingMessagesContainer.addChild(new TruncatedText(theme.fg("dim", `↳ ${dequeueKeys[0]} to edit all queued messages`), 1, 0))
+    }
+  }
+
+  const setQueuedPrompts = (prompts: QueuedPrompt[]) => {
+    queuedPrompts = prompts
+    updatePendingMessagesDisplay()
     ui.requestRender()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sidebar / pinned chats (furnace feature, rendered pi-style as dim lines)
+  // ---------------------------------------------------------------------------
+
+  let sidebarEnabled = options.sidebarEnabled ?? false
+  let pinnedChats: PinnedChatSummary[] = []
+
+  const rebuildSidebar = () => {
+    sidebarContainer.clear()
+    if (!sidebarEnabled || pinnedChats.length === 0) return
+    for (const chat of pinnedChats) {
+      const marker = chat.working ? "◐" : chat.unread ? "●" : "○"
+      const label = `${marker} [${chat.slot}] ${chat.title || chat.lastPrompt || "(empty)"}`
+      sidebarContainer.addChild(new Text(chat.active ? theme.fg("accent", label) : theme.fg("dim", label), 1, 0))
+    }
+    sidebarContainer.addChild(new DynamicBorder())
   }
 
   const setSidebarEnabled = (enabled: boolean) => {
     sidebarEnabled = enabled
-    renderLayout()
+    rebuildSidebar()
+    ui.requestRender()
   }
 
   const setPinnedChats = (chats: PinnedChatSummary[]) => {
     pinnedChats = chats
     rebuildSidebar()
+    ui.requestRender()
   }
 
-  // Model / title / mode / context / cost.
-  const setModel = (model: string, _settings: ModelSettings, displayName?: string) => {
+  // ---------------------------------------------------------------------------
+  // Footer state feeds
+  // ---------------------------------------------------------------------------
+
+  const updateFooterStatuses = () => {
+    footerDataProvider.setExtensionStatus("mode", currentMode === "plan" ? theme.fg("warning", "plan mode") : undefined)
+    footerDataProvider.setExtensionStatus("lofi", lofiEnabled ? "lofi" : undefined)
+    footer.invalidate()
+    ui.requestRender()
+  }
+
+  const setModel = (model: string, settings: ModelSettings, _displayName?: string) => {
     currentModel = model
-    currentModelDisplayName = displayName || model
-    rebuildHeader()
+    currentModelSettings = { ...settings }
+    updateEditorBorderColor()
+    footer.invalidate()
     ui.requestRender()
   }
 
   const setTitle = (title: string) => {
     currentTitle = title
-    rebuildHeader()
+    terminal.setTitle(`${title} — furnace`)
+    footer.invalidate()
     ui.requestRender()
   }
 
-  const setMode = (mode: AgentMode, planPath?: string) => {
+  const setMode = (mode: AgentMode, _planPath?: string) => {
     currentMode = mode
-    currentPlanPath = planPath
-    rebuildHeader()
-    ui.requestRender()
+    updateFooterStatuses()
   }
 
   const setContextUsage = (tokens: number, window: number) => {
     contextUsage = { tokens, window }
-    rebuildFooter()
+    footer.invalidate()
     ui.requestRender()
   }
 
   const setCostUsage = (cost?: number) => {
     costUsd = cost
-    rebuildFooter()
+    footer.invalidate()
     ui.requestRender()
   }
 
   const setLofi = (enabled: boolean) => {
     lofiEnabled = enabled
-    rebuildFooter()
-    ui.requestRender()
+    updateFooterStatuses()
   }
 
   const setSessionMeta = (meta: { forkParentTitle?: string; title: string }) => {
-    sessionMeta = meta
-    currentTitle = meta.title
-    rebuildHeader()
+    setTitle(meta.title)
+  }
+
+  const setStatusLinePreferences = (_prefs: StatusLinePreferences) => {
+    footer.invalidate()
     ui.requestRender()
   }
 
   const setTheme = (themeName: string) => {
     const choice = resolveTheme(themeName)
-    activeTheme = choice.theme
-    activeMarkdownTheme = getPiMarkdownTheme(activeTheme)
-    activeSelectListTheme = getPiSelectListTheme(activeTheme)
-    footer.setTheme(activeTheme)
-    rebuildHeader()
-    rebuildFooter()
-    rebuildSidebar()
+    setPiTheme(choice.name)
+  }
+
+  onThemeChange(() => {
+    ui.invalidate()
+    updateEditorBorderColor()
+    footer.invalidate()
+    ui.requestRender()
+  })
+
+  footerDataProvider.onBranchChange(() => {
+    ui.requestRender()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Editor wiring — pi's setupKeyHandlers/setupEditorSubmitHandler
+  // ---------------------------------------------------------------------------
+
+  function thinkingLevelFromSettings(settings: ModelSettings): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" {
+    const effort: ReasoningEffort | "none" = settings.reasoningEffort ?? "none"
+    return effort === "none" ? "off" : effort
+  }
+
+  function updateEditorBorderColor(): void {
+    editor.borderColor = theme.getThinkingBorderColor(thinkingLevelFromSettings(currentModelSettings))
+    ui.requestRender()
+  }
+  updateEditorBorderColor()
+
+  let lastSigintTime = 0
+  let runResolve: (() => void) | undefined
+
+  const stop = () => {
+    footerDataProvider.dispose()
+    footer.dispose()
+    ui.stop()
+    runResolve?.()
+  }
+
+  const handleCtrlC = () => {
+    const now = Date.now()
+    if (now - lastSigintTime < 500) {
+      stop()
+      return
+    }
+    lastSigintTime = now
+    options.onInterrupt?.()
+    editor.setText("")
     ui.requestRender()
   }
 
-  const setStatusLinePreferences = (prefs: StatusLinePreferences) => {
-    statusLinePreferences = prefs
-    rebuildFooter()
+  editor.onAction("app.clear", handleCtrlC)
+  editor.onCtrlD = () => {
+    if (!editor.getText().trim()) stop()
+  }
+  editor.onEscape = () => {
+    options.onInterrupt?.()
+  }
+  editor.onAction("app.tools.expand", () => setToolsExpanded(!toolOutputExpanded))
+  editor.onAction("app.editor.external", () => {
+    if (!options.onOpenEditor) return
+    void options.onOpenEditor(editor.getText()).then((updated) => {
+      editor.setText(updated)
+      ui.requestRender()
+    })
+  })
+  editor.onAction("app.message.dequeue", () => {
+    const first = queuedPrompts.find((prompt) => !prompt.hidden)
+    if (first) options.onQueueEdit?.(first.id)
+  })
+
+  editor.onSubmit = (text: string) => {
+    if (inputDisabled) return
+    const trimmed = text.trim()
+    if (!trimmed) return
+    editor.addToHistory(trimmed)
+    editor.setText("")
+    options.onSubmit(trimmed, imageAttachments)
+    imageAttachments = []
+  }
+
+  editor.onChange = (value: string) => {
+    options.onInputChange?.(value)
+  }
+
+  // Global fallback so Ctrl+C works while a selector has focus, like pi's
+  // SIGINT handling.
+  ui.addInputListener((data) => {
+    if (matchesKey(data, Key.ctrl("c"))) {
+      handleCtrlC()
+      return { consume: true }
+    }
+    return undefined
+  })
+
+  // ---------------------------------------------------------------------------
+  // Selectors and dialogs — pi's showSelector pattern: the editor is swapped
+  // out for a panel framed by DynamicBorders, focus moves to the panel, and
+  // Esc/selection restores the editor.
+  // ---------------------------------------------------------------------------
+
+  const restoreEditor = () => {
+    editorContainer.clear()
+    editorContainer.addChild(editor)
+    ui.setFocus(editor)
     ui.requestRender()
   }
 
-  const setInputDraft = (value: string) => {
-    input.setText(value)
+  const showSelectorPanel = (title: string, build: (done: () => void) => { component: Component; focus: Component }) => {
+    const done = () => restoreEditor()
+    const { component, focus } = build(done)
+    const panel = new Container()
+    panel.addChild(new DynamicBorder())
+    panel.addChild(new Spacer(1))
+    if (title) {
+      panel.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0))
+      panel.addChild(new Spacer(1))
+    }
+    panel.addChild(component)
+    panel.addChild(new DynamicBorder())
+    editorContainer.clear()
+    editorContainer.addChild(panel)
+    ui.setFocus(focus)
     ui.requestRender()
   }
 
-  const setInputDisabled = (disabled: boolean) => {
-    inputDisabled = disabled
-    ui.requestRender()
+  const selectListPanel = (
+    title: string,
+    items: AutocompleteItem[],
+    onSelect: (item: AutocompleteItem) => void,
+    onCancel: () => void,
+    extras?: Component[],
+  ) => {
+    showSelectorPanel(title, (done) => {
+      const list = new SelectList(items, MAX_VISIBLE_SELECT_LIST, getSelectListTheme())
+      list.onSelect = (item) => {
+        done()
+        onSelect(item)
+      }
+      list.onCancel = () => {
+        done()
+        onCancel()
+      }
+      const wrapper = new Container()
+      for (const extra of extras ?? []) {
+        wrapper.addChild(extra)
+        wrapper.addChild(new Spacer(1))
+      }
+      wrapper.addChild(list)
+      return { component: wrapper, focus: list }
+    })
   }
 
-  const setSlashCommandItems = (items: PromptAutocompleteItem[]) => {
-    slashCommandItems = items
-    slashProvider.setItems(items)
-  }
-
-  const setTasks = (taskList: TaskRecord[]) => {
-    tasks = taskList
-  }
-
-  const setQueuedPrompts = (prompts: QueuedPrompt[]) => {
-    queuedPrompts = prompts
-  }
-
-  // Prompts: questions and approvals.
   const showQuestionPrompt = (request: AskQuestionRequest, resolve: (response: AskQuestionResponse) => void) => {
-    const items: AutocompleteItem[] = request.questions.flatMap((q) =>
-      q.options.map((o) => ({
-        value: o.id,
-        label: `${q.prompt}: ${o.label}`,
+    const items: AutocompleteItem[] = request.questions.flatMap((question) =>
+      question.options.map((option) => ({
+        value: option.id,
+        label: request.questions.length > 1 ? `${question.prompt}: ${option.label}` : option.label,
       })),
     )
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme, {
-      minPrimaryColumnWidth: 20,
-      maxPrimaryColumnWidth: 40,
-    })
-    selector.onSelect = (item) => {
-      const question = request.questions.find((q) => q.options.some((o) => o.id === item.value))
-      resolve({
-        answers: [
-          {
-            answer: item.label,
-            kind: "option",
-            optionId: item.value,
-            questionId: question?.id || "",
-          },
-        ],
-      })
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    selector.onCancel = () => {
-      resolve({ rejected: true, answers: [] })
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info(request.questions[0]?.prompt || "Question"), 0, 0))
-    editorContainer.addChild(selector)
-    ui.setFocus(selector)
-    ui.requestRender()
+    selectListPanel(
+      request.questions[0]?.prompt || "Question",
+      items,
+      (item) => {
+        const question = request.questions.find((q) => q.options.some((o) => o.id === item.value))
+        resolve({
+          answers: [
+            {
+              answer: item.label,
+              kind: "option",
+              optionId: item.value,
+              questionId: question?.id || "",
+            },
+          ],
+        })
+      },
+      () => resolve({ rejected: true, answers: [] }),
+    )
   }
 
   const showApprovalPrompt = (request: PermissionRequest, resolve: (decision: PermissionDecision) => void) => {
@@ -487,46 +796,22 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       { value: "allow_all_session", label: "Allow all for this session" },
       { value: "deny", label: "Deny" },
     ]
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme, {
-      minPrimaryColumnWidth: 24,
-    })
-    selector.onSelect = (item) => {
-      resolve(item.value as PermissionDecision)
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    selector.onCancel = () => {
-      resolve("deny")
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.warning("Permission required"), 0, 0))
-    const argsBox = new Box(1, 0, bgColor(activeTheme.colors.muted))
-    argsBox.addChild(new Text(fgColor(activeTheme.colors.foreground)(`${request.toolName} ${request.args}`), 0, 0))
-    editorContainer.addChild(argsBox)
-    editorContainer.addChild(selector)
-    ui.setFocus(selector)
-    ui.requestRender()
+    const argsText = new Text(theme.bg("toolPendingBg", theme.fg("toolTitle", ` ${request.toolName} `) + theme.fg("toolOutput", request.args)), 1, 0)
+    selectListPanel(
+      "Permission required",
+      items,
+      (item) => resolve(item.value as PermissionDecision),
+      () => resolve("deny"),
+      [argsText],
+    )
   }
 
-  const requestQuestions = (request: AskQuestionRequest): Promise<AskQuestionResponse> => {
-    return new Promise((resolve) => {
-      showQuestionPrompt(request, resolve)
-    })
-  }
+  const requestQuestions = (request: AskQuestionRequest): Promise<AskQuestionResponse> =>
+    new Promise((resolve) => showQuestionPrompt(request, resolve))
 
-  const requestApproval = (request: PermissionRequest): Promise<PermissionDecision> => {
-    return new Promise((resolve) => {
-      showApprovalPrompt(request, resolve)
-    })
-  }
+  const requestApproval = (request: PermissionRequest): Promise<PermissionDecision> =>
+    new Promise((resolve) => showApprovalPrompt(request, resolve))
 
-  // Selectors and dialogs.
   const showModelEditor = (
     choice: ModelChoice,
     settings: ModelSettings,
@@ -535,7 +820,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   ) => {
     const supportsReasoning = choice.supportedParameters.includes("reasoning")
     const supportsFast = choice.supportedParameters.includes("fast")
-    let updatedSettings: ModelSettings = { ...settings }
+    const updatedSettings: ModelSettings = { ...settings }
 
     const settingItems = [
       ...(supportsReasoning
@@ -557,34 +842,26 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       { id: "done", label: "Done", currentValue: "", values: [] },
     ]
 
-    const list = new SettingsList(
-      settingItems,
-      MAX_VISIBLE_SETTINGS_LIST,
-      settingsListTheme,
-      (id, value) => {
-        if (id === "reasoning") updatedSettings.reasoningEffort = value as ReasoningEffort
-        if (id === "fast") updatedSettings.fast = value === "on"
-        if (id === "done") {
-          onSelect(choice.id, updatedSettings, true)
-          editorContainer.clear()
-          editorContainer.addChild(inputRow)
-          ui.setFocus(input)
-          ui.requestRender()
-        }
-      },
-      () => {
-        onCancel()
-        editorContainer.clear()
-        editorContainer.addChild(inputRow)
-        ui.setFocus(input)
-        ui.requestRender()
-      },
-    )
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info(`Model: ${choice.name}`), 0, 0))
-    editorContainer.addChild(list)
-    ui.setFocus(list)
-    ui.requestRender()
+    showSelectorPanel(`Model: ${choice.name}`, (done) => {
+      const list = new SettingsList(
+        settingItems,
+        MAX_VISIBLE_SETTINGS_LIST,
+        getSettingsListTheme(),
+        (id, value) => {
+          if (id === "reasoning") updatedSettings.reasoningEffort = value as ReasoningEffort
+          if (id === "fast") updatedSettings.fast = value === "on"
+          if (id === "done") {
+            done()
+            onSelect(choice.id, updatedSettings, true)
+          }
+        },
+        () => {
+          done()
+          onCancel()
+        },
+      )
+      return { component: list, focus: list }
+    })
   }
 
   const showPermissions = (
@@ -594,39 +871,27 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     onCancel: () => void,
   ) => {
     const items: AutocompleteItem[] = [
-      ...grants.map((g, index) => ({
+      ...grants.map((grant, index) => ({
         value: String(index),
-        label: g.kind === "allow_all" ? "Allow all" : g.rule.permission,
-        description: g.kind === "allow_all" ? "All tools" : g.rule.pattern,
+        label: grant.kind === "allow_all" ? "Allow all" : grant.rule.permission,
+        description: grant.kind === "allow_all" ? "All tools" : grant.rule.pattern,
       })),
       { value: "__clear_all__", label: "Clear all session grants" },
     ]
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
-    selector.onSelect = (item) => {
-      if (item.value === "__clear_all__") {
-        onClearAll()
-      } else {
-        const grant = grants[Number(item.value)]
-        if (grant) onRemove(grant)
-      }
-      onCancel()
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    selector.onCancel = () => {
-      onCancel()
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info("Permissions — select a grant to remove"), 0, 0))
-    editorContainer.addChild(selector)
-    ui.setFocus(selector)
-    ui.requestRender()
+    selectListPanel(
+      "Permissions — select a grant to remove",
+      items,
+      (item) => {
+        if (item.value === "__clear_all__") {
+          onClearAll()
+        } else {
+          const grant = grants[Number(item.value)]
+          if (grant) onRemove(grant)
+        }
+        onCancel()
+      },
+      onCancel,
+    )
   }
 
   const showPlanActions = (planPath: string, onSelect: (action: PlanAction) => void) => {
@@ -635,72 +900,48 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       { value: "refine", label: "Refine plan" },
       { value: "stay", label: "Stay in plan mode" },
     ]
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
-    selector.onSelect = (item) => {
-      onSelect(item.value as PlanAction)
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info(`Plan: ${planPath}`), 0, 0))
-    editorContainer.addChild(selector)
-    ui.setFocus(selector)
-    ui.requestRender()
+    selectListPanel(`Plan ready: ${planPath}`, items, (item) => onSelect(item.value as PlanAction), () => onSelect("stay"))
   }
 
   const showSettings = (prefs: FurnacePreferences, onSave: (prefs: FurnacePreferences) => void) => {
-    const items = [
+    const settingItems = [
       { id: "sidebar", label: "Sidebar", currentValue: prefs.sidebarEnabled ? "on" : "off", values: ["on", "off"] },
       { id: "inputMode", label: "Input mode", currentValue: prefs.inputMode ?? "standard", values: ["standard", "vim"] },
     ]
-    const list = new SettingsList(
-      items,
-      MAX_VISIBLE_SETTINGS_LIST,
-      settingsListTheme,
-      (id, value) => {
-        const updated = { ...prefs }
-        if (id === "sidebar") updated.sidebarEnabled = value === "on"
-        if (id === "inputMode") updated.inputMode = value as "standard" | "vim"
-        onSave(updated)
-      },
-      () => {
-        editorContainer.clear()
-        editorContainer.addChild(inputRow)
-        ui.setFocus(input)
-        ui.requestRender()
-      },
-    )
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info("Settings"), 0, 0))
-    editorContainer.addChild(list)
-    ui.setFocus(list)
-    ui.requestRender()
+    showSelectorPanel("Settings", (done) => {
+      const list = new SettingsList(
+        settingItems,
+        MAX_VISIBLE_SETTINGS_LIST,
+        getSettingsListTheme(),
+        (id, value) => {
+          const updated = { ...prefs }
+          if (id === "sidebar") updated.sidebarEnabled = value === "on"
+          if (id === "inputMode") updated.inputMode = value as "standard" | "vim"
+          onSave(updated)
+        },
+        () => done(),
+      )
+      return { component: list, focus: list }
+    })
   }
 
-  const showApiKeySetup = (provider: string, label: string, onSave: (key: string) => void, onCancel: () => void) => {
-    const keyInput = new Input()
-    keyInput.onSubmit = (value) => {
-      onSave(value)
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    keyInput.onEscape = () => {
-      onCancel()
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info(`Enter API key for ${label}`), 0, 0))
-    editorContainer.addChild(new Text(statusStyle.dim("Paste or type the key, then press Enter. Esc to cancel."), 0, 0))
-    editorContainer.addChild(keyInput)
-    ui.setFocus(keyInput)
-    ui.requestRender()
+  const showApiKeySetup = (_provider: string, label: string, onSave: (key: string) => void, onCancel: () => void) => {
+    showSelectorPanel(`Enter API key for ${label}`, (done) => {
+      const wrapper = new Container()
+      wrapper.addChild(new Text(theme.fg("dim", "Paste or type the key, then press Enter. Esc to cancel."), 1, 0))
+      wrapper.addChild(new Spacer(1))
+      const keyInput = new Input()
+      keyInput.onSubmit = (value) => {
+        done()
+        onSave(value)
+      }
+      keyInput.onEscape = () => {
+        done()
+        onCancel()
+      }
+      wrapper.addChild(keyInput)
+      return { component: wrapper, focus: keyInput }
+    })
   }
 
   const showProviderSelector = (
@@ -709,125 +950,99 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     onCancel: () => void,
     onDelete?: (providerId: string) => void,
   ) => {
-    const items: AutocompleteItem[] = rows.map((r) => ({
-      value: r.id,
-      label: r.displayName,
-      description: `${r.status}${r.sourceLabel ? ` · ${r.sourceLabel}` : ""}`,
+    const items: AutocompleteItem[] = rows.map((row) => ({
+      value: row.id,
+      label: row.displayName,
+      description: `${row.status}${row.sourceLabel ? ` · ${row.sourceLabel}` : ""}`,
     }))
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme, {
-      minPrimaryColumnWidth: 16,
-    })
-    selector.onSelect = (item) => {
-      const row = rows.find((r) => r.id === item.value)
-      if (row?.canDelete && onDelete) {
-        // For providers with a saved key, ask whether to delete or edit.
-        const actionItems: AutocompleteItem[] = [
-          { value: "edit", label: `Edit ${row.displayName} key` },
-          { value: "delete", label: `Delete ${row.displayName} key` },
-        ]
-        const actionSelector = new SelectList(actionItems, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
-        actionSelector.onSelect = (actionItem) => {
-          if (actionItem.value === "delete") {
-            onDelete(row.id)
-          } else {
-            onSelect(row.id)
-          }
-          editorContainer.clear()
-          editorContainer.addChild(inputRow)
-          ui.setFocus(input)
-          ui.requestRender()
+    selectListPanel(
+      "Login — choose a provider",
+      items,
+      (item) => {
+        const row = rows.find((candidate) => candidate.id === item.value)
+        if (row?.canDelete && onDelete) {
+          const actionItems: AutocompleteItem[] = [
+            { value: "edit", label: `Edit ${row.displayName} key` },
+            { value: "delete", label: `Delete ${row.displayName} key` },
+          ]
+          selectListPanel(
+            row.displayName,
+            actionItems,
+            (actionItem) => {
+              if (actionItem.value === "delete") {
+                onDelete(row.id)
+              } else {
+                onSelect(row.id)
+              }
+            },
+            () => {},
+          )
+          return
         }
-        actionSelector.onCancel = () => {
-          editorContainer.clear()
-          editorContainer.addChild(inputRow)
-          ui.setFocus(input)
-          ui.requestRender()
-        }
-        editorContainer.clear()
-        editorContainer.addChild(new Text(statusStyle.info("Login"), 0, 0))
-        editorContainer.addChild(actionSelector)
-        ui.setFocus(actionSelector)
-        ui.requestRender()
-        return
-      }
-      onSelect(item.value)
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    selector.onCancel = () => {
-      onCancel()
-      editorContainer.clear()
-      editorContainer.addChild(inputRow)
-      ui.setFocus(input)
-      ui.requestRender()
-    }
-    editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info("Login — choose a provider"), 0, 0))
-    editorContainer.addChild(selector)
-    ui.setFocus(selector)
-    ui.requestRender()
+        onSelect(item.value)
+      },
+      onCancel,
+    )
   }
 
   const clearInteractionPrompts = () => {
-    editorContainer.clear()
-    editorContainer.addChild(inputRow)
-    ui.setFocus(input)
-    ui.requestRender()
+    restoreEditor()
   }
 
   const clearPlanActions = () => {
-    editorContainer.clear()
-    editorContainer.addChild(inputRow)
-    ui.setFocus(input)
-    ui.requestRender()
-  }
-
-  const insertImageAttachment = (source: ImageSource, options?: { displayName?: string; size?: number }) => {
-    imageAttachments.push({ id: crypto.randomUUID(), source, displayName: options?.displayName, size: options?.size })
-    setStatusNotice("Image attached", "success")
+    restoreEditor()
   }
 
   const suspendForEditor = (draft: string): Promise<string> => {
     return new Promise((resolve) => {
-      const editorInput = new Input()
-      editorInput.setValue(draft)
-      editorInput.onSubmit = (value) => {
-        resolve(value)
-        editorContainer.clear()
-        editorContainer.addChild(inputRow)
-        ui.setFocus(input)
-        ui.requestRender()
-      }
-      editorInput.onEscape = () => {
-        resolve(draft)
-        editorContainer.clear()
-        editorContainer.addChild(inputRow)
-        ui.setFocus(input)
-        ui.requestRender()
-      }
-      editorContainer.clear()
-      editorContainer.addChild(editorInput)
-      ui.setFocus(editorInput)
-      ui.requestRender()
+      showSelectorPanel("Edit prompt", (done) => {
+        const editorInput = new Input()
+        editorInput.setValue(draft)
+        editorInput.onSubmit = (value) => {
+          done()
+          resolve(value)
+        }
+        editorInput.onEscape = () => {
+          done()
+          resolve(draft)
+        }
+        return { component: editorInput, focus: editorInput }
+      })
     })
   }
 
-  const waitForInputFocus = (): Promise<void> => {
-    return Promise.resolve()
+  // ---------------------------------------------------------------------------
+  // Misc contract methods
+  // ---------------------------------------------------------------------------
+
+  const insertImageAttachment = (source: ImageSource, opts?: { displayName?: string; size?: number }) => {
+    imageAttachments.push({ id: crypto.randomUUID(), source, displayName: opts?.displayName, size: opts?.size })
+    setStatusNotice(`Image attached${opts?.displayName ? `: ${opts.displayName}` : ""}`, "success")
   }
+
+  const setInputDraft = (value: string) => {
+    editor.setText(value)
+    ui.requestRender()
+  }
+
+  const setInputDisabled = (disabled: boolean) => {
+    inputDisabled = disabled
+  }
+
+  const setSlashCommandItems = (items: PromptAutocompleteItem[]) => {
+    slashProvider.setItems(items)
+  }
+
+  const setTasks = (_tasks: TaskRecord[]) => {}
+
+  const waitForInputFocus = (): Promise<void> => Promise.resolve()
 
   const run = (): Promise<void> => {
     return new Promise((resolve) => {
       runResolve = resolve
       ui.start()
+      ui.requestRender()
     })
-  }
-
-  const stop = () => {
-    ui.stop()
-    runResolve?.()
   }
 
   return {

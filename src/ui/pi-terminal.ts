@@ -49,6 +49,7 @@ import {
   WorkingStatusIndicator,
   type StatusIndicator,
 } from "./pi/components/status-indicator.js"
+import { ModelSelectorComponent, type Model as PiSelectorModel } from "./pi/components/model-selector.js"
 import { UserMessageComponent } from "./pi/components/user-message.js"
 import { AssistantMessageComponent, type AssistantMessage } from "./pi/components/assistant-message.js"
 import { ToolExecutionComponent } from "./pi/components/tool-execution.js"
@@ -57,7 +58,9 @@ import { resolveTheme } from "./terminal-themes/index.js"
 import { packageVersion } from "../version.js"
 import type {
   FurnaceTerminal,
+  ModelBrowserItem,
   ModelChoice,
+  SelectListChoice,
   PinnedChatSummary,
   QueuedPrompt,
   ToolActivity,
@@ -638,26 +641,43 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
   updateEditorBorderColor()
 
-  let lastSigintTime = 0
+  const CTRL_C_EXIT_WINDOW_MS = 2000
+
+  let awaitingExitConfirmation = false
+  let exitWarningTimer: ReturnType<typeof setTimeout> | undefined
   let runResolve: (() => void) | undefined
 
   const stop = () => {
+    if (exitWarningTimer) clearTimeout(exitWarningTimer)
     footerDataProvider.dispose()
     footer.dispose()
     ui.stop()
     runResolve?.()
   }
 
+  const clearExitWarning = () => {
+    if (exitWarningTimer) {
+      clearTimeout(exitWarningTimer)
+      exitWarningTimer = undefined
+    }
+    if (awaitingExitConfirmation) {
+      awaitingExitConfirmation = false
+      setStatusNotice(undefined)
+    }
+  }
+
   const handleCtrlC = () => {
-    const now = Date.now()
-    if (now - lastSigintTime < 500) {
+    if (awaitingExitConfirmation) {
+      clearExitWarning()
       stop()
       return
     }
-    lastSigintTime = now
+    awaitingExitConfirmation = true
     options.onInterrupt?.()
     editor.setText("")
+    setStatusNotice("Ctrl+C again to exit", "warning")
     ui.requestRender()
+    exitWarningTimer = setTimeout(clearExitWarning, CTRL_C_EXIT_WINDOW_MS)
   }
 
   editor.onAction("app.clear", handleCtrlC)
@@ -839,7 +859,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
             values: ["on", "off"],
           }]
         : []),
-      { id: "done", label: "Done", currentValue: "", values: [] },
+      // SettingsList only fires onChange for items with a non-empty values
+      // list (Enter cycles values); a single empty value makes Enter on
+      // "Done" fire onChange without displaying anything on the right.
+      { id: "done", label: "Done", currentValue: "", values: [""] },
     ]
 
     showSelectorPanel(`Model: ${choice.name}`, (done) => {
@@ -862,6 +885,61 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       )
       return { component: list, focus: list }
     })
+  }
+
+  const showModelSelector = (
+    models: ModelBrowserItem[],
+    currentModelId: string | undefined,
+    onSelect: (model: ModelBrowserItem) => void,
+    onCancel: () => void,
+  ) => {
+    const piModels: PiSelectorModel[] = models.map((model) => ({
+      id: model.id,
+      provider: model.providerId,
+      name: model.name,
+      reasoning: model.supportedParameters.includes("reasoning"),
+      contextWindow: model.contextLength ?? undefined,
+    }))
+    const registry = {
+      refresh: () => {},
+      getError: () => undefined,
+      getAvailable: async () => piModels,
+      find: (provider: string, id: string) => piModels.find((model) => model.provider === provider && model.id === id),
+    }
+    const currentModel = piModels.find((model) => model.id === currentModelId)
+
+    // The pi model selector brings its own border/search chrome, so it mounts
+    // raw in the editor slot exactly like pi's showSelector does.
+    const done = () => restoreEditor()
+    const selector = new ModelSelectorComponent(
+      ui,
+      currentModel,
+      { setDefaultModelAndProvider: () => {} },
+      registry,
+      [],
+      (model) => {
+        done()
+        const match = models.find((candidate) => candidate.id === model.id && candidate.providerId === model.provider)
+        if (match) onSelect(match)
+      },
+      () => {
+        done()
+        onCancel()
+      },
+    )
+    editorContainer.clear()
+    editorContainer.addChild(selector)
+    ui.setFocus(selector)
+    ui.requestRender()
+  }
+
+  const showSelectList = (title: string, items: SelectListChoice[], onSelect: (value: string) => void, onCancel: () => void) => {
+    selectListPanel(
+      title,
+      items.map((item) => ({ value: item.value, label: item.label, description: item.description })),
+      (item) => onSelect(item.value),
+      onCancel,
+    )
   }
 
   const showPermissions = (
@@ -1079,10 +1157,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showApiKeySetup,
     showApprovalPrompt,
     showModelEditor,
+    showModelSelector,
     showPermissions,
     showPlanActions,
     showProviderSelector,
     showQuestionPrompt,
+    showSelectList,
     showSettings,
     stop,
     suspendForEditor,

@@ -15,7 +15,7 @@ import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
 import { createAnthropicProvider } from "./providers/anthropic.js"
-import type { ProviderDefinition } from "./providers/types.js"
+import type { CustomProvider, ProviderDefinition } from "./providers/types.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
@@ -48,14 +48,48 @@ import {
 } from "./ui/terminal.js"
 import { packageName, packageVersion } from "./version.js"
 
+export type ProviderModel = OpenRouterModel & {
+  providerId: string
+  providerLabel: string
+}
+
 type ModelListCache = {
-  promise: Promise<OpenRouterModel[]>
+  promise: Promise<ProviderModel[]>
   settled: boolean
 }
 
+async function resolveProviderApiKey(def: ProviderDefinition, customProviders: CustomProvider[]): Promise<string> {
+  const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
+  if (envKey) return envKey
+  const rawStoredKey = await getStoredKey(def.id).catch(() => undefined)
+  const storedKey = rawStoredKey ? resolveKeyValue(rawStoredKey) : undefined
+  if (storedKey) return storedKey
+  const rawCustomKey = customProviders.find((provider) => provider.id === def.id)?.apiKey
+  return (rawCustomKey ? resolveKeyValue(rawCustomKey) : undefined) || ""
+}
+
+/** Aggregate models from every provider with a resolvable credential, active provider first. */
+async function fetchAllProviderModels(config: FurnaceConfig): Promise<ProviderModel[]> {
+  const customProviders = await loadCustomProviders().catch(() => [] as CustomProvider[])
+  const defs: ProviderDefinition[] = [...BUILTIN_PROVIDERS, ...customProviders.map(({ apiKey: _unused, ...def }) => def)]
+  const results = await Promise.all(
+    defs.map(async (def) => {
+      const apiKey = await resolveProviderApiKey(def, customProviders)
+      if (!apiKey) return []
+      const adapter = def.protocol === "anthropic" ? createAnthropicProvider() : createOpenAICompatibleProvider()
+      const models = await adapter
+        .listModels({ ...def, apiKey, siteUrl: config.siteUrl, appName: config.appName })
+        .catch(() => [] as OpenRouterModel[])
+      return models.map((model) => ({ ...model, providerId: def.id, providerLabel: def.displayName }))
+    }),
+  )
+  const flat = results.flat()
+  flat.sort((a, b) => (a.providerId === config.provider ? 0 : 1) - (b.providerId === config.provider ? 0 : 1))
+  return flat
+}
+
 function createModelListCache(config: FurnaceConfig): ModelListCache {
-  const adapter = config.providerConfig.protocol === "anthropic" ? createAnthropicProvider() : createOpenAICompatibleProvider()
-  const promise = adapter.listModels(config.providerConfig)
+  const promise = fetchAllProviderModels(config)
   const cache: ModelListCache = { promise, settled: false }
   promise.then(
     () => {
@@ -220,19 +254,14 @@ export async function runInteractive(input: {
       if (!match.value.startsWith("/model ") || !modelListCache.settled) return false
       const modelId = match.value.slice("/model ".length).trim()
       void modelListCache.promise.then((models) => {
-        const choice = models.find((entry) => entry.id === modelId)
+        const candidates = models.filter((entry) => entry.id === modelId)
+        const choice = candidates.find((entry) => entry.providerId === input.config.provider) || candidates[0]
         if (!choice) return
         terminal.showModelEditor(
           choice,
           choice.id === input.config.model ? input.config.modelSettings : {},
-          (model, settings, done) => {
-            input.config.model = model
-            input.config.modelSettings = settings
-            terminal.setModel(model, settings, choice.name)
-            void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
-              terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
-            })
-            if (done) refreshCurrentSession()
+          (_model, settings, done) => {
+            if (done) void applyModelSelection(choice, settings)
           },
           () => refreshCurrentSession(),
         )
@@ -472,7 +501,16 @@ export async function runInteractive(input: {
         await setModelByArgument(command.argument)
         return
       }
-      showTransientStatus(`Current model: ${input.config.model}. Type /model <name> to change.`)
+      const models = await modelListCache.promise.catch(() => [] as ProviderModel[])
+      if (models.length === 0) {
+        showTransientStatus("No models available. Use /login to add a provider key.")
+        return
+      }
+      openModelPicker(models, () => {})
+      return
+    }
+    if (command.name === "/models") {
+      await openModelBrowser()
       return
     }
     if (command.name === "/theme") {
@@ -735,10 +773,12 @@ export async function runInteractive(input: {
     }))
   }
 
-  function modelAutocompleteItems(models: OpenRouterModel[]): PromptAutocompleteItem[] {
+  function modelAutocompleteItems(models: ProviderModel[]): PromptAutocompleteItem[] {
     return models.map((model) => ({
       browsable: true,
-      description: model.contextLength ? `${formatTokenCount(model.contextLength)} context` : undefined,
+      description: [model.providerLabel, model.contextLength ? `${formatTokenCount(model.contextLength)} context` : undefined]
+        .filter(Boolean)
+        .join(" · "),
       label: model.name || model.id,
       value: `/model ${model.id}`,
     }))
@@ -952,31 +992,105 @@ export async function runInteractive(input: {
     })
   }
 
+  /**
+   * Apply a model choice, switching the active provider first when the model
+   * belongs to a different (credentialed) provider.
+   */
+  async function applyModelSelection(match: ProviderModel, settings: ModelSettings, opts?: { global?: boolean }): Promise<boolean> {
+    if (match.providerId !== input.config.provider) {
+      const customProviders = await loadCustomProviders().catch(() => [] as CustomProvider[])
+      const def = resolveProvider(match.providerId, customProviders)
+      if (!def) {
+        showTransientStatus(`Unknown provider: ${match.providerId}`)
+        return false
+      }
+      const apiKey = await resolveProviderApiKey(def, customProviders)
+      if (!apiKey) {
+        showTransientStatus(`No API key for ${def.displayName}. Use /login to add one.`)
+        return false
+      }
+      input.config.provider = def.id
+      input.config.apiKey = apiKey
+      input.config.openRouterApiKey = apiKey
+      input.config.providerConfig = { ...def, apiKey, siteUrl: input.config.siteUrl, appName: input.config.appName }
+      await saveGlobalPreferences({ provider: def.id }).catch(() => {})
+    }
+    input.config.model = match.id
+    input.config.modelSettings = settings
+    terminal.setModel(match.id, settings, match.name)
+    await (opts?.global
+      ? saveGlobalPreferences({ model: match.id, modelSettings: settings })
+      : saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings })
+    ).catch((error) => {
+      terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
+    })
+    refreshCurrentSession()
+    return true
+  }
+
   async function setModelByArgument(argument: string): Promise<void> {
     const isGlobal = argument.trimStart().startsWith("--global ")
     const trimmed = (isGlobal ? argument.trimStart().slice("--global ".length) : argument).trim()
     const models = await modelListCache.promise
-    const match =
-      models.find((model) => model.id.toLowerCase() === trimmed.toLowerCase()) || models.find((model) => model.name.toLowerCase() === trimmed.toLowerCase())
+    const lowered = trimmed.toLowerCase()
+    const candidates = [
+      ...models.filter((model) => model.id.toLowerCase() === lowered),
+      ...models.filter((model) => model.name.toLowerCase() === lowered),
+    ]
+    // Prefer the active provider when the same id exists in several catalogs.
+    const match = candidates.find((model) => model.providerId === input.config.provider) || candidates[0]
     if (!match) {
       showTransientStatus(`Unknown model: ${trimmed}`)
       return
     }
-    const settings: ModelSettings = {}
-    input.config.model = match.id
-    input.config.modelSettings = settings
-    terminal.setModel(match.id, settings, match.name)
-    if (isGlobal) {
-      await saveGlobalPreferences({ model: match.id, modelSettings: settings }).catch((error) => {
-        terminal.setTranscript([{ role: "assistant", content: `Failed to save global model preference: ${formatError(error)}` }])
-      })
-      showTransientStatus(`Model set globally to ${match.name}.`)
-    } else {
-      await saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings }).catch((error) => {
-        terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
-      })
+    const applied = await applyModelSelection(match, {}, { global: isGlobal })
+    if (applied && isGlobal) showTransientStatus(`Model set globally to ${match.name}.`)
+  }
+
+  /** /models: pick a provider, then fuzzy-search its models pi-style, then tune settings. */
+  async function openModelBrowser(): Promise<void> {
+    const models = await modelListCache.promise.catch(() => [] as ProviderModel[])
+    const byProvider = new Map<string, ProviderModel[]>()
+    for (const model of models) {
+      const group = byProvider.get(model.providerId)
+      if (group) group.push(model)
+      else byProvider.set(model.providerId, [model])
     }
-    refreshCurrentSession()
+    if (byProvider.size === 0) {
+      showTransientStatus("No providers with models available. Use /login to add a provider key.")
+      return
+    }
+    const providerItems = [...byProvider.entries()].map(([providerId, group]) => ({
+      value: providerId,
+      label: group[0]?.providerLabel || providerId,
+      description: `${group.length} model${group.length === 1 ? "" : "s"}${providerId === input.config.provider ? " · active" : ""}`,
+    }))
+    terminal.showSelectList("Select a provider", providerItems, (providerId) => {
+      const group = byProvider.get(providerId) || []
+      openModelPicker(group)
+    }, () => {})
+  }
+
+  function openModelPicker(models: ProviderModel[], onCancel?: () => void): void {
+    terminal.showModelSelector(
+      models,
+      input.config.model,
+      (selected) => {
+        const match = models.find((model) => model.id === selected.id && model.providerId === selected.providerId)
+        if (!match) return
+        terminal.showModelEditor(
+          match,
+          match.id === input.config.model ? input.config.modelSettings : {},
+          (_model, settings, done) => {
+            if (done) void applyModelSelection(match, settings)
+          },
+          () => {},
+        )
+      },
+      // Esc from a provider's model list goes back to the provider list;
+      // Esc from the all-models picker (/model) just closes.
+      onCancel ?? (() => void openModelBrowser()),
+    )
   }
 
   async function handleForkCommand(argument: string): Promise<void> {

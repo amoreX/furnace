@@ -24,6 +24,51 @@ describe("SlashCommandAutocompleteProvider", () => {
     assert.strictEqual(result.items[0].label, "Login")
   })
 
+  it("fuzzy-filters command arguments like pi", async () => {
+    const provider = new SlashCommandAutocompleteProvider([
+      { value: "/model anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6", description: "1M context" },
+      { value: "/model openai/gpt-5.5", label: "GPT-5.5", description: "400k context" },
+      { value: "/model google/gemini-3-pro", label: "Gemini 3 Pro", description: "2M context" },
+    ])
+
+    // Substring of the id, not a prefix of the value — must still match,
+    // and the closest match must rank first.
+    const line = "/model gpt"
+    const result = await provider.getSuggestions([line], 0, line.length)
+    assert.ok(result)
+    assert.ok(result.items.length >= 1)
+    assert.strictEqual(result.items[0].value, "/model openai/gpt-5.5")
+    assert.strictEqual(result.prefix, line)
+
+    // Fuzzy (non-contiguous) match against the label.
+    const fuzzyLine = "/model snnet"
+    const fuzzy = await provider.getSuggestions([fuzzyLine], 0, fuzzyLine.length)
+    assert.ok(fuzzy)
+    assert.strictEqual(fuzzy.items[0].value, "/model anthropic/claude-sonnet-4-6")
+
+    // Empty argument lists every candidate for the command.
+    const all = await provider.getSuggestions(["/model "], 0, 7)
+    assert.ok(all)
+    assert.strictEqual(all.items.length, 3)
+
+    // No match yields null so the popup closes.
+    const none = await provider.getSuggestions(["/model zzzzqq"], 0, 13)
+    assert.strictEqual(none, null)
+  })
+
+  it("applies argument completion by replacing the whole command line", () => {
+    const provider = new SlashCommandAutocompleteProvider([
+      { value: "/model openai/gpt-5.5", label: "GPT-5.5" },
+    ])
+    const applied = provider.applyCompletion(
+      ["/model gpt"], 0, 10,
+      { value: "/model openai/gpt-5.5", label: "GPT-5.5" },
+      "/model gpt",
+    )
+    assert.strictEqual(applied.lines[0], "/model openai/gpt-5.5")
+    assert.strictEqual(applied.cursorCol, "/model openai/gpt-5.5".length)
+  })
+
   it("applies completion by replacing prefix", () => {
     const provider = new SlashCommandAutocompleteProvider([
       { value: "/login", label: "Login" },

@@ -19,6 +19,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/fork", description: "Fork from current point or a prior user prompt", insertText: "/fork ", usage: "/fork [current|prompt-preview]" },
   { name: "/clone", description: "Fork from the current conversation tip" },
   { name: "/model", description: "Select model", usage: "/model" },
+  { name: "/models", description: "Browse providers and their models", usage: "/models" },
   { name: "/plan", description: "Switch to plan mode", insertText: "/plan ", usage: "/plan [prompt]" },
   { name: "/agent", description: "Switch to normal agent mode" },
   { name: "/mode", description: "Show or switch mode", insertText: "/mode ", usage: "/mode [agent|plan]" },

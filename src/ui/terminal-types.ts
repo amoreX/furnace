@@ -52,6 +52,13 @@ export type FurnaceTerminal = {
     onSelect: (model: string, settings: ModelSettings, done: boolean) => void,
     onCancel: () => void,
   ): void
+  showModelSelector(
+    models: ModelBrowserItem[],
+    currentModelId: string | undefined,
+    onSelect: (model: ModelBrowserItem) => void,
+    onCancel: () => void,
+  ): void
+  showSelectList(title: string, items: SelectListChoice[], onSelect: (value: string) => void, onCancel: () => void): void
   showPermissions(
     grants: PermissionGrantSummary[],
     onRemove: (grant: PermissionGrantSummary) => void,
@@ -91,6 +98,17 @@ export type ModelChoice = {
   name: string
   contextLength: number | null
   supportedParameters: string[]
+}
+
+export type ModelBrowserItem = ModelChoice & {
+  providerId: string
+  providerLabel: string
+}
+
+export type SelectListChoice = {
+  description?: string
+  label: string
+  value: string
 }
 
 export type ToolActivity = {

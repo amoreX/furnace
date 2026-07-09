@@ -54,11 +54,26 @@ function writeRegistry(points: RecoveryPoint[]): void {
   writeFileSync(path, `${JSON.stringify({ points }, null, 2)}\n`, "utf8")
 }
 
-/** Porcelain status paths (untracked shown), used to diff created files. */
+/** All porcelain status paths — used to detect whether the tree is clean. */
 export function snapshotStatus(root: string): string[] {
   const { stdout } = git(root, ["status", "--porcelain", "-unormal"])
   if (!stdout) return []
   return stdout.split("\n").map((line) => line.slice(3).trim()).filter(Boolean)
+}
+
+/**
+ * Only NEW files (untracked "??" or staged-add "A ") — used to compute the
+ * set of files an evolve created. Modified tracked files are deliberately
+ * excluded: they are reverted by `git checkout <ref> -- .`, not deleted.
+ */
+export function listNewFiles(root: string): string[] {
+  const { stdout } = git(root, ["status", "--porcelain", "-unormal"])
+  if (!stdout) return []
+  return stdout
+    .split("\n")
+    .filter((line) => line.startsWith("??") || line.startsWith("A "))
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean)
 }
 
 export function createRecoveryPoint(root: string, description: string): RecoveryPoint {

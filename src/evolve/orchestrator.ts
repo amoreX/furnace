@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
-import { createRecoveryPoint, recordCreatedFiles, restoreRecoveryPoint, snapshotStatus } from "./recovery.js"
+import { createRecoveryPoint, listNewFiles, recordCreatedFiles, restoreRecoveryPoint } from "./recovery.js"
 import { performSwap, verifyToTemp, type BuildOutcome, type VerifyToTempResult } from "./verify.js"
 import type { EvolveOutcome, FurnaceRootResult } from "./types.js"
 
@@ -29,7 +29,7 @@ export type EvolveEngine = {
   createRecoveryPoint: typeof createRecoveryPoint
   recordCreatedFiles: typeof recordCreatedFiles
   restoreRecoveryPoint: typeof restoreRecoveryPoint
-  snapshotStatus: typeof snapshotStatus
+  listNewFiles: typeof listNewFiles
   verifyToTemp: (root: string) => VerifyToTempResult
   performSwap: (root: string, build: BuildOutcome) => void
   gitDiff: (root: string) => string
@@ -41,7 +41,7 @@ export function defaultEngine(): EvolveEngine {
     createRecoveryPoint,
     recordCreatedFiles,
     restoreRecoveryPoint,
-    snapshotStatus,
+    listNewFiles,
     verifyToTemp: (root) => verifyToTemp(root),
     performSwap,
     gitDiff,
@@ -67,9 +67,9 @@ export async function runEvolve(input: {
   interaction.notify(`Evolving furnace: ${request}`)
   const point = engine.createRecoveryPoint(root, request)
 
-  const before = new Set(engine.snapshotStatus(root))
+  const before = new Set(engine.listNewFiles(root))
   await interaction.runEditTurn({ root, request })
-  const created = engine.snapshotStatus(root).filter((path) => !before.has(path))
+  const created = engine.listNewFiles(root).filter((path) => !before.has(path))
   engine.recordCreatedFiles(point.id, created)
 
   const verified = engine.verifyToTemp(root)

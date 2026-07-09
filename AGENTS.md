@@ -64,13 +64,13 @@ nvm use
 - `src/session/context.ts` converts active session entries into model messages and user-visible transcript rows, including image blocks and compacted context references.
 - `src/session/compaction.ts` implements model-assisted session compaction with deterministic fallback, `firstKeptEntryId` semantics, file details, secret redaction, and file-read-state clearing after compaction.
 - `src/compression/*` implements Headroom-lite tool-output compression and request-local compression transforms. Full originals are stored under `.furnace/context-store/` and retrieved by `context_retrieve`.
-- `src/ui/ink-terminal.tsx` and `src/ui/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, status line, and optional sidebar.
+- `src/ui/pi-terminal.ts` and `src/ui/pi/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, and status line.
 - `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/login`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
 - `src/plan-mode.ts` supports agent/plan modes, creates plan artifact paths under `.furnace/plans/`, injects plan-mode system guidance, and renders saved plan artifacts/actions.
 - `src/tasks/manager.ts` runs delegated subagent task groups in parallel, supports foreground/background promotion, records recent task status, and propagates task updates to the UI. Backgrounded task groups release the parent turn immediately; completion results are injected later through a hidden queued prompt.
 - `src/skills/*` discovers skills from project/user/plugin roots, renders skill guidance, loads explicit skills, and can create managed project/user skill files.
 - `src/custom-commands/*` loads reusable slash-command templates from `.furnace/commands` and `~/.furnace/commands`; project commands override global commands.
-- `src/preferences.ts` loads/saves global and project preferences for model, model settings, theme, input mode, typing indicator style/blink, notifications, sidebar, status line, and skill paths.
+- `src/preferences.ts` loads/saves global and project preferences for model, model settings, theme, typing indicator style/blink, notifications, status line, and skill paths.
 - `src/utils/images.ts` supports local/remote image attachments for multimodal user messages.
 
 ## Current CLI / UX Surface
@@ -84,7 +84,7 @@ nvm use
 - Shell completion command: `furnace completion <bash|zsh|fish>`.
 - Interactive model picker with context, reasoning, and fast-routing settings.
 - Theme picker previews hovered themes and restores the saved theme if browsing is abandoned.
-- `/settings` supports sidebar, input mode, typing indicator, typing blink, notifications, and status line fields.
+- `/settings` supports typing indicator, typing blink, notifications, and status line fields.
 - Status context display supports tokens, tokens+percent, percent-only, and off.
 - Prompt queueing while an agent turn is running.
 - `/login` lists provider key status, stores saved keys in `~/.furnace/auth.json`, and supports deleting saved keys from that file.
@@ -147,7 +147,7 @@ nvm use
 - Provider support is OpenRouter-first. Anthropic/OpenAI-native adapters and a provider abstraction beyond the current OpenRouter module are not implemented.
 - Sandboxing is permission-gate based. There is no OS/container sandbox adapter yet.
 - JSON/headless output exists, but the event stream is not yet exposed as a stable public JSON/RPC/SDK interface.
-- The Ink UI is featureful; watch for regressions around focus management, autocomplete scopes, queue controls, settings panels, task panels, and sidebar layout.
+- The pi-based TUI is featureful; watch for regressions around focus management, autocomplete scopes, queue controls, settings panels, task panels, and layout.
 - Web search/fetch are MCP-style HTTP integrations with bounded output; provider configuration, error surfacing, and tests should stay current as those services change.
 - Skills load from many local/plugin roots. Be careful about duplicate names, disabled model invocation, and never treating managed/plugin cache skill roots as writable.
 - File stale-write protection depends on read receipts/snapshots. Preserve this when changing `read`, `write`, `edit`, or session persistence.

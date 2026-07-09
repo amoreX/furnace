@@ -16,7 +16,6 @@ const titlePromptPath = join(promptsDir, "title-system.md")
 
 export type FurnaceConfig = {
   appName: string
-  inputMode: "standard" | "vim"
   model: string
   modelSettings: ModelSettings
   notifications: boolean
@@ -24,8 +23,6 @@ export type FurnaceConfig = {
   apiKey: string
   providerConfig: ResolvedProvider
   openRouterApiKey: string
-  pinnedChatIds: string[]
-  sidebarEnabled: boolean
   siteUrl: string
   skillPaths: string[]
   statusLine: StatusLinePreferences
@@ -71,7 +68,6 @@ export async function loadConfig(): Promise<FurnaceConfig> {
 
   return {
     appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
-    inputMode: preferences.inputMode || "standard",
     model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4-6",
     notifications: preferences.notifications === true,
     modelSettings: preferences.modelSettings || {},
@@ -79,8 +75,6 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     apiKey,
     providerConfig,
     openRouterApiKey: apiKey,
-    pinnedChatIds: Array.isArray(preferences.pinnedChatIds) ? preferences.pinnedChatIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()).slice(0, 5) : [],
-    sidebarEnabled: preferences.sidebarEnabled !== false,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
     skillPaths: Array.isArray(preferences.skillPaths) ? preferences.skillPaths.filter((path) => typeof path === "string" && path.trim()).map((path) => path.trim()) : [],
     statusLine: statusLinePreferences(preferences),

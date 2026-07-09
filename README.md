@@ -189,8 +189,6 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
 
 `/settings` opens a keyboard-driven preferences panel. Current settings include:
 
-- Sidebar on/off.
-- Input mode: standard or vim.
 - Typing indicator: block, underscore, or bar.
 - Typing blink: off/on, applied to any indicator style.
 - Notifications on/off.

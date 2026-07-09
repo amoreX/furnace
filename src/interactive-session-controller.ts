@@ -31,13 +31,12 @@ import { PromptQueueStore, type PromptQueueInput } from "./prompt-queue.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
-import { isHistoryAutocompleteValue, normalizePinnedChatIds, parsePinnedChatSwitch } from "./session-switching.js"
 import { isSkillCommand, slashAutocompleteItems } from "./slash-command-router.js"
 import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./task-ui-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
-import type { FurnaceTerminal, PinnedChatSummary, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, ToolActivity } from "./ui/terminal-types.js"
+import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, ToolActivity } from "./ui/terminal-types.js"
 import type { ImageAttachment } from "./utils/images.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
@@ -124,7 +123,6 @@ export async function runInteractive(input: {
   let previewedTheme: string | undefined
   const runningSessionIds = new Set<string>()
   let activeDisplaySessionId = sessionId
-  let pinnedChatIds = normalizePinnedChatIds(input.config.pinnedChatIds)
   const activeAbortControllers = new Map<string, AbortController>()
   const unreadCompletedSessionIds = new Set<string>()
   const pendingApprovals = new Map<string, { request: PermissionRequest; resolve: (decision: PermissionDecision) => void }>()
@@ -169,10 +167,8 @@ export async function runInteractive(input: {
       const pending = pendingBackgroundPrompts.get(parentSessionId) || []
       pending.push(prompt)
       pendingBackgroundPrompts.set(parentSessionId, pending)
-      syncPinnedChats()
     },
     onUpdate: (snapshot) => {
-      syncPinnedChats()
       if (snapshot.parentSessionId !== activeDisplaySessionId) return
       terminal.setTasks(snapshot.tasks)
     },
@@ -180,12 +176,7 @@ export async function runInteractive(input: {
   const { createFurnaceTerminal } = await import("./ui/pi-terminal.js")
   terminal = createFurnaceTerminal({
     cwd: input.cwd,
-    inputMode: input.config.inputMode,
-    sidebarEnabled: input.config.sidebarEnabled,
     statusLine: input.config.statusLine,
-    onSidebarToggle: (enabled) => {
-      void saveGlobalPreferences({ sidebarEnabled: enabled }).catch(() => {})
-    },
     model: input.config.model,
     modelSettings: input.config.modelSettings,
     onQueueEdit: (id) => {
@@ -196,12 +187,6 @@ export async function runInteractive(input: {
     },
     onQueueRemove: (id) => {
       removeQueuedPrompt(id)
-    },
-    onPinnedSelect: (slot) => {
-      switchToPinnedChat(slot)
-    },
-    onPinnedUnpin: (slot) => {
-      unpinChatSlot(slot)
     },
     onInterrupt: () => {
       currentAbortController()?.abort()
@@ -247,10 +232,6 @@ export async function runInteractive(input: {
       }
     },
     onAutocompleteTab: (match) => {
-      if (isHistoryAutocompleteValue(match.value)) {
-        togglePinnedChatFromResumeValue(match.value)
-        return true
-      }
       if (!match.value.startsWith("/model ") || !modelListCache.settled) return false
       const modelId = match.value.slice("/model ".length).trim()
       void modelListCache.promise.then((models) => {
@@ -343,11 +324,6 @@ export async function runInteractive(input: {
       currentAbortController()?.abort()
       lofi.stop()
       terminal.stop()
-      return
-    }
-    const pinSwitch = parsePinnedChatSwitch(prompt)
-    if (pinSwitch !== undefined) {
-      switchToPinnedChat(pinSwitch)
       return
     }
     if (command.name === "/lofi") {
@@ -444,8 +420,6 @@ export async function runInteractive(input: {
     }
     if (command.name === "/settings" || command.name === "/prefs") {
       const currentPrefs: FurnacePreferences = {
-        sidebarEnabled: input.config.sidebarEnabled,
-        inputMode: input.config.inputMode,
         typingIndicator: input.config.typingIndicator,
         typingIndicatorBlink: input.config.typingIndicatorBlink,
         notifications: input.config.notifications,
@@ -456,8 +430,6 @@ export async function runInteractive(input: {
       }
       terminal.showSettings(currentPrefs, async (updated) => {
         Object.assign(input.config, {
-          sidebarEnabled: updated.sidebarEnabled !== false,
-          inputMode: updated.inputMode ?? input.config.inputMode,
           typingIndicator: updated.typingIndicator ?? input.config.typingIndicator,
           typingIndicatorBlink: updated.typingIndicatorBlink === true,
           notifications: updated.notifications === true,
@@ -787,15 +759,13 @@ export async function runInteractive(input: {
   function resumeAutocompleteItems(sessions: ReturnType<SessionStore["listSessions"]>): PromptAutocompleteItem[] {
     return sessions.map((session, index) => {
       const parentIndex = session.parentSessionId ? sessions.findIndex((candidate) => candidate.id === session.parentSessionId) : -1
-      const pinnedIndex = pinnedChatIds.indexOf(session.id)
       return {
         browsable: true,
-        description: `${pinnedIndex >= 0 ? `pinned #${pinnedIndex + 1} · Tab unpin · ` : "Tab pin · "}${
+        description:
           session.relationType === "fork" && session.parentSessionId
             ? `${formatRelativeTime(session.updatedAt)} · fork of ${sessionTitleById(input.store, session.parentSessionId)}`
-            : formatRelativeTime(session.updatedAt)
-        }`,
-        label: `${pinnedIndex >= 0 ? `#${pinnedIndex + 1} ` : ""}${session.title}`,
+            : formatRelativeTime(session.updatedAt),
+        label: session.title,
         relatedValue: parentIndex >= 0 ? `/resume ${parentIndex + 1}` : undefined,
         value: `/resume ${index + 1}`,
       }
@@ -889,95 +859,6 @@ export async function runInteractive(input: {
     }
     const planAction = pendingPlanActions.get(targetSessionId)
     if (planAction) terminal.showPlanActions(planAction.planPath, planAction.onSelect)
-  }
-
-  function togglePinnedChatFromResumeValue(value: string): void {
-    const match = value.match(/^\/resume\s+(\d+)$/)
-    if (!match) return
-    const sessions = input.store.listHistorySessions(input.cwd)
-    const target = sessions[Number.parseInt(match[1] || "", 10) - 1]
-    if (!target) return
-    togglePinnedChat(target.id)
-  }
-
-  function togglePinnedChat(targetSessionId: string): void {
-    try {
-      const session = input.store.getSession(targetSessionId)
-      if (session.cwd !== input.cwd || session.archivedAt !== null || session.activeLeafId === null) {
-        showTransientStatus("Only saved chats from this project can be pinned.")
-        return
-      }
-    } catch {
-      showTransientStatus("Chat not found.")
-      return
-    }
-    const existingIndex = pinnedChatIds.indexOf(targetSessionId)
-    if (existingIndex >= 0) {
-      pinnedChatIds = pinnedChatIds.filter((id) => id !== targetSessionId)
-      void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
-      syncPinnedChats()
-      showTransientStatus("Unpinned chat.")
-      return
-    }
-    if (pinnedChatIds.length >= 5) {
-      showTransientStatus("You can pin up to 5 chats. Unpin one first.")
-      return
-    }
-    pinnedChatIds = [...pinnedChatIds, targetSessionId]
-    void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
-    syncPinnedChats()
-    showTransientStatus("Pinned chat. Type #" + pinnedChatIds.length + " to switch to it.")
-  }
-
-  function unpinChatSlot(slot: number): void {
-    const targetSessionId = pinnedChatIds[slot - 1]
-    if (!targetSessionId) return
-    pinnedChatIds = pinnedChatIds.filter((id) => id !== targetSessionId)
-    void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
-    syncPinnedChats()
-    showTransientStatus(`Unpinned #${slot}.`)
-  }
-
-  function switchToPinnedChat(slot: number): void {
-    const targetSessionId = pinnedChatIds[slot - 1]
-    if (!targetSessionId) {
-      showTransientStatus(`No pinned chat at #${slot}.`)
-      return
-    }
-    switchToSession(targetSessionId)
-  }
-
-  function syncPinnedChats(): void {
-    const summaries: PinnedChatSummary[] = []
-    const validIds: string[] = []
-    for (const id of pinnedChatIds.slice(0, 5)) {
-      try {
-        const session = input.store.getSession(id)
-        if (session.cwd !== input.cwd || session.archivedAt !== null || session.activeLeafId === null) continue
-        validIds.push(id)
-        summaries.push(pinnedChatSummary(session, validIds.length))
-      } catch {
-        // Drop stale pins for deleted sessions.
-      }
-    }
-    if (validIds.length !== pinnedChatIds.length || validIds.some((id, index) => id !== pinnedChatIds[index])) {
-      pinnedChatIds = validIds
-      void saveGlobalPreferences({ pinnedChatIds }).catch(() => {})
-    }
-    terminal.setPinnedChats(summaries)
-  }
-
-  function pinnedChatSummary(session: SessionRecord, slot: number): PinnedChatSummary {
-    return {
-      active: session.id === sessionId,
-      id: session.id,
-      lastPrompt: lastUserPrompt(input.store, session.id) || session.title,
-      queuedCount: promptQueue(session.id).filter((prompt) => !prompt.hidden).length,
-      slot,
-      title: session.title,
-      unread: unreadCompletedSessionIds.has(session.id),
-      working: isSessionRunning(session.id) || hasActiveSubagentTasks(taskManager.status(session.id).tasks),
-    }
   }
 
   function terminalForSession(targetSessionId: string): FurnaceTerminal {
@@ -1306,7 +1187,6 @@ export async function runInteractive(input: {
     const compactSessionId = sessionId
     runningSessionIds.add(compactSessionId)
     if (sessionId === activeDisplaySessionId) terminal.setBusy(true)
-    syncPinnedChats()
     terminal.setInputDisabled(true)
     terminal.setThinking(true, "Compacting context")
     try {
@@ -1341,7 +1221,6 @@ export async function runInteractive(input: {
       terminal.setInputDisabled(false)
       if (activeDisplaySessionId === compactSessionId) terminal.setBusy(false)
       runningSessionIds.delete(compactSessionId)
-      syncPinnedChats()
     }
   }
 
@@ -1513,7 +1392,6 @@ export async function runInteractive(input: {
 
   function syncQueuedPrompts(): void {
     terminal.setQueuedPrompts(promptQueue().filter((prompt) => !prompt.hidden))
-    syncPinnedChats()
   }
 
   function refreshCurrentSession(): void {
@@ -1523,7 +1401,6 @@ export async function runInteractive(input: {
     terminal.setMode(state.mode, state.planPath)
     if (state.mode !== "plan") terminal.clearPlanActions()
     terminal.setTasks(taskManager.status(sessionId).tasks)
-    syncPinnedChats()
     const usage = estimateContextUsage()
     terminal.setContextUsage(usage.tokens, usage.window)
     updateTerminalCostUsage(terminal, input.store, sessionId)
@@ -1577,7 +1454,6 @@ export async function runInteractive(input: {
 
     runningSessionIds.add(targetSessionId)
     if (targetSessionId === activeDisplaySessionId) terminal.setBusy(true)
-    syncPinnedChats()
     try {
       while (queue.length > 0) {
         const next = queue.shift()
@@ -1619,7 +1495,6 @@ export async function runInteractive(input: {
           if (completed && !next.hidden) {
             if (activeDisplaySessionId === turnSessionId) unreadCompletedSessionIds.delete(turnSessionId)
             else unreadCompletedSessionIds.add(turnSessionId)
-            syncPinnedChats()
           }
           if (activeAbortControllers.get(turnSessionId) === controller) activeAbortControllers.delete(turnSessionId)
           if (activeDisplaySessionId === turnSessionId) {
@@ -1636,7 +1511,6 @@ export async function runInteractive(input: {
         terminal.setBusy(false)
         terminal.setThinking(false)
       }
-      syncPinnedChats()
       process.stdout.write("\x07")
       syncQueuedPrompts()
     }
@@ -1829,7 +1703,32 @@ export async function runPiped(input: {
       continue
     }
     if (command.name === "/settings" || command.name === "/prefs") {
-      process.stdout.write(`sidebar=${input.config.sidebarEnabled}\ninputMode=${input.config.inputMode}\nnotifications=${input.config.notifications}\n`)
+      const statusLine = input.config.statusLine
+      const statusContext =
+        statusLine.statusContextMode === "off" || statusLine.statusShowContext === false
+          ? "off"
+          : statusLine.statusContextMode === "percent"
+            ? "percent only"
+            : statusLine.statusContextMode === "tokens-percent" || statusLine.statusShowContextPercent === true
+              ? "percent"
+              : "on"
+      process.stdout.write(
+        `typingIndicator=${input.config.typingIndicator ?? "block"}\n` +
+          `typingIndicatorBlink=${input.config.typingIndicatorBlink === true}\n` +
+          `notifications=${input.config.notifications === true}\n` +
+          `statusAppName=${statusLine.statusShowAppName !== false}\n` +
+          `statusCwd=${statusLine.statusShowCwd !== false}\n` +
+          `statusTitle=${statusLine.statusShowTitle !== false}\n` +
+          `statusContext=${statusContext}\n` +
+          `statusCost=${statusLine.statusShowCost !== false}\n` +
+          `statusMode=${statusLine.statusShowMode !== false}\n` +
+          `statusWindow=${statusLine.statusShowWindow !== false}\n` +
+          `statusTheme=${statusLine.statusShowTheme !== false}\n` +
+          `statusModel=${statusLine.statusShowModel !== false}\n` +
+          `statusReasoning=${statusLine.statusShowReasoning !== false}\n` +
+          `statusFast=${statusLine.statusShowFast !== false}\n` +
+          `statusForkParent=${statusLine.statusShowForkParent !== false}\n`,
+      )
       continue
     }
     if (isSkillCommand(command.name)) {

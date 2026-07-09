@@ -41,7 +41,6 @@ export type FurnaceTerminal = {
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
   setMode(mode: AgentMode, planPath?: string): void
-  setPinnedChats(chats: PinnedChatSummary[]): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
@@ -66,7 +65,6 @@ export type FurnaceTerminal = {
     onCancel: () => void,
   ): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
-  setSidebarEnabled(enabled: boolean): void
   showSettings(prefs: FurnacePreferences, onSave: (prefs: FurnacePreferences) => void): void
   showApiKeySetup(provider: string, label: string, onSave: (key: string) => void, onCancel: () => void): void
   showProviderSelector(
@@ -132,17 +130,6 @@ export type QueuedPrompt = {
   images?: ImageAttachment[]
   source?: string
   text: string
-}
-
-export type PinnedChatSummary = {
-  active: boolean
-  id: string
-  lastPrompt: string
-  queuedCount: number
-  slot: number
-  title: string
-  unread: boolean
-  working: boolean
 }
 
 export type PlanAction = "execute" | "refine" | "stay"

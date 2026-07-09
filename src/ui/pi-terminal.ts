@@ -61,7 +61,6 @@ import type {
   ModelBrowserItem,
   ModelChoice,
   SelectListChoice,
-  PinnedChatSummary,
   QueuedPrompt,
   ToolActivity,
   PlanAction,
@@ -135,15 +134,10 @@ export type CreateFurnaceTerminalOptions = {
   onQueueEdit?: (id: string) => void
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
-  onPinnedSelect?: (slot: number) => void
-  onPinnedUnpin?: (slot: number) => void
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
-  inputMode?: "standard" | "vim"
-  sidebarEnabled?: boolean
   statusLine?: StatusLinePreferences
-  onSidebarToggle?: (enabled: boolean) => void
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onBareTab?: (value: string) => boolean
   onAutocompleteHover?: (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
@@ -238,7 +232,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   // ---------------------------------------------------------------------------
 
   const headerContainer = new Container()
-  const sidebarContainer = new Container()
   const chatContainer = new Container()
   const pendingMessagesContainer = new Container()
   const statusContainer = new Container()
@@ -295,7 +288,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   widgetContainerAbove.addChild(new Spacer(1))
 
   ui.addChild(headerContainer)
-  ui.addChild(sidebarContainer)
   ui.addChild(chatContainer)
   ui.addChild(pendingMessagesContainer)
   ui.addChild(statusContainer)
@@ -520,36 +512,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const setQueuedPrompts = (prompts: QueuedPrompt[]) => {
     queuedPrompts = prompts
     updatePendingMessagesDisplay()
-    ui.requestRender()
-  }
-
-  // ---------------------------------------------------------------------------
-  // Sidebar / pinned chats (furnace feature, rendered pi-style as dim lines)
-  // ---------------------------------------------------------------------------
-
-  let sidebarEnabled = options.sidebarEnabled ?? false
-  let pinnedChats: PinnedChatSummary[] = []
-
-  const rebuildSidebar = () => {
-    sidebarContainer.clear()
-    if (!sidebarEnabled || pinnedChats.length === 0) return
-    for (const chat of pinnedChats) {
-      const marker = chat.working ? "◐" : chat.unread ? "●" : "○"
-      const label = `${marker} [${chat.slot}] ${chat.title || chat.lastPrompt || "(empty)"}`
-      sidebarContainer.addChild(new Text(chat.active ? theme.fg("accent", label) : theme.fg("dim", label), 1, 0))
-    }
-    sidebarContainer.addChild(new DynamicBorder())
-  }
-
-  const setSidebarEnabled = (enabled: boolean) => {
-    sidebarEnabled = enabled
-    rebuildSidebar()
-    ui.requestRender()
-  }
-
-  const setPinnedChats = (chats: PinnedChatSummary[]) => {
-    pinnedChats = chats
-    rebuildSidebar()
     ui.requestRender()
   }
 
@@ -982,10 +944,31 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const showSettings = (prefs: FurnacePreferences, onSave: (prefs: FurnacePreferences) => void) => {
+    const contextValue = (): string => {
+      if (prefs.statusContextMode === "off" || prefs.statusShowContext === false) return "off"
+      if (prefs.statusContextMode === "percent") return "percent only"
+      if (prefs.statusContextMode === "tokens-percent" || prefs.statusShowContextPercent === true) return "percent"
+      return "on"
+    }
+
     const settingItems = [
-      { id: "sidebar", label: "Sidebar", currentValue: prefs.sidebarEnabled ? "on" : "off", values: ["on", "off"] },
-      { id: "inputMode", label: "Input mode", currentValue: prefs.inputMode ?? "standard", values: ["standard", "vim"] },
+      { id: "typingIndicator", label: "Typing indicator", currentValue: prefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
+      { id: "typingIndicatorBlink", label: "Typing blink", currentValue: prefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
+      { id: "notifications", label: "Notifications", currentValue: prefs.notifications === true ? "on" : "off", values: ["off", "on"] },
+      { id: "statusShowAppName", label: "App name", currentValue: prefs.statusShowAppName === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowCwd", label: "Cwd", currentValue: prefs.statusShowCwd === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowTitle", label: "Title", currentValue: prefs.statusShowTitle === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowContext", label: "Context", currentValue: contextValue(), values: ["on", "percent", "percent only", "off"] },
+      { id: "statusShowCost", label: "Cost", currentValue: prefs.statusShowCost === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowMode", label: "Mode", currentValue: prefs.statusShowMode === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowWindow", label: "Window", currentValue: prefs.statusShowWindow === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowTheme", label: "Theme", currentValue: prefs.statusShowTheme === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowModel", label: "Model", currentValue: prefs.statusShowModel === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowReasoning", label: "Reasoning", currentValue: prefs.statusShowReasoning === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowFast", label: "Fast routing", currentValue: prefs.statusShowFast === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowForkParent", label: "Fork parent", currentValue: prefs.statusShowForkParent === false ? "off" : "on", values: ["on", "off"] },
     ]
+
     showSelectorPanel("Settings", (done) => {
       const list = new SettingsList(
         settingItems,
@@ -993,8 +976,27 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         getSettingsListTheme(),
         (id, value) => {
           const updated = { ...prefs }
-          if (id === "sidebar") updated.sidebarEnabled = value === "on"
-          if (id === "inputMode") updated.inputMode = value as "standard" | "vim"
+          switch (id) {
+            case "typingIndicator":
+              updated.typingIndicator = value as "block" | "underscore" | "bar"
+              break
+            case "typingIndicatorBlink":
+              updated.typingIndicatorBlink = value === "on"
+              break
+            case "notifications":
+              updated.notifications = value === "on"
+              break
+            case "statusShowContext":
+              updated.statusContextMode = value === "off" ? "off" : value === "percent only" ? "percent" : value === "percent" ? "tokens-percent" : "tokens"
+              updated.statusShowContext = value !== "off"
+              updated.statusShowContextPercent = value === "percent"
+              break
+            default:
+              if (id.startsWith("statusShow")) {
+                ;(updated as Record<string, boolean | undefined>)[id] = value === "on"
+              }
+              break
+          }
           onSave(updated)
         },
         () => done(),
@@ -1140,10 +1142,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setLofi,
     setMode,
     setModel,
-    setPinnedChats,
     setQueuedPrompts,
     setSessionMeta,
-    setSidebarEnabled,
     setSlashCommandItems,
     setStatusLinePreferences,
     setStatusNotice,

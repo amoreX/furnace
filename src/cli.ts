@@ -47,6 +47,7 @@ program
   .option("--session <id>", "resume a specific saved session by id")
   .option("--output-format <format>", "output format for headless mode: text (default) or json")
   .option("--api-key <key>", "override API key for this session (not persisted)")
+  .option("--recover <id>", "roll back the furnace harness to a recovery point created by /evolve")
   .version(packageVersion)
   .addCommand(
     new Command("completion")
@@ -54,9 +55,9 @@ program
       .description("Print shell completion script for the furnace CLI")
       .action((shell: string) => {
         const scripts: Record<string, string> = {
-          bash: '# Add to ~/.bash_completion or source in ~/.bashrc\n_furnace_completions() {\n  local cur="${COMP_WORDS[COMP_CWORD]}"\n  local opts="--print --continue --new-session --no-clear --session --output-format --version --help"\n  COMPREPLY=( $(compgen -W "$opts" -- "$cur") )\n}\ncomplete -F _furnace_completions furnace\n',
-          zsh: `#compdef furnace\n_furnace() {\n  local -a opts\n  opts=(--print --continue --new-session --no-clear --session --output-format --version --help)\n  _arguments '*: :->args' && return\n  case $state in args) _values "option" $opts ;; esac\n}\n_furnace "$@"\n`,
-          fish: `# Save to ~/.config/fish/completions/furnace.fish\ncomplete -c furnace -l print -d "Run a single prompt"\ncomplete -c furnace -l continue -d "Continue latest session"\ncomplete -c furnace -l new-session -d "Start new session"\ncomplete -c furnace -l no-clear -d "Do not clear terminal"\ncomplete -c furnace -l session -d "Resume session by id" -r\ncomplete -c furnace -l output-format -d "Output format (text or json)" -r\ncomplete -c furnace -l version -d "Show version"\n`,
+          bash: '# Add to ~/.bash_completion or source in ~/.bashrc\n_furnace_completions() {\n  local cur="${COMP_WORDS[COMP_CWORD]}"\n  local opts="--print --continue --new-session --no-clear --session --output-format --recover --version --help"\n  COMPREPLY=( $(compgen -W "$opts" -- "$cur") )\n}\ncomplete -F _furnace_completions furnace\n',
+          zsh: `#compdef furnace\n_furnace() {\n  local -a opts\n  opts=(--print --continue --new-session --no-clear --session --output-format --recover --version --help)\n  _arguments '*: :->args' && return\n  case $state in args) _values "option" $opts ;; esac\n}\n_furnace "$@"\n`,
+          fish: `# Save to ~/.config/fish/completions/furnace.fish\ncomplete -c furnace -l print -d "Run a single prompt"\ncomplete -c furnace -l continue -d "Continue latest session"\ncomplete -c furnace -l new-session -d "Start new session"\ncomplete -c furnace -l no-clear -d "Do not clear terminal"\ncomplete -c furnace -l session -d "Resume session by id" -r\ncomplete -c furnace -l output-format -d "Output format (text or json)" -r\ncomplete -c furnace -l recover -d "Roll back a furnace evolve by id" -r\ncomplete -c furnace -l version -d "Show version"\n`,
         }
         const script = scripts[shell.toLowerCase()]
         if (!script) {
@@ -67,8 +68,12 @@ program
         process.stdout.write(script)
       })
   )
-  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string }) => {
+  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string; recover?: string }) => {
     try {
+      if (options.recover) {
+        await runRecover(options.recover.trim())
+        return
+      }
       const config = await loadConfig()
       if (options.apiKey?.trim()) {
         config.apiKey = options.apiKey.trim()
@@ -110,9 +115,49 @@ program
       }
     } catch (error) {
       renderError(error)
+      await maybePrintRecoveryHint()
       process.exitCode = 1
     }
   })
+
+async function runRecover(id: string): Promise<void> {
+  const { resolveFurnaceRoot } = await import("./evolve/root.js")
+  const rootResult = resolveFurnaceRoot()
+  if (!rootResult.available) {
+    process.stderr.write(`${rootResult.message}\n`)
+    process.exitCode = 1
+    return
+  }
+  const { restoreRecoveryPoint } = await import("./evolve/recovery.js")
+  const result = restoreRecoveryPoint(id, rootResult.root)
+  if (result.ok) {
+    process.stdout.write(`Recovered furnace to recovery point ${id} ("${result.point.description}"). Restart furnace to load it.\n`)
+  } else {
+    process.stderr.write(`Recovery failed: ${result.message}\n`)
+    process.exitCode = 1
+  }
+}
+
+/**
+ * When startup throws after a recent evolve, surface the rollback hint. Worded
+ * as a possible cause (KTD5): an unrelated crash after a good evolve must not
+ * mislead the user into rolling back a fine change.
+ */
+async function maybePrintRecoveryHint(): Promise<void> {
+  try {
+    const { resolveFurnaceRoot } = await import("./evolve/root.js")
+    const rootResult = resolveFurnaceRoot()
+    if (!rootResult.available) return
+    const { latestForRoot } = await import("./evolve/recovery.js")
+    const point = latestForRoot(rootResult.root)
+    if (!point || !point.lastEvolve) return
+    const ageMs = Date.now() - new Date(point.createdAt).getTime()
+    if (!Number.isFinite(ageMs) || ageMs > 24 * 60 * 60 * 1000) return
+    process.stderr.write(`\nThis may have started failing after your last change. To roll back: furnace --recover ${point.id}\n`)
+  } catch {
+    // Recovery hint is best-effort; never mask the original error.
+  }
+}
 
 await program.parseAsync()
 

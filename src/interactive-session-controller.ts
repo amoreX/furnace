@@ -332,6 +332,14 @@ export async function runInteractive(input: {
       showTransientStatus(result.message)
       return
     }
+    if (command.name === "/evolve") {
+      if (isCurrentSessionRunning()) {
+        showTransientStatus("/evolve is available after the current turn finishes.")
+        return
+      }
+      await handleEvolveCommand(command.argument)
+      return
+    }
     if (command.name === "/clear") {
       terminal.clearTranscriptDisplay()
       return
@@ -566,6 +574,75 @@ export async function runInteractive(input: {
       syncPersistentStatusNotice()
     }, ttlMs)
     transientStatusTimer.unref?.()
+  }
+
+  async function handleEvolveCommand(argument: string): Promise<void> {
+    const request = argument.trim()
+    const { resolveFurnaceRoot } = await import("./evolve/root.js")
+    const rootResult = resolveFurnaceRoot()
+    if (!rootResult.available) {
+      showTransientStatus(rootResult.message, 8000)
+      return
+    }
+    if (!request) {
+      terminal.setInputDraft("/evolve ")
+      showTransientStatus("Describe what to change in furnace, e.g. /evolve add cost to the statusline.", 6000)
+      return
+    }
+
+    const { runEvolve } = await import("./evolve/orchestrator.js")
+    const evolveSession = input.store.createSession({ cwd: rootResult.root, relationType: "subagent", title: `evolve: ${request}` })
+    // Broad session grant for the evolve edit turn (KTD9 — permissions are
+    // session-scoped, not path-scoped; the content-level diff review is the control).
+    permissions.applyDecision(
+      { args: "", callId: "evolve", cwd: rootResult.root, description: "evolve", pattern: "*", permission: "*", sessionId: evolveSession.id, toolName: "*" },
+      "allow_all_session",
+    )
+
+    try {
+      await runEvolve({
+        request,
+        rootResult,
+        interaction: {
+          notify: (message) => showTransientStatus(message, 12000),
+          confirmApply: async ({ diff, createdFiles, verifyLog }) => {
+            const response = await terminal.requestQuestions({
+              questions: [
+                {
+                  id: "apply",
+                  allowCustom: false,
+                  allowMultiple: false,
+                  prompt: renderEvolveConsentPrompt(diff, createdFiles, verifyLog),
+                  options: [
+                    { id: "apply", label: "Apply and prompt restart" },
+                    { id: "discard", label: "Discard the change (revert)" },
+                  ],
+                },
+              ],
+            })
+            if (response.rejected) return false
+            return response.answers.some((answer) => answer.optionId === "apply")
+          },
+          runEditTurn: async ({ root, request: editRequest }) => {
+            await runSingleTurn({
+              config: input.config,
+              cwd: root,
+              prompt: renderEvolveEditPrompt(editRequest, root),
+              sessionId: evolveSession.id,
+              store: input.store,
+              permissions,
+              terminal,
+              hiddenUserMessage: true,
+              hiddenUserMessageSource: "evolve",
+            })
+          },
+        },
+      })
+    } catch (error) {
+      showTransientStatus(`Evolve failed: ${formatError(error)}`, 8000)
+    } finally {
+      refreshCurrentSession()
+    }
   }
 
   function syncPersistentStatusNotice(): void {
@@ -1702,6 +1779,10 @@ export async function runPiped(input: {
       process.stdout.write("Lofi mode is only available in the interactive TUI.\n")
       continue
     }
+    if (command.name === "/evolve") {
+      process.stdout.write("/evolve is only available in the interactive TUI (it needs the diff-review consent step).\n")
+      continue
+    }
     if (command.name === "/settings" || command.name === "/prefs") {
       const statusLine = input.config.statusLine
       const statusContext =
@@ -2334,6 +2415,32 @@ async function maybeTitleSession(
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function renderEvolveEditPrompt(request: string, root: string): string {
+  return [
+    "You are modifying the furnace harness itself (self-modification / evolve mode).",
+    `The furnace source root is: ${root}`,
+    "",
+    `Requested change: ${request}`,
+    "",
+    "Guidelines:",
+    "- Edit the furnace source under this root to implement the requested change.",
+    "- Follow existing patterns (themes in src/ui/terminal-themes/, thinking text via setThinking in src/ui/pi-terminal.ts, status line in the footer, etc.).",
+    "- Keep the change minimal and focused on the request.",
+    "- Do NOT run `npm run build`, `npm test`, or scripts/clean-dist.mjs — the evolve orchestrator owns verification and building.",
+    "- Ensure the change is type-correct; the orchestrator will run typecheck, tests, and an atomic build after you finish.",
+    "- When done, briefly summarize what you changed.",
+  ].join("\n")
+}
+
+function renderEvolveConsentPrompt(diff: string, createdFiles: string[], verifyLog: string): string {
+  const created = createdFiles.length > 0 ? `\nNew files: ${createdFiles.join(", ")}` : ""
+  const diffPreview = diff
+    ? diff.length > 4000 ? `${diff.slice(0, 4000)}\n... (${diff.length - 4000} more chars)` : diff
+    : "(no tracked-file changes detected)"
+  const verifyNote = verifyLog ? "\nVerification: typecheck, tests, and build passed." : ""
+  return `Apply this change to furnace? It verified successfully.${verifyNote}${created}\n\n${diffPreview}`
 }
 
 function formatTokenCount(tokens: number): string {

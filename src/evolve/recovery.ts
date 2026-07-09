@@ -1,0 +1,154 @@
+import { spawnSync } from "node:child_process"
+import { createHash, randomBytes } from "node:crypto"
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import type { RecoveryPoint, RestoreResult } from "./types.js"
+
+/**
+ * Recovery points let an evolve be rolled back. Each point captures:
+ *  - a git snapshot ref of tracked source (HEAD when clean, else a
+ *    `git stash create` commit) tagged under a root-namespaced ref,
+ *  - a copy of the current known-good `dist/` so recovery can restore a
+ *    runnable bundle WITHOUT rebuilding or running the new bundle (KTD8),
+ *  - the set of files the evolve created, so restore removes exactly those
+ *    without a blanket `git clean` that would destroy unrelated user work.
+ *
+ * The registry is global (~/.furnace/recovery/registry.json) but every entry
+ * is keyed by absolute furnaceRoot and filtered per-root (KTD11).
+ */
+
+export function recoveryRegistryPath(): string {
+  return join(homedir(), ".furnace", "recovery", "registry.json")
+}
+
+function recoveryDir(root: string, id: string): string {
+  return join(resolve(root), ".furnace", "recovery", id)
+}
+
+function rootHashOf(root: string): string {
+  return createHash("sha256").update(resolve(root)).digest("hex").slice(0, 12)
+}
+
+function newId(): string {
+  return BigInt(`0x${randomBytes(6).toString("hex")}`).toString(36).slice(0, 6).padStart(6, "0")
+}
+
+function git(root: string, args: string[]): { code: number; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { cwd: resolve(root), encoding: "utf8" })
+  return { code: result.status ?? 1, stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim() }
+}
+
+function readRegistry(): RecoveryPoint[] {
+  try {
+    const parsed = JSON.parse(readFileSync(recoveryRegistryPath(), "utf8")) as { points?: RecoveryPoint[] }
+    return Array.isArray(parsed.points) ? parsed.points : []
+  } catch {
+    return []
+  }
+}
+
+function writeRegistry(points: RecoveryPoint[]): void {
+  const path = recoveryRegistryPath()
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify({ points }, null, 2)}\n`, "utf8")
+}
+
+/** Porcelain status paths (untracked shown), used to diff created files. */
+export function snapshotStatus(root: string): string[] {
+  const { stdout } = git(root, ["status", "--porcelain", "-unormal"])
+  if (!stdout) return []
+  return stdout.split("\n").map((line) => line.slice(3).trim()).filter(Boolean)
+}
+
+export function createRecoveryPoint(root: string, description: string): RecoveryPoint {
+  const absRoot = resolve(root)
+  const id = newId()
+  const rootHash = rootHashOf(absRoot)
+
+  const clean = snapshotStatus(absRoot).length === 0
+  const ref = clean
+    ? git(absRoot, ["rev-parse", "HEAD"]).stdout
+    : git(absRoot, ["stash", "create", `furnace-evolve pre-change ${id}`]).stdout || git(absRoot, ["rev-parse", "HEAD"]).stdout
+
+  // Tag the snapshot so it survives GC; namespace by root for multi-worktree safety.
+  git(absRoot, ["tag", `furnace-recovery/${rootHash}/${id}`, ref])
+
+  // Copy the current known-good dist so recovery never needs a rebuild.
+  const distCopyPath = join(recoveryDir(absRoot, id), "dist")
+  const liveDist = join(absRoot, "dist")
+  if (existsSync(liveDist)) {
+    mkdirSync(dirname(distCopyPath), { recursive: true })
+    cpSync(liveDist, distCopyPath, { recursive: true })
+  }
+
+  const point: RecoveryPoint = {
+    id,
+    furnaceRoot: absRoot,
+    rootHash,
+    ref,
+    distCopyPath,
+    createdFiles: [],
+    description,
+    createdAt: new Date().toISOString(),
+    lastEvolve: true,
+  }
+
+  const points = readRegistry()
+  for (const existing of points) {
+    if (existing.furnaceRoot === absRoot) existing.lastEvolve = false
+  }
+  points.push(point)
+  writeRegistry(points)
+  return point
+}
+
+export function recordCreatedFiles(id: string, createdFiles: string[]): void {
+  const points = readRegistry()
+  const point = points.find((candidate) => candidate.id === id)
+  if (!point) return
+  point.createdFiles = createdFiles
+  writeRegistry(points)
+}
+
+export function listRecoveryPoints(): RecoveryPoint[] {
+  return readRegistry()
+}
+
+export function latestForRoot(root: string): RecoveryPoint | undefined {
+  const absRoot = resolve(root)
+  return readRegistry()
+    .filter((point) => point.furnaceRoot === absRoot)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+}
+
+export function restoreRecoveryPoint(id: string, runningRoot: string): RestoreResult {
+  const points = readRegistry()
+  const point = points.find((candidate) => candidate.id === id)
+  if (!point) return { ok: false, reason: "not-found", message: `No recovery point with id "${id}".` }
+  if (point.furnaceRoot !== resolve(runningRoot)) {
+    return {
+      ok: false,
+      reason: "cross-root",
+      message: `Recovery point "${id}" belongs to ${point.furnaceRoot}, not the current furnace root ${resolve(runningRoot)}.`,
+    }
+  }
+
+  try {
+    // 1. Restore the known-good dist first (KTD8 — no rebuild, no running the new bundle).
+    if (point.distCopyPath && existsSync(point.distCopyPath)) {
+      const liveDist = join(point.furnaceRoot, "dist")
+      rmSync(liveDist, { recursive: true, force: true })
+      cpSync(point.distCopyPath, liveDist, { recursive: true })
+    }
+    // 2. Revert tracked source to the snapshot (no branch move).
+    git(point.furnaceRoot, ["checkout", point.ref, "--", "."])
+    // 3. Delete exactly the files the evolve created (never a blanket clean).
+    for (const relative of point.createdFiles) {
+      rmSync(join(point.furnaceRoot, relative), { recursive: true, force: true })
+    }
+    return { ok: true, point }
+  } catch (error) {
+    return { ok: false, reason: "error", message: error instanceof Error ? error.message : String(error) }
+  }
+}

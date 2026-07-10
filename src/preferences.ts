@@ -51,8 +51,11 @@ export type StatusLinePreferences = Pick<FurnacePreferences,
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh"
 
+export const defaultMaxOutputTokens = 8192
+
 export type ModelSettings = {
   contextLength?: number
+  maxOutputTokens?: number
   reasoningEffort?: ReasoningEffort
   fast?: boolean
 }

@@ -9,7 +9,7 @@ import wrapAnsi from "wrap-ansi"
 import { slashCommandDefinitions } from "../commands.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
-import type { ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
+import { defaultMaxOutputTokens, type ModelSettings, type ReasoningEffort, type StatusLinePreferences } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
@@ -2810,7 +2810,9 @@ function ModelEditorPanel({ screen, store }: { screen: Extract<UiScreen, { kind:
           ? normalizeModelSettings({ ...settings, contextLength: row.value }, screen.choice)
           : row.kind === "reasoning"
             ? normalizeModelSettings({ ...settings, reasoningEffort: row.value }, screen.choice)
-            : normalizeModelSettings({ ...settings, fast: !settings.fast }, screen.choice)
+            : row.kind === "maxOutput"
+              ? normalizeModelSettings({ ...settings, maxOutputTokens: row.value }, screen.choice)
+              : normalizeModelSettings({ ...settings, fast: !settings.fast }, screen.choice)
       setSettings(next)
       store.update((state) => ({ ...state, model: screen.choice.id, modelSettings: next }))
       screen.onSelect(screen.choice.id, next, false)
@@ -3119,12 +3121,17 @@ function formatPermissionGrant(grant: PermissionGrantSummary): string {
 
 type ModelEditorRow =
   | { kind: "context"; label: string; value: number; selected: boolean; disabled?: boolean }
+  | { kind: "maxOutput"; label: string; value: number; selected: boolean; disabled?: boolean }
   | { kind: "reasoning"; label: string; value: ReasoningEffort; selected: boolean; disabled?: boolean }
   | { kind: "fast"; label: string; selected: boolean; disabled?: boolean }
 
 function modelEditorRows(choice: ModelChoice, settings: ModelSettings): ModelEditorRow[] {
   const rows: ModelEditorRow[] = []
   for (const option of contextOptions(choice)) rows.push({ kind: "context", label: `Context ${formatContext(option)}`, value: option, selected: settings.contextLength === option })
+
+  for (const option of maxOutputOptions()) {
+    rows.push({ kind: "maxOutput", label: `Max output ${formatContext(option)}`, value: option, selected: settings.maxOutputTokens === option })
+  }
 
   const reasoningOptions: Array<{ label: string; value: ReasoningEffort }> = [
     { label: "Reasoning none", value: "none" },
@@ -3192,9 +3199,10 @@ function formatCompactUnit(value: number, unit: string): string {
 
 function formatFooterSettings(settings: ModelSettings): string {
   const window = settings.contextLength ? `window: ${formatContext(settings.contextLength)}` : undefined
+  const maxOutput = settings.maxOutputTokens ? `max output: ${formatContext(settings.maxOutputTokens)}` : undefined
   const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? `reasoning: ${settings.reasoningEffort}` : undefined
   const fast = settings.fast ? "fast" : undefined
-  return [window, reasoning, fast].filter(Boolean).join(" · ")
+  return [window, maxOutput, reasoning, fast].filter(Boolean).join(" · ")
 }
 
 function formatHeaderSettings(state: UiState): string {
@@ -3244,6 +3252,10 @@ function contextOptions(choice: ModelChoice): number[] {
   return [...new Set([272_000, max])].filter((value) => value <= max).sort((left, right) => left - right)
 }
 
+function maxOutputOptions(): number[] {
+  return [4096, defaultMaxOutputTokens, 12_000, 16_000, 32_000]
+}
+
 function defaultContext(choice: ModelChoice | undefined): number | undefined {
   if (!choice) return undefined
   const options = contextOptions(choice)
@@ -3261,6 +3273,7 @@ function normalizeModelSettings(settings: ModelSettings, choice: ModelChoice | u
     if (!supportsReasoning(choice)) next.reasoningEffort = "none"
   }
   if (!next.reasoningEffort) next.reasoningEffort = "none"
+  if (!maxOutputOptions().includes(next.maxOutputTokens || 0)) next.maxOutputTokens = defaultMaxOutputTokens
   if (next.contextLength && !supportsFastContext(next.contextLength)) next.fast = false
   next.fast = Boolean(next.fast)
   return next

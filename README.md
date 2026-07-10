@@ -162,7 +162,7 @@ Built-in slash commands include:
 | `/fork [current\|prompt-preview]` | Fork the current conversation or a prior user prompt. |
 | `/clone` | Fork from the current conversation tip. |
 | `/image <path\|url>` | Attach an image to the next message. |
-| `/model` | Browse/select model and configure context/reasoning/fast routing. |
+| `/model` | Browse/select model and configure context, max output, reasoning, and fast routing. |
 | `/theme [name]` | Select a theme; browsing previews hovered themes. |
 | `/settings`, `/prefs` | Configure UI/status preferences. |
 | `/plan [prompt]` | Switch to plan mode. |
@@ -210,6 +210,8 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
   - fork parent
 
 `Tab` or `Enter` cycles values.
+
+`/model` opens model-specific settings. Furnace defaults model turns to `8192` max output tokens to avoid unexpectedly large provider reservations; advanced users can change that cap from the model editor.
 
 ## Images
 

@@ -333,7 +333,7 @@ export function createAnthropicProvider(): Provider {
       messages: ChatMessage[],
       tools: ToolDefinition[],
       settings: ModelSettings,
-      options: { toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
+      options: { maxTokens?: number; toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
       signal?: AbortSignal,
     ): Promise<AssistantResponse> {
       const anthropicTools: AnthropicTool[] = tools.map((t) => ({
@@ -343,6 +343,7 @@ export function createAnthropicProvider(): Provider {
       }))
 
       const body = buildBody(model, messages, settings, {
+        maxTokens: options.maxTokens,
         tools: anthropicTools,
         toolChoice: options.toolChoice,
         stream: true,

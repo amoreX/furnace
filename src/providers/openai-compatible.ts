@@ -230,7 +230,7 @@ export function createOpenAICompatibleProvider(): Provider {
       messages: ChatMessage[],
       tools: ToolDefinition[],
       settings: ModelSettings,
-      options: { toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
+      options: { maxTokens?: number; toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
       signal?: AbortSignal,
     ): Promise<AssistantResponse> {
       const response = await fetch(`${provider.baseUrl}/chat/completions`, {
@@ -242,6 +242,7 @@ export function createOpenAICompatibleProvider(): Provider {
           messages: prepareMessages(provider, messages),
           tools,
           tool_choice: options.toolChoice || "auto",
+          ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
           ...buildRequestOptions(provider, settings),
           stream: true,
           usage: { include: true },

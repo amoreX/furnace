@@ -1,6 +1,7 @@
 import type { FurnaceConfig } from "../config.js"
 import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouterMessage, type OpenRouterToolChoice, type OpenRouterUsage } from "../openrouter.js"
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
+import { defaultMaxOutputTokens } from "../preferences.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
 import { isBackgroundedTaskToolResult } from "../tools/tasks.js"
@@ -43,6 +44,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   let hasActualCostUsd = false
   let accumulatedPromptTokens = 0
   let lastCompletionTokens = 0
+  const maxTokens = configuredMaxOutputTokens(input.config.modelSettings.maxOutputTokens)
 
   while (true) {
     messages = input.onBeforeModelRequest ? await input.onBeforeModelRequest(messages, tools) : messages
@@ -51,7 +53,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     if (input.signal?.aborted) throw abortError()
     let response
     try {
-      response = await completeOpenRouterToolResponse(input.config, messages, tools, { toolChoice, onTextDelta: input.onTextDelta }, input.signal)
+      response = await completeOpenRouterToolResponse(input.config, messages, tools, { maxTokens, toolChoice, onTextDelta: input.onTextDelta }, input.signal)
     } catch (error) {
       if (!overflowRecoveryAttempted && input.onContextOverflow && isContextOverflowError(error)) {
         overflowRecoveryAttempted = true
@@ -149,6 +151,17 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       })
     }
   }
+}
+
+function configuredMaxOutputTokens(configured: number | undefined): number {
+  const raw = process.env.FURNACE_MAX_OUTPUT_TOKENS
+  if (!raw) return validMaxOutputTokens(configured) ?? defaultMaxOutputTokens
+  const value = Number(raw)
+  return validMaxOutputTokens(value) ?? validMaxOutputTokens(configured) ?? defaultMaxOutputTokens
+}
+
+function validMaxOutputTokens(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined
 }
 
 function abortError(): DOMException {

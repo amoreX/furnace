@@ -148,7 +148,79 @@ test("agent turn stops immediately when a task group is backgrounded", async () 
   }
 })
 
-function fakeConfig() {
+test("agent turn sends default max output tokens", async () => {
+  const originalFetch = globalThis.fetch
+  let body
+
+  try {
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return textResponse("done")
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig(),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    assert.equal(result.content, "done")
+    assert.equal(body.max_tokens, 8192)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("agent turn lets environment override configured max output tokens", async () => {
+  const originalFetch = globalThis.fetch
+  const originalEnv = process.env.FURNACE_MAX_OUTPUT_TOKENS
+  let body
+
+  try {
+    process.env.FURNACE_MAX_OUTPUT_TOKENS = "4096"
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return textResponse("done")
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig({ modelSettings: { maxOutputTokens: 12000 } }),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    assert.equal(result.content, "done")
+    assert.equal(body.max_tokens, 4096)
+  } finally {
+    if (originalEnv === undefined) delete process.env.FURNACE_MAX_OUTPUT_TOKENS
+    else process.env.FURNACE_MAX_OUTPUT_TOKENS = originalEnv
+    globalThis.fetch = originalFetch
+  }
+})
+
+function textResponse(content) {
+  const sseData = `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\ndata: [DONE]\n`
+  let consumed = false
+  return {
+    ok: true,
+    body: {
+      getReader() {
+        return {
+          read() {
+            if (consumed) return Promise.resolve({ done: true, value: undefined })
+            consumed = true
+            return Promise.resolve({ done: false, value: new TextEncoder().encode(sseData) })
+          },
+          releaseLock() {},
+        }
+      },
+    },
+  }
+}
+
+function fakeConfig(overrides = {}) {
   return {
     appName: "Furnace Test",
     model: "test-model",
@@ -172,5 +244,6 @@ function fakeConfig() {
     theme: "flexoki",
     titleModel: "title-model",
     titleSystemPrompt: "title",
+    ...overrides,
   }
 }

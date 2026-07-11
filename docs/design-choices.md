@@ -124,7 +124,7 @@ Repeated full file reads and mutating prompt prefixes silently dominate coding-a
 Harness provenance:
 
 - Headroom contributed the file-read maturation pattern: preserve full reads locally, but replace older quiet reads in model requests with a retrieval handle and compact preview.
-- Anthropic and OpenRouter contributed the provider-facing `cache_control` pattern for stable prompt sections and cache usage counters.
+- Anthropic and OpenRouter contributed the provider-facing `cache_control` pattern for stable prompt sections, latest user-message cache breakpoints, and cache usage counters.
 - Pi/OpenCode/Hermes influenced the broader direction of treating session history as durable state and provider requests as request-local projections.
 
 Current behavior:
@@ -133,9 +133,11 @@ Current behavior:
 - Before model calls, quiet historical `read` results larger than the maturation threshold are stored under `.furnace/context-store/ctx_<sha>.txt` and replaced with a `Read result matured (Headroom-lite).` marker plus a `context_retrieve` hint.
 - Fresh reads and files with recent read/write/edit activity remain verbatim in the request.
 - The base system prompt is marked cacheable for providers that understand cache-control hints.
+- The latest text user message is also marked cacheable for Anthropic/OpenRouter so warm repeated benchmark or tool-loop turns can reuse more of the prompt prefix.
 - Volatile runtime context is inserted near the latest user message instead of into the stable system-prefix block.
 - OpenRouter requests serialize cache hints as text content blocks; other OpenAI-compatible providers receive plain messages.
 - Anthropic requests serialize cache hints as system text blocks and record reported cache read/write token counts.
+- `FURNACE_DISABLE_PROMPT_CACHE=1` strips all Furnace cache-control hints for debugging or provider compatibility checks.
 
 Current implementation:
 
@@ -157,6 +159,32 @@ Current implementation:
 - `src/session/context.ts` builds the runtime context in `buildRuntimeContext()`.
 - `entriesToModelMessages()` injects the runtime-context user message near the latest user message.
 - `src/cli.ts` passes the current workspace when building per-turn model messages.
+
+## Repository Index
+
+Furnace uses a small local repository index as an orientation dictionary, not as generated documentation or a source of truth.
+
+Reasoning:
+
+Coding agents often spend tokens repeatedly rediscovering the same project map. A compact `.furnace/repo-index.md` gives the agent a cheap starting point for repo-related work while keeping the real code as the authority. The index should change only when meaningful repo-level structure changes or is discovered; age alone does not make it stale.
+
+Current behavior:
+
+- Interactive startup offers to create the index only when an API key exists, the workspace is inside a git repo, and `.furnace/repo-index.md` does not already exist.
+- `/init` regenerates the index manually and can overwrite an existing index.
+- Generation scans a bounded snapshot of paths and selected metadata files while skipping noisy and secret-like paths.
+- The model prompt asks for a compact dictionary with fixed sections: `Project Shape`, `Key Directories`, and `File Dictionary`.
+- The generated index is expected to stay under 250 lines when possible, with a hard max of 400 lines.
+- Furnace also writes `.furnace/repo-index.meta.json` with minimal metadata: generation time, git head, package name, and indexed file count.
+- Furnace does not warn on startup just because metadata is old and does not auto-regenerate the index, avoiding surprise token spend.
+- The main agent is instructed to check the index before broad repo exploration, and to update only relevant sections plus metadata when its work meaningfully changes or reveals repo-level structure.
+
+Current implementation:
+
+- `src/repo-index.ts` owns snapshot collection, fast-model generation, markdown rendering, and metadata writing.
+- `src/interactive-session-controller.ts` owns interactive onboarding and `/init`.
+- `src/prompts/base-system.md` instructs the main agent how to use and maintain the index.
+- `test/repo-index.test.mjs` covers offer conditions, skipped paths, fast model selection, and sidecar metadata staleness helpers.
 
 ## Skills
 

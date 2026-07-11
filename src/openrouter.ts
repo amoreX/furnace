@@ -51,7 +51,7 @@ export async function completeOpenRouterToolResponse(
   config: FurnaceConfig,
   messages: ChatMessage[],
   tools: ToolDefinition[],
-  options: { toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
+  options: { maxTokens?: number; toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
   signal?: AbortSignal,
 ): Promise<AssistantResponse> {
   return getAdapter(config).completeToolChat(

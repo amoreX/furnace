@@ -104,7 +104,7 @@ export type Provider = {
     messages: ChatMessage[],
     tools: ToolDefinition[],
     settings: ModelSettings,
-    options?: { toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void },
+    options?: { maxTokens?: number; toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void },
     signal?: AbortSignal,
   ): Promise<AssistantResponse>
 

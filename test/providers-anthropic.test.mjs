@@ -65,11 +65,50 @@ test("anthropic adapter", async (t) => {
           apiKey: "fake-key",
         },
         "claude-test",
-        [{ role: "system", content: "stable system", cacheControl: "ephemeral" }],
+        [
+          { role: "system", content: "stable system", cacheControl: "ephemeral" },
+          { role: "user", content: "cache this latest prompt" },
+        ],
         {},
       )
       assert.deepEqual(body.system, [{ type: "text", text: "stable system", cache_control: { type: "ephemeral" } }])
+      assert.deepEqual(body.messages[0], { role: "user", content: [{ type: "text", text: "cache this latest prompt", cache_control: { type: "ephemeral" } }] })
     } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  await t.test("prompt cache can be disabled by env var", async () => {
+    const provider = createAnthropicProvider()
+    const originalFetch = globalThis.fetch
+    const originalDisable = process.env.FURNACE_DISABLE_PROMPT_CACHE
+    let body
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), { status: 200 })
+    }
+    process.env.FURNACE_DISABLE_PROMPT_CACHE = "1"
+    try {
+      await provider.completeChat(
+        {
+          id: "anthropic",
+          displayName: "Anthropic",
+          baseUrl: "https://api.anthropic.com",
+          protocol: "anthropic",
+          apiKey: "fake-key",
+        },
+        "claude-test",
+        [
+          { role: "system", content: "stable system", cacheControl: "ephemeral" },
+          { role: "user", content: "do not cache this prompt" },
+        ],
+        {},
+      )
+      assert.equal(body.system, "stable system")
+      assert.deepEqual(body.messages[0], { role: "user", content: "do not cache this prompt" })
+    } finally {
+      if (originalDisable === undefined) delete process.env.FURNACE_DISABLE_PROMPT_CACHE
+      else process.env.FURNACE_DISABLE_PROMPT_CACHE = originalDisable
       globalThis.fetch = originalFetch
     }
   })

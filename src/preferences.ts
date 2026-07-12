@@ -3,8 +3,16 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 export type TypingIndicatorStyle = "block" | "underscore" | "bar"
+export type TerminalLayout = "classic" | "focus" | "forge" | "console" | "notebook" | "signal"
+
+const TERMINAL_LAYOUTS = new Set<TerminalLayout>(["classic", "focus", "forge", "console", "notebook", "signal"])
+
+export function normalizeTerminalLayout(value: string | undefined): TerminalLayout {
+  return value && TERMINAL_LAYOUTS.has(value as TerminalLayout) ? value as TerminalLayout : "classic"
+}
 
 export type FurnacePreferences = {
+  layout?: TerminalLayout
   model?: string
   modelSettings?: ModelSettings
   notifications?: boolean

@@ -21,7 +21,7 @@ The project is still early, but it is no longer just a plan: the current codebas
 - Delegates independent work to subagent task groups.
 - Provides plan mode for implementation planning before mutating code.
 - Can create a compact local repository index for faster project orientation.
-- Provides configurable themes, status line fields, model settings, and typing indicators.
+- Provides six structural UI layouts plus configurable themes, status line fields, model settings, and typing indicators.
 
 ## Requirements
 
@@ -193,6 +193,13 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
 
 `/settings` opens a keyboard-driven preferences panel. Current settings include:
 
+- Interface layout:
+  - `Classic`: the original banner, transcript, composer, and footer stack
+  - `Focus`: minimal chrome and a compact single-line rail
+  - `Forge`: a wide two-column command center with a live session sidecar
+  - `Console`: an operator layout with top telemetry and a bottom command deck
+  - `Notebook`: an editorial conversation log with labelled entries
+  - `Signal`: a broadcast-style transmission desk
 - Typing indicator: block, underscore, or bar.
 - Typing blink: off/on, applied to any indicator style.
 - Notifications on/off.

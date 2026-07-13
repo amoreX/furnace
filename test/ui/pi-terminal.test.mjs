@@ -109,15 +109,12 @@ test("setTranscript and setStreamingContent do not throw", () => {
   })
 })
 
-test("all six terminal layouts have distinct structural headers", () => {
+test("all terminal layouts have distinct structural headers", () => {
   initTheme("default")
   assert.deepEqual(LAYOUT_OPTIONS.map((option) => option.value), [
     "classic",
-    "focus",
-    "forge",
-    "console",
     "notebook",
-    "signal",
+    "console",
   ])
 
   let layout = "classic"
@@ -135,10 +132,10 @@ test("all six terminal layouts have distinct structural headers", () => {
     layout = option.value
     signatures.add(header.render(120).map(stripAnsi).join("\n"))
   }
-  assert.equal(signatures.size, 6)
+  assert.equal(signatures.size, LAYOUT_OPTIONS.length)
 })
 
-test("all six terminal layouts provide distinct empty-session guidance", () => {
+test("all terminal layouts provide distinct empty-session guidance", () => {
   initTheme("default")
   let layout = "classic"
   const emptyTranscript = { invalidate: () => {}, render: () => [] }
@@ -158,7 +155,7 @@ test("all six terminal layouts provide distinct empty-session guidance", () => {
     assert.notEqual(rendered.trim(), "")
     signatures.add(rendered)
   }
-  assert.equal(signatures.size, 6)
+  assert.equal(signatures.size, LAYOUT_OPTIONS.length)
 })
 
 test("terminal layouts can switch live without rebuilding terminal state", () => {

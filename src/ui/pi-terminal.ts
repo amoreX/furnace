@@ -54,13 +54,10 @@ import { UserMessageComponent } from "./pi/components/user-message.js"
 import { AssistantMessageComponent, type AssistantMessage } from "./pi/components/assistant-message.js"
 import { ToolExecutionComponent } from "./pi/components/tool-execution.js"
 import {
-  ForgeSidecarComponent,
   LAYOUT_OPTIONS,
   LayoutHeaderComponent,
-  LayoutRailComponent,
   LayoutTranscriptSurface,
   LayoutTranscriptItem,
-  SplitPaneComponent,
 } from "./pi/layouts.js"
 import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
 import { resolveTheme } from "./terminal-themes/index.js"
@@ -225,18 +222,20 @@ class LayoutEditorFrame extends Container {
 
   override render(width: number): string[] {
     const layout = this.readLayout()
-    const horizontalPadding = layout === "focus" ? 2 : 4
-    const innerWidth = Math.max(1, width - horizontalPadding)
-    const lines = this.inner.render(innerWidth)
-    const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
-    if (layout === "focus") {
+    if (layout === "notebook") {
+      const lines = this.inner.render(Math.max(1, width))
+      const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
       return [
         theme.fg("border", "─".repeat(Math.max(1, width))),
-        ...content.map((line) => `${theme.fg("accent", "›")} ${line}`),
+        ...content,
       ]
     }
 
-    const frames: Record<Exclude<TerminalLayout, "focus">, {
+    const innerWidth = Math.max(1, width - 4)
+    const lines = this.inner.render(innerWidth)
+    const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
+
+    const frames: Record<Exclude<TerminalLayout, "notebook">, {
       bottom: string
       label: string
       left: string
@@ -244,21 +243,18 @@ class LayoutEditorFrame extends Container {
       rightLabel: string
       top: string
     }> = {
-      classic: { top: "╭", bottom: "╰", left: "│", right: "│", label: "", rightLabel: "" },
-      forge: { top: "┏", bottom: "┗", left: "┃", right: "┃", label: " COMMAND ", rightLabel: " ENTER ↵ " },
-      console: { top: "╠", bottom: "╚", left: "║", right: "║", label: " >_ PROMPT ", rightLabel: " EXECUTE " },
-      notebook: { top: "┌", bottom: "└", left: "│", right: "│", label: " NEW ENTRY ", rightLabel: " SAVE ↵ " },
-      signal: { top: "╓", bottom: "╙", left: "║", right: "║", label: " TRANSMIT ", rightLabel: " CH 01 " },
+      classic:  { top: "╭", bottom: "╰", left: "│", right: "│", label: "", rightLabel: "" },
+      console:  { top: "╠", bottom: "╚", left: "║", right: "║", label: " >_ PROMPT ", rightLabel: " EXECUTE " },
     }
-    const frame = frames[layout]
-    const topRight = frame.top === "╭" ? "╮" : frame.top === "┏" ? "┓" : frame.top === "╠" ? "╣" : frame.top === "┌" ? "┐" : "╖"
+    const frame = frames[layout] ?? frames.classic
+    const topRight = frame.top === "╭" ? "╮" : frame.top === "╠" ? "╣" : "┐"
     const leftLabel = width >= frame.label.length + 6 ? frame.label : ""
     const rightLabel = width >= frame.label.length + frame.rightLabel.length + 8 ? frame.rightLabel : ""
     const topDecoration = leftLabel || rightLabel
       ? `─${leftLabel}${"─".repeat(Math.max(0, width - 4 - leftLabel.length - rightLabel.length))}${rightLabel}─`
       : "─".repeat(Math.max(0, width - 2))
     const top = frame.top + topDecoration + topRight
-    const bottomRight = frame.bottom === "╰" ? "╯" : frame.bottom === "┗" ? "┛" : frame.bottom === "╚" ? "╝" : frame.bottom === "└" ? "┘" : "╜"
+    const bottomRight = frame.bottom === "╰" ? "╯" : frame.bottom === "╚" ? "╝" : "┘"
     const bottom = frame.bottom + "─".repeat(Math.max(0, width - 2)) + bottomRight
     return [
       theme.fg("border", top),
@@ -393,7 +389,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const widgetContainerBelow = new Container()
 
   const editor = new CustomEditor(ui, getEditorTheme(), keybindings, {
-    paddingX: 1,
+    paddingX: 0,
     autocompleteMaxVisible: 10,
   })
   wireSlashAutocompletePreview(editor, options.onAutocompleteHover)
@@ -416,30 +412,31 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     version: packageVersion,
   })
   const layoutHeader = new LayoutHeaderComponent(readLayoutState)
-  const layoutRail = new LayoutRailComponent(readLayoutState)
   const transcriptSurface = new LayoutTranscriptSurface(chatContainer, readLayoutState)
-  const forgeBody = new SplitPaneComponent(transcriptSurface, new ForgeSidecarComponent(readLayoutState))
+  const notebookBottomSpacing = new Spacer(1)
+  const notebookStatusBorder = new DynamicBorder()
   headerContainer.addChild(layoutHeader)
-  widgetContainerAbove.addChild(new Spacer(1))
+  widgetContainerAbove.addChild(new Spacer(2))
 
   const rebuildRootLayout = () => {
     ui.clear()
     const add = (...components: Component[]) => components.forEach((component) => ui.addChild(component))
     switch (currentLayout) {
-      case "focus":
-        add(headerContainer, transcriptSurface, statusContainer, editorContainer, pendingMessagesContainer, layoutRail)
-        break
-      case "forge":
-        add(headerContainer, forgeBody, pendingMessagesContainer, statusContainer, editorContainer)
-        break
       case "console":
-        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, footer, editorContainer)
+        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, editorContainer, footer)
         break
       case "notebook":
-        add(headerContainer, transcriptSurface, pendingMessagesContainer, footer, editorContainer, statusContainer)
-        break
-      case "signal":
-        add(headerContainer, statusContainer, transcriptSurface, pendingMessagesContainer, editorContainer, layoutRail)
+        add(
+          headerContainer,
+          transcriptSurface,
+          pendingMessagesContainer,
+          statusContainer,
+          widgetContainerAbove,
+          editorContainer,
+          notebookBottomSpacing,
+          notebookStatusBorder,
+          footer,
+        )
         break
       case "classic":
       default:

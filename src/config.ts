@@ -69,7 +69,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     statusLine: statusLinePreferencesFrom(preferences),
     subagentSystemPrompt: await readFile(subagentPromptPath, "utf8"),
     systemPrompt: await readFile(promptPath, "utf8"),
-    theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "flexoki",
+    theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "gruvbox",
     typingIndicatorBlink: preferences.typingIndicatorBlink === true,
     typingIndicator: (preferences.typingIndicator as string) === "blink" ? "block" : preferences.typingIndicator || "block",
     titleModel: process.env.OPENROUTER_TITLE_MODEL?.trim() || "openai/gpt-4o-mini",

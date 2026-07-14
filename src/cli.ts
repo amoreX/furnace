@@ -36,7 +36,9 @@ import { findTheme, resolveTheme, themeChoices } from "./ui/themes/index.js"
 import { renderError } from "./ui/plain-output.js"
 import { runInteractive, runPiped, runSingleTurn } from "./interactive-session-controller.js"
 import { packageVersion } from "./version.js"
+import { relaunchActiveEvolveIfNeeded } from "./evolve/activation.js"
 
+relaunchActiveEvolveIfNeeded()
 const program = new Command()
 
 program
@@ -142,8 +144,10 @@ program
   })
 
 async function runRecover(id: string): Promise<void> {
-  const { resolveFurnaceRoot } = await import("./evolve/root.js")
-  const rootResult = resolveFurnaceRoot()
+  const { resolveOrPrepareFurnaceRoot } = await import("./evolve/root.js")
+  const rootResult = await resolveOrPrepareFurnaceRoot({
+    onStatus: (message) => process.stderr.write(`${message}\n`),
+  })
   if (!rootResult.available) {
     process.stderr.write(`${rootResult.message}\n`)
     process.exitCode = 1

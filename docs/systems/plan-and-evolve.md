@@ -53,7 +53,9 @@ Plan mode and evolve both use the normal session runtime, but add stricter contr
 - Rejection and verification failure both restore source changes.
 - The consent step reflects the real post-edit change set.
 - Recovery remains available if the newly built CLI fails after restart.
-- Evolve is unavailable when the running installation has no source checkout.
+- Published installs provision a version-matched managed source checkout before
+  evolving; approved managed builds are activated through the installed CLI on
+  the next launch.
 
 ## Changing This Area
 

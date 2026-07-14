@@ -1,13 +1,18 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { withTemporaryHomeWorkspace } from "../helpers/workspace.mjs"
 
 async function makeRepo(options = {}) {
   const dir = await mkdtemp(join(tmpdir(), "furnace-evolve-root-"))
   await writeFile(join(dir, "package.json"), JSON.stringify({ name: options.name ?? "cook-furnace" }), "utf8")
-  if (options.src !== false) await mkdir(join(dir, "src"), { recursive: true })
+  if (options.src !== false) {
+    await mkdir(join(dir, "src", "evolve"), { recursive: true })
+    await writeFile(join(dir, "src", "cli.ts"), "", "utf8")
+    await writeFile(join(dir, "src", "evolve", "orchestrator.ts"), "", "utf8")
+  }
   if (options.git !== false) await mkdir(join(dir, ".git"), { recursive: true })
   return dir
 }
@@ -59,6 +64,46 @@ test("resolveFurnaceRoot reports no-source when no cook-furnace package.json is 
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test("resolveOrPrepareFurnaceRoot provisions a version-matched managed checkout for npm installs", async () => {
+  const { resolveOrPrepareFurnaceRoot } = await import("../../dist/evolve/root.js")
+  await withTemporaryHomeWorkspace("furnace-managed-root-", async (installedRoot, home) => {
+    await writeFile(join(installedRoot, "package.json"), JSON.stringify({ name: "cook-furnace", version: "9.8.7" }), "utf8")
+    await mkdir(join(installedRoot, "dist"), { recursive: true })
+    await mkdir(join(installedRoot, "src", "ui", "pi"), { recursive: true })
+    await writeFile(join(installedRoot, "src", "ui", "pi", "LICENSE"), "packaged license\n", "utf8")
+    const commands = []
+    const result = await resolveOrPrepareFurnaceRoot({
+      startDir: join(installedRoot, "dist"),
+      managedSourceDeps: {
+        prepareBaseline: async (root) => {
+          await mkdir(join(root, "dist"), { recursive: true })
+          await writeFile(join(root, "dist", "cli.js"), "// baseline\n", "utf8")
+          return { ok: true, log: "" }
+        },
+        run: async (command) => {
+          commands.push(command)
+          if (command.command === "git") {
+            const staging = command.args.at(-1)
+            await mkdir(join(staging, ".git"), { recursive: true })
+            await mkdir(join(staging, "src", "evolve"), { recursive: true })
+            await writeFile(join(staging, "src", "cli.ts"), "", "utf8")
+            await writeFile(join(staging, "src", "evolve", "orchestrator.ts"), "", "utf8")
+            await writeFile(join(staging, "package.json"), JSON.stringify({ name: "cook-furnace", version: "9.8.7" }), "utf8")
+          }
+          return { ok: true, log: "" }
+        },
+      },
+    })
+
+    assert.equal(result.available, true)
+    assert.equal(result.managed, true)
+    assert.equal(result.root, join(home, ".furnace", "evolve", "sources", "v9.8.7"))
+    assert.equal(await readFile(join(result.root, "dist", "cli.js"), "utf8"), "// baseline\n")
+    assert.deepEqual(commands.map(({ command }) => command), ["git", process.platform === "win32" ? "npm.cmd" : "npm"])
+    assert.deepEqual(commands[0].args.slice(0, 5), ["clone", "--branch", "v9.8.7", "--depth", "1"])
+  })
 })
 
 test("isGitWorktree recognizes a gitdir worktree file", async () => {

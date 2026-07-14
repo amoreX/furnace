@@ -323,7 +323,7 @@ export const themeChoices: ThemeChoice[] = [
 
 export function resolveTheme(name: string | undefined): ThemeChoice {
   const normalized = normalizeThemeName(name || "")
-  return themeChoices.find((choice) => choice.name === normalized) || themeChoices.find((choice) => choice.name === "pi-dark") || themeChoices[0]!
+  return themeChoices.find((choice) => choice.name === normalized) || themeChoices.find((choice) => choice.name === "gruvbox") || themeChoices[0]!
 }
 
 export function findTheme(name: string): ThemeChoice | undefined {

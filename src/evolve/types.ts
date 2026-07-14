@@ -1,7 +1,7 @@
 export type EvolveUnavailableReason = "no-source" | "not-git"
 
 export type FurnaceRootResult =
-  | { available: true; root: string }
+  | { available: true; root: string; managed?: boolean }
   | { available: false; reason: EvolveUnavailableReason; message: string }
 
 export type RecoveryPoint = {

@@ -10,6 +10,7 @@ function makeEngine(overrides = {}) {
     listNewFiles: () => [],
     verifyToTemp: async () => { calls.push("verify"); return { ok: true, build: { ok: true, log: "built" } } },
     performSwap: () => { calls.push("swap") },
+    activateManagedRoot: () => { calls.push("activate") },
     gitDiff: () => "diff --git a/x b/x",
     runningBinMatchesRoot: () => true,
   }
@@ -91,6 +92,23 @@ test("runEvolve warns when the running bin is outside the root", async () => {
   const outcome = await runEvolve({ request: "add cost", rootResult: availableRoot, interaction, engine })
   assert.equal(outcome.runningBinMatchesRoot, false)
   assert.ok(events.some((e) => e.includes("appears to live elsewhere")))
+})
+
+test("runEvolve activates an approved managed-source build", async () => {
+  const { runEvolve } = await import("../../dist/evolve/orchestrator.js")
+  const { engine, calls } = makeEngine({ runningBinMatchesRoot: () => false })
+  const { interaction, events } = makeInteraction()
+  const outcome = await runEvolve({
+    request: "add cost",
+    rootResult: { available: true, managed: true, root: "/managed/furnace" },
+    interaction,
+    engine,
+  })
+
+  assert.equal(outcome.status, "applied")
+  assert.equal(outcome.runningBinMatchesRoot, true)
+  assert.deepEqual(calls.filter((call) => call === "swap" || call === "activate"), ["swap", "activate"])
+  assert.equal(events.some((event) => event.includes("appears to live elsewhere")), false)
 })
 
 test("runEvolve returns unavailable without touching git when source is missing", async () => {

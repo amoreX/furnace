@@ -13,7 +13,7 @@ const {
   getSettingsListTheme,
 } = await import("../../dist/ui/pi/theme.js")
 
-const { themeChoices } = await import("../../dist/ui/themes/index.js")
+const { resolveTheme, themeChoices } = await import("../../dist/ui/themes/index.js")
 
 test("every shipped furnace theme maps into the pi theme engine", () => {
   for (const choice of themeChoices) {
@@ -70,4 +70,9 @@ test("theme registry lists every furnace theme", () => {
   const names = getAvailableThemes()
   assert.ok(names.includes("pi-dark"))
   assert.ok(names.length >= 30)
+})
+
+test("Gruvbox is the default theme", () => {
+  assert.equal(resolveTheme(undefined).name, "gruvbox")
+  assert.equal(resolveTheme("").name, "gruvbox")
 })

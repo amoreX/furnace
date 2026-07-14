@@ -567,15 +567,20 @@ export async function runInteractive(input: {
 
   async function handleEvolveCommand(argument: string): Promise<void> {
     const request = argument.trim()
-    const { resolveFurnaceRoot } = await import("./evolve/root.js")
-    const rootResult = resolveFurnaceRoot()
-    if (!rootResult.available) {
-      showTransientStatus(rootResult.message, 8000)
-      return
-    }
     if (!request) {
       terminal.setInputDraft("/evolve ")
       showTransientStatus("Describe what to change in furnace, e.g. /evolve add cost to the statusline.", 6000)
+      return
+    }
+
+    const { resolveOrPrepareFurnaceRoot } = await import("./evolve/root.js")
+    terminal.setInputDisabled(true)
+    const rootResult = await resolveOrPrepareFurnaceRoot({
+      onStatus: (message) => showTransientStatus(message, 12000),
+    })
+    if (!rootResult.available) {
+      terminal.setInputDisabled(false)
+      showTransientStatus(rootResult.message, 12000)
       return
     }
 
@@ -642,8 +647,12 @@ export async function runInteractive(input: {
   }
 
   async function handleResetCommand(): Promise<void> {
-    const { resolveFurnaceRoot } = await import("./evolve/root.js")
-    const rootResult = resolveFurnaceRoot()
+    const { resolveOrPrepareFurnaceRoot } = await import("./evolve/root.js")
+    terminal.setInputDisabled(true)
+    const rootResult = await resolveOrPrepareFurnaceRoot({
+      onStatus: (message) => showTransientStatus(message, 12000),
+    })
+    terminal.setInputDisabled(false)
     if (!rootResult.available) {
       showTransientStatus(rootResult.message, 8000)
       return

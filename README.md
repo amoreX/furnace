@@ -172,6 +172,7 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
 
 `/settings` opens a keyboard-driven preferences panel. Current settings include:
 
+- New installations default to the `Classic` layout with the `Gruvbox` theme.
 - Interface layout:
   - `Classic`: the original banner, transcript, composer, and footer stack
   - `Console`: an operator layout with top telemetry and a bottom command deck
@@ -233,9 +234,10 @@ in the Furnace checkout.
 
 Notes and current limits:
 
-- Evolve requires running Furnace from its own source checkout (a git repo with
-  `src/`); an npm-global install without source reports that evolve is
-  unavailable.
+- Source checkouts evolve in place. Published npm installations automatically
+  download the matching tagged source into `~/.furnace/evolve/sources/`, install
+  its build dependencies, and activate an approved evolved bundle for the next
+  normal `furnace` launch.
 - The evolve edit turn runs with broad session permissions over the Furnace
   root; the diff-review step is your control. It can read `~/.furnace/auth.json`,
   so review the diff before approving.

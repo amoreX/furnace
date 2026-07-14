@@ -74,13 +74,12 @@ function runAsync(root: string, command: string, args: string[]): Promise<StepOu
   })
 }
 
-const withNode = "./scripts/with-node22.sh"
-
-// Invoke the locally installed binaries directly. Bare `tsc`/`esbuild` are only
-// on PATH under `npm run` (which adds node_modules/.bin); the evolve path spawns
-// the wrapper directly, so it must reference node_modules/.bin explicitly.
-const tscBin = "node_modules/.bin/tsc"
-const esbuildBin = "node_modules/.bin/esbuild"
+// Invoke the locally installed tools directly. Bare `tsc`/`esbuild` are only on
+// PATH under `npm run`. Using the current Node executable for JS entrypoints
+// supports npm installations that satisfy the Node 22 engine without requiring
+// nvm or Furnace's exact development pin.
+const tscBin = "node_modules/typescript/bin/tsc"
+const esbuildBin = "node_modules/esbuild/bin/esbuild"
 
 const esbuildFlags = [
   "src/cli.ts",
@@ -94,7 +93,7 @@ const esbuildFlags = [
 ]
 
 export const defaultDeps: VerifyDeps = {
-  typecheck: (root) => runAsync(root, withNode, [tscBin, "-p", "tsconfig.json", "--noEmit"]),
+  typecheck: (root) => runAsync(root, process.execPath, [tscBin, "-p", "tsconfig.json", "--noEmit"]),
   buildToTemp: async (root) => {
     const absRoot = resolve(root)
     // Stage exactly ONE level under the furnace root (like the real dist/), so:
@@ -109,7 +108,7 @@ export const defaultDeps: VerifyDeps = {
     const tempPromptsPath = join(staging, "prompts")
     // Bundle straight from src to the temp outfile — esbuild is self-contained,
     // so there is no tsc emit into dist and nothing touches the live bundle.
-    const build = await runAsync(absRoot, withNode, [esbuildBin, ...esbuildFlags, `--outfile=${tempCliPath}`])
+    const build = await runAsync(absRoot, join(absRoot, esbuildBin), [...esbuildFlags, `--outfile=${tempCliPath}`])
     if (!build.ok) return { ok: false, log: build.log }
     // Stage prompts (mirrors scripts/copy-prompts.mjs) so prompt edits take effect.
     const promptsSrc = join(absRoot, "src", "prompts")
@@ -120,7 +119,7 @@ export const defaultDeps: VerifyDeps = {
     if (!build.tempCliPath) return { ok: true, log: "" }
     // Launch the freshly built bundle in isolation under Node 22; a
     // crash-on-import bug fails here, before it can ever reach the live dist/.
-    return runAsync(root, withNode, ["node", build.tempCliPath, "--version"])
+    return runAsync(root, process.execPath, [build.tempCliPath, "--version"])
   },
   swap: (root, build) => performSwap(root, build),
 }

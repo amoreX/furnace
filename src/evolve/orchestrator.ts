@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
+import { activateManagedFurnaceRoot } from "./activation.js"
 import { createRecoveryPoint, listNewFiles, recordCreatedFiles, restoreRecoveryPoint } from "./recovery.js"
 import { performSwap, verifyToTemp, type BuildOutcome, type VerifyToTempResult } from "./verify.js"
 import type { EvolveOutcome, FurnaceRootResult } from "./types.js"
@@ -32,6 +33,7 @@ export type EvolveEngine = {
   listNewFiles: typeof listNewFiles
   verifyToTemp: (root: string) => Promise<VerifyToTempResult>
   performSwap: (root: string, build: BuildOutcome) => void
+  activateManagedRoot: (root: string) => void
   gitDiff: (root: string) => string
   runningBinMatchesRoot: (root: string) => boolean
 }
@@ -44,6 +46,7 @@ export function defaultEngine(): EvolveEngine {
     listNewFiles,
     verifyToTemp: (root) => verifyToTemp(root),
     performSwap,
+    activateManagedRoot: activateManagedFurnaceRoot,
     gitDiff,
     runningBinMatchesRoot,
   }
@@ -89,12 +92,13 @@ export async function runEvolve(input: {
   }
 
   engine.performSwap(root, verified.build)
+  if (rootResult.managed) engine.activateManagedRoot(root)
 
   if (interaction.applyThemePreference && /\btheme\b/i.test(request)) {
     await interaction.applyThemePreference({ root, request })
   }
 
-  const matches = engine.runningBinMatchesRoot(root)
+  const matches = engine.runningBinMatchesRoot(root) || rootResult.managed === true
   const restart = `Applied and verified. Restart furnace to load your changes. If startup breaks, run: furnace --recover ${point.id}`
   interaction.notify(
     matches

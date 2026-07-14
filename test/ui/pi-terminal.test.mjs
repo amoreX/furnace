@@ -140,6 +140,7 @@ test("all terminal layouts have distinct structural headers", () => {
     "classic",
     "notebook",
     "console",
+    "asteroid",
   ])
 
   let layout = "classic"

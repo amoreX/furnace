@@ -20,14 +20,19 @@ export function furnaceRestartInvocation(input: {
 }
 
 export function scheduleFurnaceRestart(deps: {
+  exitProcess?: (code: number) => never | void
   invocation?: RestartInvocation
-  onExit?: (listener: () => void) => void
+  schedule?: (listener: () => void) => void
   spawnProcess?: (command: string, args: string[], options: SpawnOptions) => Pick<ChildProcess, "unref">
 } = {}): void {
   const invocation = deps.invocation ?? furnaceRestartInvocation()
-  const onExit = deps.onExit ?? ((listener) => process.once("beforeExit", listener))
+  const exitProcess = deps.exitProcess ?? ((code) => process.exit(code))
+  const schedule = deps.schedule ?? setImmediate
   const spawnProcess = deps.spawnProcess ?? spawn
-  onExit(() => {
+  // The caller tears down the TUI immediately after scheduling. Waiting for
+  // `beforeExit` is unsafe because an active stdin handle can keep the old
+  // process alive forever, so hand off on the next event-loop turn instead.
+  schedule(() => {
     const child = spawnProcess(invocation.command, invocation.args, {
       cwd: process.cwd(),
       env: process.env,
@@ -36,5 +41,6 @@ export function scheduleFurnaceRestart(deps: {
     // The restarted Furnace owns the inherited terminal. Do not keep this old
     // process alive waiting for the new interactive session to finish.
     child.unref()
+    exitProcess(0)
   })
 }

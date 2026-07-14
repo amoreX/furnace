@@ -18,13 +18,17 @@ test("restart invocation preserves the current launcher and arguments", async ()
 
 test("scheduled restart hands off the terminal without waiting for the child", async () => {
   const { scheduleFurnaceRestart } = await import("../../dist/evolve/restart.js")
-  let exitListener
+  let scheduledRestart
+  const exitCodes = []
   const launches = []
   let unrefCalls = 0
   scheduleFurnaceRestart({
+    exitProcess: (code) => {
+      exitCodes.push(code)
+    },
     invocation: { command: "/node", args: ["/furnace/dist/cli.js"] },
-    onExit: (listener) => {
-      exitListener = listener
+    schedule: (listener) => {
+      scheduledRestart = listener
     },
     spawnProcess: (command, args, options) => {
       launches.push({ command, args, options })
@@ -37,10 +41,12 @@ test("scheduled restart hands off the terminal without waiting for the child", a
   })
 
   assert.deepEqual(launches, [])
-  exitListener()
+  assert.deepEqual(exitCodes, [])
+  scheduledRestart()
   assert.equal(launches.length, 1)
   assert.equal(launches[0].command, "/node")
   assert.deepEqual(launches[0].args, ["/furnace/dist/cli.js"])
   assert.equal(launches[0].options.stdio, "inherit")
   assert.equal(unrefCalls, 1)
+  assert.deepEqual(exitCodes, [0])
 })

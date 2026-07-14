@@ -616,7 +616,7 @@ export async function runInteractive(input: {
       if (result.status === "migrated") {
         await promptForEvolveRestart(
           result.recoveryId,
-          `Your evolved changes were migrated to Furnace ${packageVersion} and verified.`,
+          `Your previous evolve changes were reapplied to Furnace ${packageVersion} and verified.`,
         )
         return
       }
@@ -627,9 +627,9 @@ export async function runInteractive(input: {
             id: "migration",
             allowCustom: false,
             allowMultiple: false,
-            prompt: `Furnace could not automatically migrate your evolved changes from ${result.state.fromVersion} to ${result.state.toVersion}.\n\nYour old changes are preserved. Run /evolve-merge to ask the agent to resolve the migration.\n\n${result.state.error}`,
+            prompt: `Furnace found previous evolve changes but could not reapply them automatically from ${result.state.fromVersion} to ${result.state.toVersion}.\n\nYour previous evolve changes are preserved. Run /evolve-merge to ask the agent to reapply them to the new version.\n\n${result.state.error}`,
             options: [
-              { id: "prepare", label: "Prepare /evolve-merge" },
+              { id: "prepare", label: "Reapply previous evolve changes" },
               { id: "later", label: "Later" },
             ],
           },
@@ -791,9 +791,9 @@ export async function runInteractive(input: {
             id: "apply",
             allowCustom: false,
             allowMultiple: false,
-            prompt: `Apply the agent's evolved-change migration?\n\n${(diff.stdout || "").trim() || "No diff summary available."}`,
+            prompt: `Reapply these previous evolve changes to the new Furnace version?\n\n${(diff.stdout || "").trim() || "No diff summary available."}`,
             options: [
-              { id: "apply", label: "Verify and apply migration" },
+              { id: "apply", label: "Verify and reapply changes" },
               { id: "later", label: "Keep unresolved for later" },
             ],
           },
@@ -813,7 +813,7 @@ export async function runInteractive(input: {
       }
       restartRequested = await promptForEvolveRestart(
         completed.recoveryId,
-        `Your evolved changes were merged into Furnace ${state.toVersion} and verified.`,
+        `Your previous evolve changes were reapplied to Furnace ${state.toVersion} and verified.`,
       )
     } catch (error) {
       input.store.appendMessage(sessionId, "assistant", `Evolve merge failed: ${formatError(error)}`, input.config.model)

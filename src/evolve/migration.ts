@@ -97,7 +97,7 @@ export async function attemptEvolveMigration(input: {
   }
 
   const deps = { ...defaultMigrationDeps, ...input.deps }
-  input.onStatus?.(`Migrating evolved changes from ${manifest.packageVersion} to ${input.currentVersion}…`)
+  input.onStatus?.(`Reapplying previous evolve changes from ${manifest.packageVersion} to ${input.currentVersion}…`)
   const prepared = await deps.prepareSource(input.currentVersion, input.onStatus)
   if (!prepared.available) {
     return pendingState({

@@ -1,5 +1,3 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
-
 export type RestartInvocation = {
   args: string[]
   command: string
@@ -22,25 +20,28 @@ export function furnaceRestartInvocation(input: {
 export function scheduleFurnaceRestart(deps: {
   exitProcess?: (code: number) => never | void
   invocation?: RestartInvocation
+  replaceProcess?: (command: string, args: string[], env: NodeJS.ProcessEnv) => never | void
   schedule?: (listener: () => void) => void
-  spawnProcess?: (command: string, args: string[], options: SpawnOptions) => Pick<ChildProcess, "unref">
 } = {}): void {
   const invocation = deps.invocation ?? furnaceRestartInvocation()
   const exitProcess = deps.exitProcess ?? ((code) => process.exit(code))
+  const replaceProcess = deps.replaceProcess ?? ((command, args, env) => {
+    const execve = process.execve
+    if (!execve) throw new Error("This Node.js runtime does not support in-place process replacement.")
+    return execve(command, args, env)
+  })
   const schedule = deps.schedule ?? setImmediate
-  const spawnProcess = deps.spawnProcess ?? spawn
   // The caller tears down the TUI immediately after scheduling. Waiting for
   // `beforeExit` is unsafe because an active stdin handle can keep the old
-  // process alive forever, so hand off on the next event-loop turn instead.
+  // process alive forever. Replacing this process also preserves its terminal
+  // process group, so the shell cannot reclaim input during the handoff.
   schedule(() => {
-    const child = spawnProcess(invocation.command, invocation.args, {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: "inherit",
-    })
-    // The restarted Furnace owns the inherited terminal. Do not keep this old
-    // process alive waiting for the new interactive session to finish.
-    child.unref()
-    exitProcess(0)
+    try {
+      replaceProcess(invocation.command, [invocation.command, ...invocation.args], process.env)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      process.stderr.write(`Could not restart Furnace: ${message}\n`)
+      exitProcess(1)
+    }
   })
 }

@@ -96,9 +96,85 @@ test("conflicted migration is persisted and can be completed after manual resolu
 
     await writeFile(join(newRoot, "src", "feature.ts"), "export const value = 3 // upstream, evolved behavior retained\n", "utf8")
     git(newRoot, "add", "src/feature.ts")
+    const failedCompletion = await completePendingEvolveMigration({
+      deps: {
+        ...deps,
+        verify: async () => {
+          throw new Error("verifier crashed")
+        },
+      },
+    })
+    assert.equal(failedCompletion.ok, false)
+    assert.match(failedCompletion.message, /verifier crashed/)
+    assert.match((await readEvolveMigrationState()).error, /verifier crashed/)
+
     const completed = await completePendingEvolveMigration({ deps })
     assert.equal(completed.ok, true)
     assert.deepEqual(events, [`swap:${newRoot}`, `activate:${newRoot}`])
     assert.equal(await readEvolveMigrationState(), undefined)
+  })
+})
+
+test("unexpected automatic migration failures are persisted for evolve-merge", async () => {
+  const {
+    attemptEvolveMigration,
+    preparePendingEvolveMigrationCheckout,
+    readEvolveMigrationState,
+  } = await import("../../dist/evolve/migration.js")
+  await withTemporaryHomeWorkspace("furnace-evolve-migrate-unexpected-", async (workspace) => {
+    const oldRoot = join(workspace, "old")
+    const newRoot = join(workspace, "new")
+    await initializeVersion(oldRoot, "export const value = 1\n")
+    await initializeVersion(newRoot, "export const value = 1\n")
+
+    const result = await attemptEvolveMigration({
+      currentVersion: "2.0.0",
+      manifest: { version: 1, packageVersion: "1.0.0", sourceRoot: oldRoot, cliPath: join(oldRoot, "dist", "cli.js") },
+      deps: {
+        ...migrationDeps(newRoot, []),
+        capturePatch: async () => {
+          throw new Error("patch capture crashed")
+        },
+        status: async () => "",
+      },
+    })
+
+    assert.equal(result.status, "pending")
+    assert.equal(result.state.targetRoot, newRoot)
+    assert.match(result.state.error, /patch capture crashed/)
+    assert.match((await readEvolveMigrationState()).error, /patch capture crashed/)
+
+    const prepared = await preparePendingEvolveMigrationCheckout()
+    assert.equal(prepared.ok, true)
+    assert.equal(prepared.state.targetRoot, newRoot)
+  })
+})
+
+test("evolve-merge can retry managed checkout preparation after startup failure", async () => {
+  const {
+    attemptEvolveMigration,
+    preparePendingEvolveMigrationCheckout,
+  } = await import("../../dist/evolve/migration.js")
+  await withTemporaryHomeWorkspace("furnace-evolve-migrate-prepare-", async (workspace) => {
+    const oldRoot = join(workspace, "old")
+    const newRoot = join(workspace, "new")
+    await initializeVersion(oldRoot, "export const value = 1\n")
+    await initializeVersion(newRoot, "export const value = 1\n")
+
+    const result = await attemptEvolveMigration({
+      currentVersion: "2.0.0",
+      manifest: { version: 1, packageVersion: "1.0.0", sourceRoot: oldRoot, cliPath: join(oldRoot, "dist", "cli.js") },
+      deps: {
+        prepareSource: async () => ({ available: false, managed: true, message: "network unavailable" }),
+      },
+    })
+    assert.equal(result.status, "pending")
+    assert.equal(result.state.targetRoot, "")
+
+    const prepared = await preparePendingEvolveMigrationCheckout({
+      prepareSource: async () => ({ available: true, managed: true, root: newRoot }),
+    })
+    assert.equal(prepared.ok, true)
+    assert.equal(prepared.state.targetRoot, newRoot)
   })
 })

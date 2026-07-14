@@ -97,72 +97,88 @@ export async function attemptEvolveMigration(input: {
   }
 
   const deps = { ...defaultMigrationDeps, ...input.deps }
-  input.onStatus?.(`Reapplying previous evolve changes from ${manifest.packageVersion} to ${input.currentVersion}…`)
-  const prepared = await deps.prepareSource(input.currentVersion, input.onStatus)
-  if (!prepared.available) {
-    return pendingState({
-      error: prepared.message,
-      manifest,
-      patchPath: "",
-      status: "failed",
-      targetRoot: "",
-      toVersion: input.currentVersion,
-    })
-  }
-  const targetRoot = prepared.root
-  const targetStatus = await deps.status(targetRoot)
-  if (targetStatus.trim()) {
-    return pendingState({
-      error: `The target checkout is not clean: ${targetStatus.trim().split("\n")[0]}`,
-      manifest,
-      patchPath: "",
-      status: "failed",
-      targetRoot,
-      toVersion: input.currentVersion,
-    })
-  }
+  let patchPath = ""
+  let recoveryId: string | undefined
+  let targetRoot = ""
+  try {
+    input.onStatus?.(`Reapplying previous evolve changes from ${manifest.packageVersion} to ${input.currentVersion}…`)
+    const prepared = await deps.prepareSource(input.currentVersion, input.onStatus)
+    if (!prepared.available) {
+      return pendingState({
+        error: prepared.message,
+        manifest,
+        patchPath,
+        status: "failed",
+        targetRoot,
+        toVersion: input.currentVersion,
+      })
+    }
+    targetRoot = prepared.root
+    const targetStatus = await deps.status(targetRoot)
+    if (targetStatus.trim()) {
+      return pendingState({
+        error: `The target checkout is not clean: ${targetStatus.trim().split("\n")[0]}`,
+        manifest,
+        patchPath,
+        status: "failed",
+        targetRoot,
+        toVersion: input.currentVersion,
+      })
+    }
 
-  const patch = await deps.capturePatch(manifest.sourceRoot)
-  if (!patch.trim()) {
-    clearActiveEvolve()
+    const patch = await deps.capturePatch(manifest.sourceRoot)
+    if (!patch.trim()) {
+      clearActiveEvolve()
+      await clearEvolveMigrationState()
+      return { status: "no-changes" }
+    }
+    patchPath = await writeMigrationPatch(manifest.packageVersion, input.currentVersion, patch)
+    const point = deps.createRecovery(targetRoot, `migrate evolved changes from ${manifest.packageVersion}`)
+    recoveryId = point.id
+    const applied = await deps.applyPatch(targetRoot, patchPath)
+    const createdFiles = deps.listNewFiles(targetRoot)
+    deps.recordCreatedFiles(point.id, createdFiles)
+    if (!applied.ok) {
+      return pendingState({
+        error: applied.log || "Git could not apply the evolved changes cleanly.",
+        manifest,
+        patchPath,
+        recoveryId,
+        status: "conflict",
+        targetRoot,
+        toVersion: input.currentVersion,
+      })
+    }
+
+    input.onStatus?.("Verifying migrated evolve changes…")
+    const verified = await deps.verify(targetRoot)
+    if (!verified.ok) {
+      return pendingState({
+        error: `${verified.step}: ${verified.log}`,
+        manifest,
+        patchPath,
+        recoveryId,
+        status: "failed",
+        targetRoot,
+        toVersion: input.currentVersion,
+      })
+    }
+
+    deps.swap(targetRoot, verified.build)
+    deps.activate(targetRoot)
     await clearEvolveMigrationState()
-    return { status: "no-changes" }
-  }
-  const patchPath = await writeMigrationPatch(manifest.packageVersion, input.currentVersion, patch)
-  const point = deps.createRecovery(targetRoot, `migrate evolved changes from ${manifest.packageVersion}`)
-  const applied = await deps.applyPatch(targetRoot, patchPath)
-  const createdFiles = deps.listNewFiles(targetRoot)
-  deps.recordCreatedFiles(point.id, createdFiles)
-  if (!applied.ok) {
+    return { status: "migrated", recoveryId: point.id, root: targetRoot }
+  } catch (error) {
     return pendingState({
-      error: applied.log || "Git could not apply the evolved changes cleanly.",
+      error: `Automatic evolve migration failed: ${formatMigrationError(error)}`,
       manifest,
       patchPath,
-      recoveryId: point.id,
-      status: "conflict",
-      targetRoot,
-      toVersion: input.currentVersion,
-    })
-  }
-
-  input.onStatus?.("Verifying migrated evolve changes…")
-  const verified = await deps.verify(targetRoot)
-  if (!verified.ok) {
-    return pendingState({
-      error: `${verified.step}: ${verified.log}`,
-      manifest,
-      patchPath,
-      recoveryId: point.id,
+      recoveryId,
       status: "failed",
       targetRoot,
       toVersion: input.currentVersion,
     })
   }
-
-  deps.swap(targetRoot, verified.build)
-  deps.activate(targetRoot)
-  await clearEvolveMigrationState()
-  return { status: "migrated", recoveryId: point.id, root: targetRoot }
 }
 
 export async function completePendingEvolveMigration(input: {
@@ -175,26 +191,70 @@ export async function completePendingEvolveMigration(input: {
   const state = await readEvolveMigrationState()
   if (!state) return { ok: false, message: "No evolved-change migration is waiting to be resolved." }
   const deps = { ...defaultMigrationDeps, ...input.deps }
-  const status = await deps.status(state.targetRoot)
-  if (/^UU |^AA |^DD |^AU |^UA |^DU |^UD /m.test(status)) {
-    const updated = { ...state, error: "Git merge conflicts are still unresolved.", status: "conflict" as const }
+  try {
+    const status = await deps.status(state.targetRoot)
+    if (/^UU |^AA |^DD |^AU |^UA |^DU |^UD /m.test(status)) {
+      const updated = { ...state, error: "Git merge conflicts are still unresolved.", status: "conflict" as const }
+      await writeEvolveMigrationState(updated)
+      return { ok: false, message: updated.error, state: updated }
+    }
+    input.onStatus?.("Verifying the resolved evolve migration…")
+    const verified = await deps.verify(state.targetRoot)
+    if (!verified.ok) {
+      const updated = { ...state, error: `${verified.step}: ${verified.log}`, status: "failed" as const }
+      await writeEvolveMigrationState(updated)
+      return { ok: false, message: updated.error, state: updated }
+    }
+    if (state.recoveryId) {
+      deps.recordCreatedFiles(state.recoveryId, deps.listNewFiles(state.targetRoot))
+    }
+    deps.swap(state.targetRoot, verified.build)
+    deps.activate(state.targetRoot)
+    await clearEvolveMigrationState()
+    return { ok: true, recoveryId: state.recoveryId, root: state.targetRoot }
+  } catch (error) {
+    const updated = {
+      ...state,
+      error: `Evolve merge completion failed: ${formatMigrationError(error)}`,
+      status: "failed" as const,
+    }
     await writeEvolveMigrationState(updated)
     return { ok: false, message: updated.error, state: updated }
   }
-  input.onStatus?.("Verifying the resolved evolve migration…")
-  const verified = await deps.verify(state.targetRoot)
-  if (!verified.ok) {
-    const updated = { ...state, error: `${verified.step}: ${verified.log}`, status: "failed" as const }
+}
+
+export async function preparePendingEvolveMigrationCheckout(input: {
+  onStatus?: (message: string) => void
+  prepareSource?: MigrationDeps["prepareSource"]
+} = {}): Promise<
+  | { ok: true; state: EvolveMigrationState }
+  | { ok: false; message: string; state?: EvolveMigrationState }
+> {
+  const state = await readEvolveMigrationState()
+  if (!state) return { ok: false, message: "No evolved-change migration is waiting to be resolved." }
+  if (state.targetRoot && existsSync(state.targetRoot)) return { ok: true, state }
+
+  try {
+    input.onStatus?.(`Preparing Furnace ${state.toVersion} so the agent can reapply previous evolve changes…`)
+    const prepareSource = input.prepareSource ?? defaultMigrationDeps.prepareSource
+    const prepared = await prepareSource(state.toVersion, input.onStatus)
+    if (!prepared.available) {
+      const updated = { ...state, error: prepared.message, status: "failed" as const }
+      await writeEvolveMigrationState(updated)
+      return { ok: false, message: updated.error, state: updated }
+    }
+    const updated = { ...state, targetRoot: prepared.root }
+    await writeEvolveMigrationState(updated)
+    return { ok: true, state: updated }
+  } catch (error) {
+    const updated = {
+      ...state,
+      error: `Could not prepare the evolve merge checkout: ${formatMigrationError(error)}`,
+      status: "failed" as const,
+    }
     await writeEvolveMigrationState(updated)
     return { ok: false, message: updated.error, state: updated }
   }
-  if (state.recoveryId) {
-    deps.recordCreatedFiles(state.recoveryId, deps.listNewFiles(state.targetRoot))
-  }
-  deps.swap(state.targetRoot, verified.build)
-  deps.activate(state.targetRoot)
-  await clearEvolveMigrationState()
-  return { ok: true, recoveryId: state.recoveryId, root: state.targetRoot }
 }
 
 async function pendingState(input: {
@@ -261,6 +321,10 @@ async function gitResult(root: string, args: string[], env?: NodeJS.ProcessEnv):
   }
 }
 
+function formatMigrationError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export async function captureManagedEvolvePatch(root: string): Promise<string> {
   const indexPath = join(homedir(), ".furnace", "evolve", "tmp", `index-${process.pid}-${randomBytes(4).toString("hex")}`)
   await mkdir(dirname(indexPath), { recursive: true })
@@ -289,7 +353,11 @@ const defaultMigrationDeps: MigrationDeps = {
   listNewFiles,
   prepareSource: (version, onStatus) => prepareManagedFurnaceSource({ version, onStatus }),
   recordCreatedFiles,
-  status: async (root) => (await gitResult(root, ["status", "--porcelain"])).stdout,
+  status: async (root) => {
+    const result = await gitResult(root, ["status", "--porcelain"])
+    if (!result.ok) throw new Error(result.log || "Could not inspect the evolve migration checkout.")
+    return result.stdout
+  },
   swap: performSwap,
   verify: verifyToTemp,
 }

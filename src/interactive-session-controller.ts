@@ -749,36 +749,53 @@ export async function runInteractive(input: {
   }
 
   async function handleEvolveMergeCommand(): Promise<void> {
-    const { completePendingEvolveMigration, readEvolveMigrationState } = await import("./evolve/migration.js")
-    const state = await readEvolveMigrationState()
-    if (!state) {
-      showTransientStatus("No evolved-change migration needs manual resolution.")
-      return
-    }
-    if (!state.targetRoot || !existsSync(state.targetRoot)) {
-      showTransientStatus(`The migration checkout is unavailable. ${state.error}`, 10000)
-      return
-    }
     if (isApiKeyMissing(input.config)) {
       showTransientStatus("An API key is required for /evolve-merge. Use /login first.", 8000)
       return
     }
 
+    const {
+      completePendingEvolveMigration,
+      preparePendingEvolveMigrationCheckout,
+      readEvolveMigrationState,
+    } = await import("./evolve/migration.js")
     let restartRequested = false
-    const mergeSession = input.store.createSession({
-      cwd: state.targetRoot,
-      relationType: "subagent",
-      title: `evolve merge: ${state.fromVersion} → ${state.toVersion}`,
-    })
-    permissions.applyDecision(
-      { args: "", callId: "evolve-merge", cwd: state.targetRoot, description: "evolve merge", pattern: "*", permission: "*", sessionId: mergeSession.id, toolName: "*" },
-      "allow_all_session",
-    )
-
     terminal.setBusy(true)
     terminal.setInputDisabled(true)
-    terminal.setThinking(true, "Resolving evolve migration")
+    terminal.setThinking(true, "Preparing evolve migration")
     try {
+      if (!(await readEvolveMigrationState())) {
+        showTransientStatus("No evolved-change migration needs manual resolution.")
+        return
+      }
+      const prepared = await preparePendingEvolveMigrationCheckout({
+        onStatus: (message) => showTransientStatus(message, 12000),
+      })
+      if (!prepared.ok) {
+        const message = `Evolve merge could not prepare a repair checkout: ${prepared.message}`
+        input.store.appendMessage(sessionId, "assistant", message, input.config.model)
+        showTransientStatus(message, 12000)
+        return
+      }
+      const state = prepared.state
+      if (!existsSync(state.oldRoot) && (!state.patchPath || !existsSync(state.patchPath))) {
+        const message = "Evolve merge cannot recover these changes because both the previous evolved source and its saved patch are unavailable."
+        input.store.appendMessage(sessionId, "assistant", message, input.config.model)
+        showTransientStatus(message, 12000)
+        return
+      }
+
+      const mergeSession = input.store.createSession({
+        cwd: state.targetRoot,
+        relationType: "subagent",
+        title: `evolve merge: ${state.fromVersion} → ${state.toVersion}`,
+      })
+      permissions.applyDecision(
+        { args: "", callId: "evolve-merge", cwd: state.targetRoot, description: "evolve merge", pattern: "*", permission: "*", sessionId: mergeSession.id, toolName: "*" },
+        "allow_all_session",
+      )
+
+      terminal.setThinking(true, "Resolving evolve migration")
       await runSingleTurn({
         config: input.config,
         cwd: state.targetRoot,
@@ -818,7 +835,9 @@ export async function runInteractive(input: {
         onStatus: (message) => showTransientStatus(message, 12000),
       })
       if (!completed.ok) {
-        input.store.appendMessage(sessionId, "assistant", `Evolve migration is still unresolved: ${completed.message}`, input.config.model)
+        const message = `Evolve migration is still unresolved: ${completed.message}. Run /evolve-merge again after correcting it.`
+        input.store.appendMessage(sessionId, "assistant", message, input.config.model)
+        showTransientStatus(message, 12000)
         return
       }
       restartRequested = await promptForEvolveRestart(
@@ -826,7 +845,9 @@ export async function runInteractive(input: {
         `Your previous evolve changes were reapplied to Furnace ${state.toVersion} and verified.`,
       )
     } catch (error) {
-      input.store.appendMessage(sessionId, "assistant", `Evolve merge failed: ${formatError(error)}`, input.config.model)
+      const message = `Evolve merge failed: ${formatError(error)}. The migration remains saved; run /evolve-merge to retry.`
+      input.store.appendMessage(sessionId, "assistant", message, input.config.model)
+      showTransientStatus(message, 12000)
     } finally {
       if (!restartRequested) {
         terminal.setThinking(false)
@@ -2743,7 +2764,9 @@ function renderEvolveMergePrompt(state: EvolveMigrationState): string {
     `Automatic migration error: ${state.error}`,
     "",
     "Resolve the migration in the new source root:",
-    "- Inspect Git conflict markers, the saved patch, and the old evolved source to understand the intended customizations.",
+    "- Start with `git status` and inspect the current target diff; the automatic attempt may have applied some or all changes before failing.",
+    ...(state.patchPath ? ["- Inspect the saved cumulative patch to identify every intended customization."] : []),
+    ...(existsSync(state.oldRoot) ? ["- Compare against the old evolved source when the patch or conflict markers are incomplete."] : []),
     "- Preserve the new Furnace version's upstream behavior while carrying forward the user's evolved changes wherever compatible.",
     "- Resolve every Git conflict and stage resolved files with `git add`.",
     "- Do not commit, build, or run the full test suite; the migration orchestrator verifies and builds after review.",

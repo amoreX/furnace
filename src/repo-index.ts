@@ -1,12 +1,18 @@
+import { execFile } from "node:child_process"
 import { existsSync, type Dirent } from "node:fs"
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
+import { promisify } from "node:util"
 import type { FurnaceConfig } from "./config.js"
+import { ensureFurnaceStateExcluded } from "./git-exclude.js"
 import { completeOpenRouterResponse, type OpenRouterModel } from "./openrouter.js"
 import { isSecretLikePath } from "./tools/common.js"
 
 export const repoIndexRelativePath = ".furnace/repo-index.md"
 export const repoIndexMetaRelativePath = ".furnace/repo-index.meta.json"
+const execFileAsync = promisify(execFile)
+let temporaryFileCounter = 0
+const metaWriteQueues = new Map<string, Promise<unknown>>()
 
 const noisyDirs = new Set([
   ".furnace",
@@ -48,12 +54,23 @@ export type RepoIndexMeta = {
   fileCount: number
   generatedAt: string
   gitHead: string | null
+  indexedUpstreamOid?: string | null
+  indexedUpstreamRef?: string | null
+  onboardingDecision?: "accepted" | "declined"
   packageName: string | null
+  version?: 2
 }
 
 export type RepoIndexStaleness = {
   reason?: string
   stale: boolean
+}
+
+export type RepoGitState = {
+  headOid: string | null
+  root: string
+  upstreamOid: string | null
+  upstreamRef: string | null
 }
 
 export function repoIndexPath(cwd: string): string {
@@ -65,7 +82,10 @@ export function repoIndexMetaPath(cwd: string): string {
 }
 
 export async function shouldOfferRepoIndex(cwd: string): Promise<boolean> {
-  return isInsideGitRepo(cwd) && !existsSync(repoIndexPath(cwd))
+  const root = await resolveRepoRoot(cwd)
+  if (!root || existsSync(repoIndexPath(root))) return false
+  const meta = await readRepoIndexMeta(root)
+  return meta?.onboardingDecision !== "accepted" && meta?.onboardingDecision !== "declined"
 }
 
 export function isInsideGitRepo(cwd: string): boolean {
@@ -78,11 +98,54 @@ export function isInsideGitRepo(cwd: string): boolean {
   }
 }
 
-export function selectRepoIndexModel(config: FurnaceConfig, models: OpenRouterModel[] = []): string {
+export async function resolveRepoRoot(cwd: string): Promise<string | null> {
+  const root = await runGit(cwd, ["rev-parse", "--show-toplevel"])
+  if (root) return resolve(root)
+  let current = resolve(cwd)
+  while (true) {
+    if (existsSync(resolve(current, ".git"))) return current
+    const parent = dirname(current)
+    if (parent === current) return null
+    current = parent
+  }
+}
+
+export async function probeRepoGit(cwd: string): Promise<RepoGitState | null> {
+  const root = await resolveRepoRoot(cwd)
+  if (!root) return null
+  const [headOid, upstreamRef, upstreamOid] = await Promise.all([
+    runGit(root, ["rev-parse", "--verify", "HEAD"]),
+    runGit(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]),
+    runGit(root, ["rev-parse", "--verify", "@{upstream}"]),
+  ])
+  return { headOid, root, upstreamOid, upstreamRef }
+}
+
+export async function recordRepoIndexOnboardingDecision(
+  cwd: string,
+  decision: "accepted" | "declined",
+): Promise<void> {
+  const root = await resolveRepoRoot(cwd)
+  if (!root) return
+  await updateRepoIndexMeta(root, (current) => ({
+    fileCount: current?.fileCount ?? 0,
+    generatedAt: current?.generatedAt ?? new Date().toISOString(),
+    gitHead: current?.gitHead ?? null,
+    indexedUpstreamOid: current?.indexedUpstreamOid ?? null,
+    indexedUpstreamRef: current?.indexedUpstreamRef ?? null,
+    onboardingDecision: decision,
+    packageName: current?.packageName ?? null,
+    version: 2,
+  }))
+}
+
+export function selectRepoIndexModel(config: FurnaceConfig, models: Array<OpenRouterModel & { providerId?: string }> = []): string {
   const preferredPatterns = preferredModelPatterns(config.provider)
-  const match = models.find((model) => preferredPatterns.some((pattern) => pattern.test(`${model.id} ${model.name}`)))
-  if (match) return match.id
-  if (config.provider === "openrouter" && config.titleModel) return config.titleModel
+  const compatible = models.filter((model) => !model.providerId || model.providerId === config.provider)
+  for (const pattern of preferredPatterns) {
+    const match = compatible.find((model) => pattern.test(`${model.id} ${model.name}`))
+    if (match) return match.id
+  }
   return config.providerConfig.defaultModel || config.model
 }
 
@@ -91,36 +154,37 @@ export async function generateRepoIndex(input: {
   cwd: string
   models?: OpenRouterModel[]
 }): Promise<{ content: string; model: string; path: string }> {
-  const snapshot = await collectRepoIndexSnapshot(input.cwd)
+  const git = await probeRepoGit(input.cwd)
+  const root = git?.root ?? resolve(input.cwd)
+  const snapshot = await collectRepoIndexSnapshot(root)
   const model = selectRepoIndexModel(input.config, input.models)
   const generatedAt = new Date().toISOString()
-  let body: string
-
-  try {
-    body = await completeOpenRouterResponse(
-      { ...input.config, modelSettings: { fast: true } },
-      [
-        {
-          role: "system",
-          content: "Create concise repository orientation notes for a coding agent. Focus on where to look for common work. Do not produce exhaustive file-by-file documentation.",
-        },
-        {
-          role: "user",
-          content: renderRepoIndexPrompt(snapshot),
-        },
-      ],
-      { maxTokens: 2200, model },
-    )
-  } catch (error) {
-    body = renderFallbackRepoIndex(snapshot, error)
-  }
+  const body = await completeOpenRouterResponse(
+    { ...input.config, modelSettings: { fast: true } },
+    [
+      {
+        role: "system",
+        content: "Create concise repository orientation notes for a coding agent. Focus on where to look for common work. Do not produce exhaustive file-by-file documentation.",
+      },
+      {
+        role: "user",
+        content: renderRepoIndexPrompt(snapshot),
+      },
+    ],
+    { maxTokens: 2200, model },
+  )
 
   const content = renderRepoIndexDocument({ body, generatedAt, snapshot })
-  const path = repoIndexPath(input.cwd)
-  const metaPath = repoIndexMetaPath(input.cwd)
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, content, "utf8")
-  await writeFile(metaPath, `${JSON.stringify(await buildRepoIndexMeta(input.cwd, snapshot, generatedAt), null, 2)}\n`, "utf8")
+  const path = repoIndexPath(root)
+  await writeTextAtomic(path, content)
+  const meta = await buildRepoIndexMeta(root, snapshot, generatedAt)
+  await writeRepoIndexMeta(root, {
+    ...meta,
+    indexedUpstreamOid: git?.upstreamOid ?? null,
+    indexedUpstreamRef: git?.upstreamRef ?? null,
+    onboardingDecision: "accepted",
+    version: 2,
+  })
   return { content, model, path }
 }
 
@@ -252,10 +316,8 @@ function renderRepoIndexDocument(input: { body: string; generatedAt: string; sna
   ].join("\n")
 }
 
-function renderFallbackRepoIndex(snapshot: RepoIndexSnapshot, error?: unknown): string {
-  const errorLine = error ? [`Generation fallback: ${error instanceof Error ? error.message : String(error)}`, ""] : []
+function renderFallbackRepoIndex(snapshot: RepoIndexSnapshot): string {
   return [
-    ...errorLine,
     "## Project Shape",
     "",
     "- Use this as a starting point before broad exploration.",
@@ -288,7 +350,7 @@ async function buildRepoIndexMeta(cwd: string, snapshot: RepoIndexSnapshot, gene
   }
 }
 
-async function readRepoIndexMeta(cwd: string): Promise<RepoIndexMeta | null> {
+export async function readRepoIndexMeta(cwd: string): Promise<RepoIndexMeta | null> {
   try {
     const raw = await readFile(repoIndexMetaPath(cwd), "utf8")
     const parsed = JSON.parse(raw) as Partial<RepoIndexMeta>
@@ -297,11 +359,35 @@ async function readRepoIndexMeta(cwd: string): Promise<RepoIndexMeta | null> {
       fileCount: parsed.fileCount,
       generatedAt: parsed.generatedAt,
       gitHead: typeof parsed.gitHead === "string" ? parsed.gitHead : null,
+      indexedUpstreamOid: typeof parsed.indexedUpstreamOid === "string" ? parsed.indexedUpstreamOid : null,
+      indexedUpstreamRef: typeof parsed.indexedUpstreamRef === "string" ? parsed.indexedUpstreamRef : null,
+      onboardingDecision: parsed.onboardingDecision === "accepted" || parsed.onboardingDecision === "declined"
+        ? parsed.onboardingDecision
+        : undefined,
       packageName: typeof parsed.packageName === "string" ? parsed.packageName : null,
+      version: parsed.version === 2 ? 2 : undefined,
     }
   } catch {
     return null
   }
+}
+
+export async function writeRepoIndexMeta(cwd: string, meta: RepoIndexMeta): Promise<void> {
+  await enqueueMetaWrite(cwd, async () => {
+    ensureFurnaceStateExcluded(cwd)
+    await writeTextAtomic(repoIndexMetaPath(cwd), `${JSON.stringify(meta, null, 2)}\n`)
+  })
+}
+
+export async function updateRepoIndexMeta(
+  cwd: string,
+  update: (current: RepoIndexMeta | null) => RepoIndexMeta,
+): Promise<void> {
+  await enqueueMetaWrite(cwd, async () => {
+    ensureFurnaceStateExcluded(cwd)
+    const next = update(await readRepoIndexMeta(cwd))
+    await writeTextAtomic(repoIndexMetaPath(cwd), `${JSON.stringify(next, null, 2)}\n`)
+  })
 }
 
 async function readPackageName(cwd: string): Promise<string | null> {
@@ -369,5 +455,42 @@ async function resolveCommonGitDir(gitDir: string): Promise<string | null> {
     return resolve(gitDir, raw)
   } catch {
     return gitDir
+  }
+}
+
+async function runGit(cwd: string, args: string[]): Promise<string | null> {
+  try {
+    const result = await execFileAsync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    })
+    const stdout = typeof result.stdout === "string" ? result.stdout.trim() : ""
+    return stdout || null
+  } catch {
+    return null
+  }
+}
+
+async function writeTextAtomic(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  temporaryFileCounter += 1
+  const temporaryPath = `${path}.${process.pid}.${temporaryFileCounter}.tmp`
+  try {
+    await writeFile(temporaryPath, content, "utf8")
+    await rename(temporaryPath, path)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => {})
+  }
+}
+
+async function enqueueMetaWrite<T>(cwd: string, operation: () => Promise<T>): Promise<T> {
+  const path = repoIndexMetaPath(cwd)
+  const previous = metaWriteQueues.get(path) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(operation)
+  metaWriteQueues.set(path, next)
+  try {
+    return await next
+  } finally {
+    if (metaWriteQueues.get(path) === next) metaWriteQueues.delete(path)
   }
 }

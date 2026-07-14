@@ -29,7 +29,8 @@ import type { MessageEntryData, SessionRecord } from "./session/types.js"
 import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-commands/loader.js"
 import type { CustomCommand } from "./custom-commands/types.js"
 import { PromptQueueStore, type PromptQueueInput } from "./prompt-queue.js"
-import { generateRepoIndex, shouldOfferRepoIndex } from "./repo-index.js"
+import { recordRepoIndexOnboardingDecision, shouldOfferRepoIndex } from "./repo-index.js"
+import { createRepoIndexService, type RepoIndexService } from "./repo-index-service.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
@@ -82,6 +83,8 @@ export async function runInteractive(input: {
   let transientStatusToken = 0
   let persistentUpgradeNotice: string | undefined
   let repoIndexOnboardingRunning = false
+  let repoIndexService!: RepoIndexService
+  let repoIndexStatusTimer: ReturnType<typeof setTimeout> | undefined
   const initialSession = input.store.getSession(sessionId)
   let terminal!: FurnaceTerminal
   const isCurrentSessionRunning = (): boolean => repoIndexOnboardingRunning || runningSessionIds.has(sessionId)
@@ -231,11 +234,32 @@ export async function runInteractive(input: {
       })
     },
   })
+  repoIndexService = createRepoIndexService({
+    config: input.config,
+    cwd: input.cwd,
+    getModels: () => modelListCache.promise,
+    onStatus: (status) => {
+      if (repoIndexStatusTimer) clearTimeout(repoIndexStatusTimer)
+      const tone = status.state === "failed"
+        ? "error"
+        : status.state === "warning"
+          ? "warning"
+          : status.state === "success"
+            ? "success"
+            : "default"
+      terminal.setRepoIndexStatus(status.message || undefined, tone)
+      if (status.state !== "running" && status.message) {
+        repoIndexStatusTimer = setTimeout(() => terminal.setRepoIndexStatus(undefined), status.state === "failed" ? 8000 : 4000)
+      }
+    },
+  })
   applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   syncPersistentStatusNotice()
-  syncModelDisplayFromCache()
-  void maybeRunRepoIndexOnboarding().catch((error) => {
-    showTransientStatus(`Repo indexing failed: ${formatError(error)}`, 6000)
+  const initialModelSync = syncModelDisplayFromCache()
+  void initialModelSync.finally(() => {
+    void maybeRunRepoIndexOnboarding().catch((error) => {
+      showTransientStatus(`Repo indexing failed: ${formatError(error)}`, 6000)
+    })
   })
 
   // Non-blocking startup update check — shown persistently until the session ends
@@ -251,6 +275,8 @@ export async function runInteractive(input: {
     await terminal.run()
   } finally {
     clearTransientStatus()
+    if (repoIndexStatusTimer) clearTimeout(repoIndexStatusTimer)
+    repoIndexService.stop()
     lofi.stop()
   }
 
@@ -384,6 +410,7 @@ export async function runInteractive(input: {
         typingIndicator: input.config.typingIndicator,
         typingIndicatorBlink: input.config.typingIndicatorBlink,
         notifications: input.config.notifications,
+        repoIndexPolicy: input.config.repoIndexPolicy,
         model: input.config.model,
         theme: input.config.theme,
         modelSettings: input.config.modelSettings,
@@ -395,8 +422,10 @@ export async function runInteractive(input: {
           typingIndicator: updated.typingIndicator ?? input.config.typingIndicator,
           typingIndicatorBlink: updated.typingIndicatorBlink === true,
           notifications: updated.notifications === true,
+          repoIndexPolicy: updated.repoIndexPolicy ?? input.config.repoIndexPolicy,
           statusLine: statusLinePreferencesFrom(updated),
         })
+        repoIndexService.setPolicy(input.config.repoIndexPolicy)
         terminal.setLayout(input.config.layout)
         terminal.setStatusLinePreferences(input.config.statusLine)
         try {
@@ -629,7 +658,7 @@ export async function runInteractive(input: {
     const undoing = points.map((point) => `• ${point.description}`).join("\n")
     const created = [...new Set(points.flatMap((point) => point.createdFiles))]
     const createdNote = created.length > 0 ? `\n\nFiles that will be removed:\n${created.map((path) => `• ${path}`).join("\n")}` : ""
-    const response = await terminal.requestQuestions({
+    const response = await terminalForSession(sessionId).requestQuestions({
       questions: [
         {
           id: "reset",
@@ -701,7 +730,13 @@ export async function runInteractive(input: {
       ],
     })
     const answer = response.answers.find((item) => item.questionId === "repo_index")
-    if (response.rejected || answer?.optionId !== "yes") return
+    if (response.rejected) return
+    if (answer?.optionId === "no") {
+      await recordRepoIndexOnboardingDecision(input.cwd, "declined")
+      showTransientStatus("Okay — Furnace will not ask again. Run /init whenever you want to create the index.", 6000)
+      return
+    }
+    if (answer?.optionId !== "yes") return
 
     await runRepoIndexInitialization({ manual: false })
   }
@@ -715,17 +750,12 @@ export async function runInteractive(input: {
     repoIndexOnboardingRunning = true
     terminal.setBusy(true)
     terminal.setInputDisabled(true)
-    terminal.setThinking(true, "Learning about repo")
-    terminal.setStatusNotice(options.manual ? "Learning about this folder. This may take a little time." : "Learning about repo. This may take a little time.")
     try {
-      const models = modelListCache.models || await modelListCache.promise.catch(() => [])
-      await generateRepoIndex({ config: input.config, cwd: input.cwd, models })
-      showTransientStatus("Repo index saved to .furnace/repo-index.md.", 6000)
+      await repoIndexService.request(options.manual ? "manual" : "onboarding")
     } finally {
       repoIndexOnboardingRunning = false
       terminal.setInputDisabled(false)
       terminal.setBusy(false)
-      terminal.setThinking(false)
       syncPersistentStatusNotice()
     }
   }
@@ -742,8 +772,8 @@ export async function runInteractive(input: {
     }
   }
 
-  function syncModelDisplayFromCache(cache = modelListCache): void {
-    void cache.promise.then((models) => {
+  function syncModelDisplayFromCache(cache = modelListCache): Promise<void> {
+    return cache.promise.then((models) => {
       if (cache !== modelListCache) return
       const match = models.find((model) => model.id === input.config.model)
       terminal.setModel(input.config.model, input.config.modelSettings, match?.name)

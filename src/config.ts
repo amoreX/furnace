@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
-import { loadPreferences, normalizeTerminalLayout, statusLinePreferencesFrom, type ModelSettings, type StatusLinePreferences, type TerminalLayout, type TypingIndicatorStyle } from "./preferences.js"
+import { loadPreferences, normalizeRepoIndexPolicy, normalizeTerminalLayout, statusLinePreferencesFrom, type ModelSettings, type RepoIndexPolicy, type StatusLinePreferences, type TerminalLayout, type TypingIndicatorStyle } from "./preferences.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { resolveProvider, BUILTIN_PROVIDERS } from "./providers/registry.js"
 import { createResolvedProvider, resolveProviderKey } from "./providers/resolution.js"
@@ -23,6 +23,7 @@ export type FurnaceConfig = {
   provider: string
   apiKey: string
   providerConfig: ResolvedProvider
+  repoIndexPolicy: RepoIndexPolicy
   siteUrl: string
   skillPaths: string[]
   statusLine: StatusLinePreferences
@@ -62,6 +63,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     provider: effectiveProviderId,
     apiKey,
     providerConfig,
+    repoIndexPolicy: normalizeRepoIndexPolicy(preferences.repoIndexPolicy),
     siteUrl,
     skillPaths: Array.isArray(preferences.skillPaths) ? preferences.skillPaths.filter((path) => typeof path === "string" && path.trim()).map((path) => path.trim()) : [],
     statusLine: statusLinePreferencesFrom(preferences),

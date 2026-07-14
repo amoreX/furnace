@@ -42,6 +42,7 @@ export type FurnaceTerminal = {
   setMode(mode: AgentMode, planPath?: string): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
+  setRepoIndexStatus(content?: string, tone?: StatusNoticeTone): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
   showModelEditor(
     choice: ModelChoice,

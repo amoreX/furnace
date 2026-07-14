@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -17,6 +17,41 @@ test("repo index offer is based on git repo and .furnace/repo-index.md existence
     await mkdir(join(cwd, ".furnace"), { recursive: true })
     await writeFile(repoIndexPath(cwd), "# Existing index\n", "utf8")
     assert.equal(await shouldOfferRepoIndex(cwd), false)
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("declining repo index onboarding is persisted and suppresses future prompts", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-repo-index-decline-"))
+  try {
+    const {
+      readRepoIndexMeta,
+      recordRepoIndexOnboardingDecision,
+      shouldOfferRepoIndex,
+    } = await import("../dist/repo-index.js")
+    await mkdir(join(cwd, ".git"), { recursive: true })
+
+    assert.equal(await shouldOfferRepoIndex(cwd), true)
+    await recordRepoIndexOnboardingDecision(cwd, "declined")
+    assert.equal(await shouldOfferRepoIndex(cwd), false)
+    assert.equal((await readRepoIndexMeta(cwd)).onboardingDecision, "declined")
+    await recordRepoIndexOnboardingDecision(cwd, "accepted")
+    assert.equal(await shouldOfferRepoIndex(cwd), false)
+    assert.equal((await readRepoIndexMeta(cwd)).onboardingDecision, "accepted")
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("nested launches resolve repo index state at one worktree root", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-repo-index-root-"))
+  try {
+    const { resolveRepoRoot } = await import("../dist/repo-index.js")
+    const nested = join(cwd, "packages", "app")
+    await mkdir(join(cwd, ".git"), { recursive: true })
+    await mkdir(nested, { recursive: true })
+    assert.equal(await resolveRepoRoot(nested), cwd)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
@@ -74,6 +109,39 @@ test("repo index snapshot skips noisy dirs and secret-like files", async () => {
   }
 })
 
+test("provider failures do not write an index or metadata file", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-repo-index-provider-failure-"))
+  try {
+    await mkdir(join(cwd, ".git"), { recursive: true })
+    await writeFile(join(cwd, "README.md"), "# Demo\n", "utf8")
+    const { generateRepoIndex, repoIndexMetaPath, repoIndexPath } = await import("../dist/repo-index.js")
+    const config = {
+      apiKey: "invalid",
+      appName: "Furnace",
+      model: "gpt-4o-mini",
+      modelSettings: {},
+      provider: "openai",
+      providerConfig: {
+        apiKey: "invalid",
+        appName: "Furnace",
+        baseUrl: "http://127.0.0.1:1/v1",
+        defaultModel: "gpt-4o-mini",
+        displayName: "OpenAI",
+        id: "openai",
+        protocol: "openai-compatible",
+        siteUrl: "http://localhost",
+      },
+      siteUrl: "http://localhost",
+    }
+
+    await assert.rejects(generateRepoIndex({ config, cwd }))
+    await assert.rejects(access(repoIndexPath(cwd)))
+    await assert.rejects(access(repoIndexMetaPath(cwd)))
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
 test("repo index model selector prefers fast provider-compatible models", async () => {
   const { selectRepoIndexModel } = await import("../dist/repo-index.js")
   const baseConfig = {
@@ -105,5 +173,13 @@ test("repo index model selector prefers fast provider-compatible models", async 
       { id: "gpt-4o-mini", name: "GPT 4o mini" },
     ]),
     "gpt-4o-mini",
+  )
+
+  assert.equal(
+    selectRepoIndexModel(baseConfig, [
+      { id: "gpt-4o-mini", name: "GPT 4o mini", providerId: "openai" },
+      { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5", providerId: "openrouter" },
+    ]),
+    "anthropic/claude-haiku-4.5",
   )
 })

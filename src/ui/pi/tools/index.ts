@@ -6,6 +6,7 @@
  * ToolExecutionComponent (tool names and render-capable definitions) are kept.
  */
 import type { ToolDefinition } from "./types.js";
+import { createAskQuestionToolDefinition } from "./ask-question.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import { createFindToolDefinition } from "./find.js";
@@ -22,10 +23,11 @@ export { createGrepToolDefinition, type GrepToolDetails, type GrepToolInput } fr
 export { createLsToolDefinition, type LsToolDetails, type LsToolInput } from "./ls.js";
 export { createReadToolDefinition, type ReadToolDetails, type ReadToolInput } from "./read.js";
 export { createWriteToolDefinition, type WriteToolInput } from "./write.js";
+export { createAskQuestionToolDefinition } from "./ask-question.js";
 
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
-export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls" | "ask_question";
+export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "ask_question"]);
 
 export function createToolDefinition(toolName: ToolName, cwd: string): ToolDef {
 	switch (toolName) {
@@ -43,6 +45,8 @@ export function createToolDefinition(toolName: ToolName, cwd: string): ToolDef {
 			return createFindToolDefinition(cwd);
 		case "ls":
 			return createLsToolDefinition(cwd);
+		case "ask_question":
+			return createAskQuestionToolDefinition();
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -57,5 +61,6 @@ export function createAllToolDefinitions(cwd: string): Record<ToolName, ToolDef>
 		grep: createGrepToolDefinition(cwd),
 		find: createFindToolDefinition(cwd),
 		ls: createLsToolDefinition(cwd),
+		ask_question: createAskQuestionToolDefinition(),
 	};
 }

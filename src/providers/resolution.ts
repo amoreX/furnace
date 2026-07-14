@@ -23,8 +23,8 @@ export async function resolveProviderKey(
   const customKey = rawCustomKey ? resolveKeyValue(rawCustomKey) : undefined
   const flags = { hasCustomKey: Boolean(rawCustomKey), hasSavedKey: Boolean(rawStoredKey) }
 
-  if (envKey) return { apiKey: envKey, ...flags, source: "environment" }
   if (storedKey) return { apiKey: storedKey, ...flags, source: "saved" }
+  if (envKey) return { apiKey: envKey, ...flags, source: "environment" }
   if (customKey) return { apiKey: customKey, ...flags, source: "custom" }
   if (fallbackKey) return { apiKey: fallbackKey, ...flags, source: "fallback" }
   return { apiKey: "", ...flags, source: "missing" }

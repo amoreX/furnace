@@ -69,3 +69,29 @@ test("project saves do not copy global settings and concurrent global saves do n
     await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
   }
 })
+
+test("repo index policy is global and normalizes invalid values", async () => {
+  const home = await mkdtemp(join(tmpdir(), "furnace-preferences-home-"))
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-preferences-project-"))
+  const previousHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    const {
+      loadPreferences,
+      normalizeRepoIndexPolicy,
+      saveGlobalPreferences,
+      saveModelPreferences,
+    } = await import("../dist/preferences.js")
+    assert.equal(normalizeRepoIndexPolicy(undefined), "agent-decides")
+    assert.equal(normalizeRepoIndexPolicy("invalid"), "agent-decides")
+    assert.equal(normalizeRepoIndexPolicy("every-git-push"), "every-git-push")
+
+    await saveGlobalPreferences({ repoIndexPolicy: "every-git-push" })
+    await saveModelPreferences(cwd, { repoIndexPolicy: "agent-decides", model: "project-model" })
+    assert.equal((await loadPreferences(cwd)).repoIndexPolicy, "every-git-push")
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
+  }
+})

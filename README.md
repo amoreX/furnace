@@ -149,7 +149,7 @@ Built-in slash commands include:
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
 | `/tasks` | Show active subagents. |
 | `/compact [focus]` | Manually summarize old context. |
-| `/init` | Learn the current repo/folder and write `.furnace/repo-index.md`. |
+| `/init` | Force learning the current git worktree and write `.furnace/repo-index.md`. |
 | `/skills list` | List discovered skills. |
 | `/skills view <name>` | View a skill. |
 | `/skills reload` | Reload skill discovery. |
@@ -272,11 +272,11 @@ Each tool has a schema, permission metadata, execution logic, and bounded model-
 
 ## Repository Index
 
-In interactive mode, Furnace can offer to initialize a git workspace by creating `.furnace/repo-index.md`. The prompt appears only when an API key is configured, the current folder is inside a git repo, and no index exists yet.
+In interactive mode, Furnace can offer to initialize a git worktree by creating `.furnace/repo-index.md`. The prompt appears only when an API key is configured and that worktree has not answered the prompt before. Choosing **No** is remembered and Furnace will not ask again.
 
-The index is a compact map for the agent, not generated docs. It uses fixed sections like `Project Shape`, `Key Directories`, and `File Dictionary`, and should stay under 250 lines when possible. Furnace also writes `.furnace/repo-index.meta.json` with small metadata such as generation time, git head, package name, and indexed file count.
+The index is a compact map for the agent, not generated docs. It uses fixed sections like `Project Shape`, `Key Directories`, and `File Dictionary`, and should stay under 250 lines when possible. Furnace keeps onboarding and upstream-tracking state in `.furnace/repo-index.meta.json`.
 
-Use `/init` to regenerate the index manually. Furnace does not auto-regenerate it or warn just because it is old; the main agent is instructed to read it before broad repo exploration and update only relevant parts when meaningful repo-level structure changes or is discovered.
+Use `/init` to force regeneration at any time, including after declining onboarding. The `/settings` **Repo reindexing** option defaults to **agent decides**, which has the main agent use and maintain the index as it works. Choose **every git push** to watch the tracked upstream and regenerate with a low-cost model in the background. Background indexing does not block input and shows its own status row.
 
 Current session behavior:
 

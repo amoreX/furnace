@@ -353,6 +353,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let activeStatusIndicator: StatusIndicator | undefined
   let statusNoticeText: Text | undefined
   let statusNotice: { content: string; tone: StatusNoticeTone } | undefined
+  let repoIndexStatus: { content: string; tone: StatusNoticeTone } | undefined
 
   const rebuildStatusContainer = () => {
     statusContainer.clear()
@@ -366,6 +367,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       const color = tone === "error" ? "error" : tone === "warning" ? "warning" : tone === "success" ? "success" : "dim"
       statusNoticeText = new Text(theme.fg(color, statusNotice.content), 1, 0)
       statusContainer.addChild(statusNoticeText)
+    }
+    if (repoIndexStatus) {
+      const color = repoIndexStatus.tone === "error"
+        ? "error"
+        : repoIndexStatus.tone === "warning"
+          ? "warning"
+          : repoIndexStatus.tone === "success"
+            ? "success"
+            : "dim"
+      statusContainer.addChild(new Text(theme.fg(color, repoIndexStatus.content), 1, 0))
     }
   }
 
@@ -539,6 +550,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setStatusNotice = (content?: string, tone?: StatusNoticeTone) => {
     statusNotice = content ? { content, tone: tone ?? "default" } : undefined
+    rebuildStatusContainer()
+    ui.requestRender()
+  }
+
+  const setRepoIndexStatus = (content?: string, tone?: StatusNoticeTone) => {
+    repoIndexStatus = content ? { content, tone: tone ?? "default" } : undefined
     rebuildStatusContainer()
     ui.requestRender()
   }
@@ -1187,6 +1204,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       { id: "typingIndicator", label: "Typing indicator", currentValue: currentPrefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
       { id: "typingIndicatorBlink", label: "Typing blink", currentValue: currentPrefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
       { id: "notifications", label: "Notifications", currentValue: currentPrefs.notifications === true ? "on" : "off", values: ["off", "on"] },
+      {
+        id: "repoIndexPolicy",
+        label: "Repo reindexing",
+        description: "Let the agent maintain the index, or refresh it after upstream changes",
+        currentValue: currentPrefs.repoIndexPolicy === "every-git-push" ? "every git push" : "agent decides",
+        values: ["agent decides", "every git push"],
+      },
       { id: "statusShowAppName", label: "App name", currentValue: currentPrefs.statusShowAppName === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowCwd", label: "Cwd", currentValue: currentPrefs.statusShowCwd === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowTitle", label: "Title", currentValue: currentPrefs.statusShowTitle === false ? "off" : "on", values: ["on", "off"] },
@@ -1220,6 +1244,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
               break
             case "notifications":
               updated.notifications = value === "on"
+              break
+            case "repoIndexPolicy":
+              updated.repoIndexPolicy = value === "every git push" ? "every-git-push" : "agent-decides"
               break
             case "statusShowContext":
               updated.statusContextMode = value === "off" ? "off" : value === "percent only" ? "percent" : value === "percent" ? "tokens-percent" : "tokens"
@@ -1379,6 +1406,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setMode,
     setModel,
     setQueuedPrompts,
+    setRepoIndexStatus,
     setSessionMeta,
     setSlashCommandItems,
     setStatusLinePreferences,

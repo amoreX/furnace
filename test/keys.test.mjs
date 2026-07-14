@@ -50,6 +50,24 @@ describe("key storage", async () => {
     assert.equal(keys.anthropic, "sk-ant")
   })
 
+  it("an explicit login key takes precedence over an environment key after restart", async () => {
+    const previous = process.env.OPENROUTER_API_KEY
+    process.env.OPENROUTER_API_KEY = "sk-env-old"
+    try {
+      const { setStoredKey } = await import("../dist/keys.js")
+      const { BUILTIN_PROVIDERS } = await import("../dist/providers/registry.js")
+      const { resolveProviderKey } = await import("../dist/providers/resolution.js")
+      await setStoredKey("openrouter", "sk-login-new")
+      const openrouter = BUILTIN_PROVIDERS.find((provider) => provider.id === "openrouter")
+      const state = await resolveProviderKey(openrouter, [])
+      assert.equal(state.apiKey, "sk-login-new")
+      assert.equal(state.source, "saved")
+    } finally {
+      if (previous === undefined) delete process.env.OPENROUTER_API_KEY
+      else process.env.OPENROUTER_API_KEY = previous
+    }
+  })
+
   it("concurrent key saves do not overwrite another provider", async () => {
     const { setStoredKey, loadStoredKeys } = await import("../dist/keys.js")
     await Promise.all([

@@ -64,6 +64,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setMode",
     "setThinking",
     "setQueuedPrompts",
+    "setRepoIndexStatus",
     "setSlashCommandItems",
     "showModelEditor",
     "showPermissions",
@@ -108,12 +109,12 @@ test("setTranscript and setStreamingContent do not throw", () => {
   })
 })
 
-test("generic tool cards show visible status, input, and output summaries", () => {
+test("answered question cards keep the selected choices visible", () => {
   initTheme("default")
   const component = new ToolExecutionComponent(
     "ask_question",
     "call_question",
-    { questions: [{ prompt: "Which colors?", options: ["Red", "Blue"] }] },
+    { questions: [{ id: "color", prompt: "Which colors?", options: ["Red", "Blue"] }] },
     {},
     undefined,
     { requestRender: () => {} },
@@ -127,9 +128,10 @@ test("generic tool cards show visible status, input, and output summaries", () =
   })
 
   const rendered = stripAnsi(component.render(100).join("\n"))
-  assert.match(rendered, /◆ ask_question\s+✓ done/)
-  assert.match(rendered, /input/)
-  assert.match(rendered, /output.*User answered the questions/)
+  assert.match(rendered, /✓ Asked 1 question/)
+  assert.match(rendered, /Which colors\?/)
+  assert.match(rendered, /\[x\] Red/)
+  assert.match(rendered, /\[ \] Blue/)
 })
 
 test("all terminal layouts have distinct structural headers", () => {

@@ -190,21 +190,23 @@ Coding agents often spend tokens repeatedly rediscovering the same project map. 
 
 Current behavior:
 
-- Interactive startup offers to create the index only when an API key exists, the workspace is inside a git repo, and `.furnace/repo-index.md` does not already exist.
+- Interactive startup offers to create the index once per git worktree. Explicit Yes/No decisions are persisted; cancellation is not treated as a decline.
 - `/init` regenerates the index manually and can overwrite an existing index.
 - Generation scans a bounded snapshot of paths and selected metadata files while skipping noisy and secret-like paths.
 - The model prompt asks for a compact dictionary with fixed sections: `Project Shape`, `Key Directories`, and `File Dictionary`.
 - The generated index is expected to stay under 250 lines when possible, with a hard max of 400 lines.
-- Furnace also writes `.furnace/repo-index.meta.json` with minimal metadata: generation time, git head, package name, and indexed file count.
-- Furnace does not warn on startup just because metadata is old and does not auto-regenerate the index, avoiding surprise token spend.
-- The main agent is instructed to check the index before broad repo exploration, and to update only relevant sections plus metadata when its work meaningfully changes or reveals repo-level structure.
+- Furnace stores onboarding and indexed-upstream state in `.furnace/repo-index.meta.json`; it does not use age or hashes to decide whether the index can be trusted.
+- The default `agent-decides` policy leaves maintenance to the main agent. The optional `every-git-push` policy watches the tracked upstream and performs a coalesced background refresh when it changes.
+- Automatic refresh prefers Haiku 4.5 through configured Anthropic/OpenRouter credentials, then a low-cost OpenAI mini model. It has independent UI status and never blocks the prompt.
+- The main agent is instructed to check the index before broad repo exploration and update relevant sections when its work meaningfully changes or reveals repo-level structure.
 
 Current implementation:
 
-- `src/repo-index.ts` owns snapshot collection, fast-model generation, markdown rendering, and metadata writing.
-- `src/interactive-session-controller.ts` owns interactive onboarding and `/init`.
+- `src/repo-index.ts` owns worktree resolution, snapshot collection, generation, markdown rendering, and state writing.
+- `src/repo-index-service.ts` owns single-flight background refresh and upstream polling.
+- `src/interactive-session-controller.ts` owns interactive onboarding, `/init`, settings integration, and status wiring.
 - `src/prompts/base-system.md` instructs the main agent how to use and maintain the index.
-- `test/repo-index.test.mjs` covers offer conditions, skipped paths, fast model selection, and sidecar metadata staleness helpers.
+- `test/repo-index.test.mjs` and `test/repo-index-service.test.mjs` cover onboarding decisions, worktree roots, provider-safe model selection, upstream changes, coalescing, and manual forcing.
 
 ## Skills
 

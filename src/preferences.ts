@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 
 export type TypingIndicatorStyle = "block" | "underscore" | "bar"
 export type TerminalLayout = "classic" | "notebook" | "console"
+export type RepoIndexPolicy = "agent-decides" | "every-git-push"
 
 const TERMINAL_LAYOUTS = new Set<TerminalLayout>(["classic", "notebook", "console"])
 const PROJECT_PREFERENCE_KEYS = new Set<keyof FurnacePreferences>(["model", "modelSettings", "theme"])
@@ -14,12 +15,17 @@ export function normalizeTerminalLayout(value: string | undefined): TerminalLayo
   return value && TERMINAL_LAYOUTS.has(value as TerminalLayout) ? value as TerminalLayout : "classic"
 }
 
+export function normalizeRepoIndexPolicy(value: string | undefined): RepoIndexPolicy {
+  return value === "every-git-push" ? value : "agent-decides"
+}
+
 export type FurnacePreferences = {
   layout?: TerminalLayout
   model?: string
   modelSettings?: ModelSettings
   notifications?: boolean
   provider?: string
+  repoIndexPolicy?: RepoIndexPolicy
   skillPaths?: string[]
   statusShowAppName?: boolean
   statusShowContext?: boolean

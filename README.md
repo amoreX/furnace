@@ -220,7 +220,8 @@ An evolve run:
    of these pass, so a bad change never bricks the `furnace` command. Verification
    runs asynchronously and does not freeze the UI.
 4. Shows you the diff and asks you to approve it before it goes live.
-5. Asks you to **restart Furnace** for the change to take effect.
+5. Shows the recovery command in a final restart prompt. Choosing **Restart
+   now** cleanly closes and relaunches Furnace with the approved build.
 
 If a restart lands on a broken harness, roll back:
 

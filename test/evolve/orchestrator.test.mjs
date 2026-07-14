@@ -44,7 +44,7 @@ test("runEvolve applies in order: snapshot -> edit -> verify -> confirm -> swap"
   assert.ok(calls.findIndex((c) => c.startsWith("record:")) < calls.indexOf("verify"))
   // edit happens between snapshot and verify; confirm before swap.
   assert.ok(events.indexOf("edit") < events.indexOf("confirm"))
-  assert.ok(events.some((e) => e.startsWith("notify:Applied and verified")))
+  assert.equal(events.some((e) => e.startsWith("notify:Applied and verified")), false)
 })
 
 test("runEvolve rolls back and does not swap when verification fails", async () => {
@@ -85,13 +85,12 @@ test("runEvolve applies a theme preference only for theme requests", async () =>
   assert.equal(themed, 1)
 })
 
-test("runEvolve warns when the running bin is outside the root", async () => {
+test("runEvolve reports when the running bin is outside the root", async () => {
   const { runEvolve } = await import("../../dist/evolve/orchestrator.js")
   const { engine } = makeEngine({ runningBinMatchesRoot: () => false })
-  const { interaction, events } = makeInteraction()
+  const { interaction } = makeInteraction()
   const outcome = await runEvolve({ request: "add cost", rootResult: availableRoot, interaction, engine })
   assert.equal(outcome.runningBinMatchesRoot, false)
-  assert.ok(events.some((e) => e.includes("appears to live elsewhere")))
 })
 
 test("runEvolve activates an approved managed-source build", async () => {

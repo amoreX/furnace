@@ -9,7 +9,7 @@ import type { EvolveOutcome, FurnaceRootResult } from "./types.js"
  * End-to-end evolve flow (KTD1, KTD6, KTD7, KTD9, KTD10):
  *   notice -> recovery point -> agent edit (source only) -> verify (no swap)
  *   -> content-level consent on the real diff -> atomic swap -> optional theme
- *   pref -> running-bin check -> mandatory restart prompt.
+ *   pref -> running-bin check. The caller owns the final restart prompt.
  *
  * UI and the agent edit are injected via EvolveInteraction so the ordering and
  * both rollback branches (verify-fail, diff-reject) are testable without a TUI
@@ -99,12 +99,6 @@ export async function runEvolve(input: {
   }
 
   const matches = engine.runningBinMatchesRoot(root) || rootResult.managed === true
-  const restart = `Applied and verified. Restart furnace to load your changes. If startup breaks, run: furnace --recover ${point.id}`
-  interaction.notify(
-    matches
-      ? restart
-      : `${restart}\nNote: the change was built into ${root}/dist, but the furnace you are running appears to live elsewhere — restart the one at ${root}.`,
-  )
   return { status: "applied", recoveryId: point.id, runningBinMatchesRoot: matches, createdFiles: created }
 }
 

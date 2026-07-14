@@ -567,6 +567,7 @@ export async function runInteractive(input: {
 
   async function handleEvolveCommand(argument: string): Promise<void> {
     const request = argument.trim()
+    let restartRequested = false
     if (!request) {
       terminal.setInputDraft("/evolve ")
       showTransientStatus("Describe what to change in furnace, e.g. /evolve add cost to the statusline.", 6000)
@@ -609,7 +610,7 @@ export async function runInteractive(input: {
                   allowMultiple: false,
                   prompt: renderEvolveConsentPrompt(diff, createdFiles, verifyLog),
                   options: [
-                    { id: "apply", label: "Apply and prompt restart" },
+                    { id: "apply", label: "Apply change" },
                     { id: "discard", label: "Discard the change (revert)" },
                   ],
                 },
@@ -633,16 +634,40 @@ export async function runInteractive(input: {
           },
         },
       })
-      // Surface the outcome durably in the user's conversation (the edit ran in a
-      // hidden session, so its result would otherwise vanish on refresh).
+      if (outcome.status === "applied") {
+        const response = await terminal.requestQuestions({
+          questions: [
+            {
+              id: "restart",
+              allowCustom: false,
+              allowMultiple: false,
+              prompt: `Furnace was updated and verified.\n\nRestart now to load the change.\nIf startup breaks, recover with:\n\nfurnace --recover ${outcome.recoveryId}`,
+              options: [
+                { id: "restart", label: "Restart now" },
+                { id: "later", label: "Restart later" },
+              ],
+            },
+          ],
+        })
+        if (!response.rejected && response.answers.some((answer) => answer.optionId === "restart")) {
+          const { scheduleFurnaceRestart } = await import("./evolve/restart.js")
+          scheduleFurnaceRestart()
+          restartRequested = true
+          terminal.stop()
+          return
+        }
+      }
+      // Non-applied outcomes and deferred restarts remain visible in history.
       input.store.appendMessage(sessionId, "assistant", renderEvolveOutcomeMessage(request, outcome), input.config.model)
     } catch (error) {
       input.store.appendMessage(sessionId, "assistant", `Evolve failed: ${formatError(error)}`, input.config.model)
     } finally {
-      terminal.setThinking(false)
-      terminal.setBusy(false)
-      terminal.setInputDisabled(false)
-      refreshCurrentSession()
+      if (!restartRequested) {
+        terminal.setThinking(false)
+        terminal.setBusy(false)
+        terminal.setInputDisabled(false)
+        refreshCurrentSession()
+      }
     }
   }
 

@@ -64,6 +64,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setStatusLinePreferences",
     "setSessionMeta",
     "setLofi",
+    "setResponseModes",
     "setMode",
     "setThinking",
     "setQueuedPrompts",
@@ -412,6 +413,15 @@ test("footer status toggles show configured status parts", () => {
   for (const visible of ["Furnace", "/tmp/furnace", "main", "New Chat", "$0.1234", "10.6K/272K", "mode: plan", "window: 128K", "reasoning: none", "fast", "theme: Default", "GPT-5.5", "fork of: Parent Chat"]) {
     assert.equal(rendered.includes(visible), true, `expected footer to show ${visible}`)
   }
+})
+
+test("footer shows all active response modes together", () => {
+  const { session, footerData } = createFooterFixture()
+  footerData.getExtensionStatuses = () => new Map([["response-modes", "modes: stfu + caveman"]])
+  const footer = new FooterComponent(session, footerData, {})
+
+  const rendered = footer.render(160).map(stripAnsi).join("\n")
+  assert.match(rendered, /modes: stfu \+ caveman/)
 })
 
 test("footer status toggles hide configured status parts", () => {

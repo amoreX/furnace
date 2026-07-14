@@ -164,10 +164,20 @@ Built-in slash commands include:
 | `/cost` | Show token/cost usage estimates. |
 | `/editor` | Compose a message in `$EDITOR`. |
 | `/lofi` | Toggle lofi mode. |
+| `/stfu` | Toggle minimal, no-narration response mode. |
+| `/caveman` | Toggle short caveman-style user-facing prose. |
 | `/clear` | Clear the conversation display. |
 | `/exit`, `/quit` | Exit Furnace. |
 
 Custom slash commands can live under `.furnace/commands` in the project or `~/.furnace/commands` globally.
+
+`/stfu` and `/caveman` are independent runtime toggles: either, both, or
+neither can be active. Active response modes appear in the footer in every
+layout. They modify only user-facing response style; tool use, permissions,
+reasoning quality, verification, safety, and other workflows remain unchanged.
+The base section is in `src/prompts/base-system.md`; the selectively attached
+guidance lives in `src/response-modes.ts`. The model sees only the guidance
+currently selected, never mode names, slash commands, or inactive guidance.
 
 ## Settings
 

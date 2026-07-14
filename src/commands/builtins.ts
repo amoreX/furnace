@@ -33,6 +33,8 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
+  { name: "/stfu", description: "Toggle minimal response mode" },
+  { name: "/caveman", description: "Toggle caveman response style" },
   { name: "/evolve", description: "Modify the furnace harness itself", insertText: "/evolve ", usage: "/evolve <what to change>" },
   { name: "/evolve-merge", description: "Resolve evolved-change conflicts after a Furnace upgrade" },
   { name: "/reset", description: "Reset the furnace harness to its default state (undo all evolve changes)" },

@@ -80,6 +80,7 @@ import { defaultMaxOutputTokens, normalizeTerminalLayout, statusLinePreferencesF
 import type { TranscriptMessage } from "../session/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
+import type { ResponseMode } from "../response-modes.js"
 import { saveClipboardImage } from "../utils/clipboard.js"
 import { wireSlashAutocompletePreview } from "./pi/autocomplete.js"
 import { LayoutEditorFrame } from "./pi/editor-frame.js"
@@ -207,6 +208,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentLayout = normalizeTerminalLayout(options.layout)
   let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
   let lofiEnabled = false
+  let responseModes: ResponseMode[] = []
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
 
@@ -606,6 +608,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const updateFooterStatuses = () => {
     footerDataProvider.setExtensionStatus("mode", undefined)
     footerDataProvider.setExtensionStatus("lofi", lofiEnabled ? "lofi" : undefined)
+    footerDataProvider.setExtensionStatus("response-modes", responseModes.length > 0 ? `modes: ${responseModes.join(" + ")}` : undefined)
     footer.invalidate()
     ui.requestRender()
   }
@@ -645,6 +648,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setLofi = (enabled: boolean) => {
     lofiEnabled = enabled
+    updateFooterStatuses()
+  }
+
+  const setResponseModes = (modes: ResponseMode[]) => {
+    responseModes = [...modes]
     updateFooterStatuses()
   }
 
@@ -1432,6 +1440,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setInputDraft,
     setLayout,
     setLofi,
+    setResponseModes,
     setMode,
     setModel,
     setQueuedPrompts,

@@ -14,6 +14,11 @@ CRITICAL — repository index maintenance:
 
 - If your work changes or reveals meaningful repo-level structure, update the relevant part of `.furnace/repo-index.md`; do not churn it for tiny changes.
 
+CRITICAL — response guidance:
+
+- Keep user-facing responses clear, concise, practical, and technically exact.
+<!-- FURNACE_RESPONSE_GUIDANCE -->
+
 Current capability level:
 
 - This early Furnace runtime can send prompts to a model, persist conversations, and call a small set of tools.

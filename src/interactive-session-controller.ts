@@ -29,6 +29,7 @@ import type { MessageEntryData, SessionRecord } from "./session/types.js"
 import { loadCustomCommands, renderCustomCommandTemplate } from "./commands/custom/loader.js"
 import type { CustomCommand } from "./commands/custom/types.js"
 import { PromptQueueStore, type PromptQueueInput } from "./prompt-queue.js"
+import { appendResponseModeGuidance, responseModeNames, toggleResponseMode, type ResponseMode } from "./response-modes.js"
 import { recordRepoIndexOnboardingDecision, shouldOfferRepoIndex } from "./repo-index/core.js"
 import { createRepoIndexService, type RepoIndexService } from "./repo-index/service.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
@@ -63,6 +64,7 @@ export async function runInteractive(input: {
   let sessionId = input.sessionId
   const permissions = new SessionPermissionStore()
   const lofi = new LofiPlayer()
+  const activeResponseModes = new Set<ResponseMode>()
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const promptQueues = new PromptQueueStore()
   const pendingBackgroundPrompts = new Map<string, string[]>()
@@ -302,6 +304,13 @@ export async function runInteractive(input: {
       const result = lofi.toggle()
       terminal.setLofi(result.enabled)
       showTransientStatus(result.message)
+      return
+    }
+    if (command.name === "/stfu" || command.name === "/caveman") {
+      const mode = command.name.slice(1) as ResponseMode
+      const enabled = toggleResponseMode(activeResponseModes, mode)
+      terminal.setResponseModes(responseModeNames.filter((candidate) => activeResponseModes.has(candidate)))
+      showTransientStatus(`${command.name} mode ${enabled ? "on" : "off"}. Applies to the next agent response.`)
       return
     }
     if (command.name === "/evolve") {
@@ -1557,7 +1566,10 @@ export async function runInteractive(input: {
     try {
       const activePath = input.store.getActivePath(sessionId)
       const planState = currentPlanModeState(activePath)
-      const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState)
+      const systemPrompt = appendResponseModeGuidance(
+        appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState),
+        activeResponseModes,
+      )
       const result = await compactSessionIfNeeded({
         config: input.config,
         cwd: input.cwd,
@@ -1783,7 +1795,10 @@ export async function runInteractive(input: {
   }
 
   function estimateContextUsageFor(targetSessionId: string): { tokens: number; window: number } {
-    const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(targetSessionId)))
+    const systemPrompt = appendResponseModeGuidance(
+      appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), currentPlanModeState(input.store.getActivePath(targetSessionId))),
+      activeResponseModes,
+    )
     const messages = entriesToModelMessages(systemPrompt, input.store.getActivePath(targetSessionId), { cwd: input.cwd })
     const tokens = estimateRequestTokens(messages, toolDefinitions)
     return { tokens, window: effectiveContextWindow(input.config, modelListCache.models) }
@@ -1844,6 +1859,7 @@ export async function runInteractive(input: {
             images: next.images,
             permissions,
             prompt: next.text,
+            responseModes: responseModeNames.filter((mode) => activeResponseModes.has(mode)),
             sessionId: turnSessionId,
             signal: controller.signal,
             onPlanReady: (planPath) => {
@@ -2026,7 +2042,10 @@ export async function runPiped(input: {
       const catalog = await loadSkills(process.cwd(), { extraPaths: input.config.skillPaths })
       const activePath = input.store.getActivePath(sessionId)
       const planState = currentPlanModeState(activePath)
-      const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, catalog.skills), planState)
+      const systemPrompt = appendResponseModeGuidance(
+        appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, catalog.skills), planState),
+        [],
+      )
       const result = await compactSessionIfNeeded({
         config: input.config,
         cwd: process.cwd(),
@@ -2061,8 +2080,8 @@ export async function runPiped(input: {
       process.stdout.write(`${choice.name}\n`)
       continue
     }
-    if (command.name === "/lofi") {
-      process.stdout.write("Lofi mode is only available in the interactive TUI.\n")
+    if (command.name === "/lofi" || command.name === "/stfu" || command.name === "/caveman") {
+      process.stdout.write(`${command.name} mode is only available in the interactive TUI.\n`)
       continue
     }
     if (command.name === "/evolve" || command.name === "/evolve-merge") {
@@ -2136,6 +2155,7 @@ export async function runSingleTurn(input: {
   outputFormat?: "text" | "json"
   permissions?: SessionPermissionStore
   prompt: string
+  responseModes?: ResponseMode[]
   sessionId: string
   signal?: AbortSignal
   skipTitle?: boolean
@@ -2177,7 +2197,10 @@ export async function runSingleTurn(input: {
   const planState = currentPlanModeState(activePath)
   permissions.setSessionMode(input.sessionId, planState.mode, planState.planPath)
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
-  const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState)
+  const systemPrompt = appendResponseModeGuidance(
+    appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState),
+    input.responseModes ?? [],
+  )
   const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
   updateTerminalContextUsage(input.terminal, input.config, messages, toolDefinitions, input.contextWindow)
 

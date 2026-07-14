@@ -4,6 +4,7 @@ import type { FurnacePreferences, ModelSettings, StatusLinePreferences, Terminal
 import type { TranscriptMessage } from "../session/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
+import type { ResponseMode } from "../response-modes.js"
 
 export type PromptAutocompleteItem = {
   browsable?: boolean
@@ -38,6 +39,7 @@ export type FurnaceTerminal = {
   setStatusLinePreferences(preferences: StatusLinePreferences): void
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
+  setResponseModes(modes: ResponseMode[]): void
   setLayout(layout: TerminalLayout): void
   setMode(mode: AgentMode, planPath?: string): void
   setThinking(thinking: boolean, message?: string): void

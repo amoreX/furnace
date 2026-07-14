@@ -3,7 +3,8 @@ import assert from "node:assert/strict"
 
 const { createFurnaceTerminal } = await import("../../dist/ui/pi-terminal.js")
 const { FooterComponent, formatContextDisplay } = await import("../../dist/ui/pi/components/footer.js")
-const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
+const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
+const { ForgeSidecarComponent, LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
 const { initTheme } = await import("../../dist/ui/pi/theme.js")
 
 function stripAnsi(value) {
@@ -51,7 +52,6 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "showApprovalPrompt",
     "run",
     "stop",
-    "waitForInputFocus",
     "setBusy",
     "setContextUsage",
     "setCostUsage",
@@ -65,7 +65,6 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setThinking",
     "setQueuedPrompts",
     "setSlashCommandItems",
-    "setTasks",
     "showModelEditor",
     "showPermissions",
     "showPlanActions",
@@ -107,6 +106,30 @@ test("setTranscript and setStreamingContent do not throw", () => {
     ])
     terminal.setStreamingContent("streaming...")
   })
+})
+
+test("generic tool cards show visible status, input, and output summaries", () => {
+  initTheme("default")
+  const component = new ToolExecutionComponent(
+    "ask_question",
+    "call_question",
+    { questions: [{ prompt: "Which colors?", options: ["Red", "Blue"] }] },
+    {},
+    undefined,
+    { requestRender: () => {} },
+    "/tmp",
+  )
+  component.setArgsComplete()
+  component.markExecutionStarted()
+  component.updateResult({
+    content: [{ type: "text", text: 'User answered the questions:\ncolor: user selected "Red"' }],
+    isError: false,
+  })
+
+  const rendered = stripAnsi(component.render(100).join("\n"))
+  assert.match(rendered, /◆ ask_question\s+✓ done/)
+  assert.match(rendered, /input/)
+  assert.match(rendered, /output.*User answered the questions/)
 })
 
 test("all six terminal layouts have distinct structural headers", () => {
@@ -178,6 +201,48 @@ test("terminal layouts can switch live without rebuilding terminal state", () =>
   ])
   for (const option of LAYOUT_OPTIONS) {
     assert.doesNotThrow(() => terminal.setLayout(option.value))
+  }
+})
+
+test("forge sidecar honors live status visibility preferences", () => {
+  initTheme("default")
+  const state = {
+    context: { tokens: 11_000, window: 64_000 },
+    costUsd: 0,
+    cwd: "/tmp/furnace",
+    fast: true,
+    forkParentTitle: "Parent",
+    layout: "forge",
+    mode: "agent",
+    model: "Claude",
+    reasoning: "high",
+    statusLine: {},
+    themeName: "Gruvbox",
+    title: "New Chat",
+    version: "0.1.9",
+  }
+  const sidecar = new ForgeSidecarComponent(() => state)
+  const visible = sidecar.render(40).map(stripAnsi).join("\n")
+  for (const label of ["MODE", "PROJECT", "MODEL", "CONTEXT", "COST", "THEME", "FORK", "high", "FAST"]) {
+    assert.match(visible, new RegExp(label))
+  }
+
+  state.statusLine = {
+    statusShowTitle: false,
+    statusShowMode: false,
+    statusShowCwd: false,
+    statusShowModel: false,
+    statusShowContext: false,
+    statusShowWindow: false,
+    statusShowCost: false,
+    statusShowReasoning: false,
+    statusShowFast: false,
+    statusShowTheme: false,
+    statusShowForkParent: false,
+  }
+  const hidden = sidecar.render(40).map(stripAnsi).join("\n")
+  for (const label of ["MODE", "PROJECT", "MODEL", "CONTEXT", "COST", "THEME", "FORK", "high", "FAST"]) {
+    assert.doesNotMatch(hidden, new RegExp(label))
   }
 })
 

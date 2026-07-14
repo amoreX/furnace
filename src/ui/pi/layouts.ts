@@ -1,5 +1,5 @@
 import { Container, type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
-import { normalizeTerminalLayout, type TerminalLayout } from "../../preferences.js"
+import { normalizeTerminalLayout, type StatusLinePreferences, type TerminalLayout } from "../../preferences.js"
 import { theme } from "./theme.js"
 
 export type LayoutOption = {
@@ -21,9 +21,13 @@ export type LayoutLiveState = {
   context?: { tokens: number; window: number }
   costUsd?: number
   cwd: string
+  fast: boolean
+  forkParentTitle?: string
   layout: TerminalLayout
   mode: "agent" | "plan"
   model: string
+  reasoning: string
+  statusLine?: StatusLinePreferences
   themeName: string
   title: string
   version: string
@@ -52,7 +56,26 @@ function rightAligned(left: string, right: string, width: number): string {
 function contextLabel(state: LayoutLiveState): string {
   if (!state.context || state.context.window <= 0) return "ctx —"
   const percent = Math.round((state.context.tokens / state.context.window) * 100)
-  return `ctx ${percent}%`
+  const tokens = `${compactNumber(state.context.tokens)}/${compactNumber(state.context.window)}`
+  const mode = contextMode(state)
+  if (mode === "percent") return `ctx ${percent}%`
+  if (mode === "tokens-percent") return `ctx ${tokens} (${percent}%)`
+  return `ctx ${tokens}`
+}
+
+function showPart(state: LayoutLiveState, key: keyof StatusLinePreferences): boolean {
+  return state.statusLine?.[key] !== false
+}
+
+function showContext(state: LayoutLiveState): boolean {
+  return contextMode(state) !== "off"
+}
+
+function contextMode(state: LayoutLiveState): "off" | "percent" | "tokens" | "tokens-percent" {
+  if (state.statusLine?.statusShowContext === false || state.statusLine?.statusContextMode === "off") return "off"
+  if (state.statusLine?.statusContextMode === "percent") return "percent"
+  if (state.statusLine?.statusContextMode === "tokens-percent" || state.statusLine?.statusShowContextPercent === true) return "tokens-percent"
+  return "tokens"
 }
 
 function projectLabel(cwd: string): string {
@@ -79,37 +102,46 @@ export class LayoutHeaderComponent implements Component {
     const state = this.readState()
     switch (state.layout) {
       case "focus":
+        {
+          const right = [
+            showPart(state, "statusShowMode") ? state.mode : undefined,
+            showPart(state, "statusShowModel") ? state.model.split("/").at(-1) : undefined,
+          ].filter(Boolean).join(" · ")
         return [
           "",
           rightAligned(
-            theme.bold(theme.fg("accent", state.title)),
-            theme.fg("dim", `${state.mode} · ${state.model.split("/").at(-1)}`),
+            showPart(state, "statusShowTitle") ? theme.bold(theme.fg("accent", state.title)) : "",
+            theme.fg("dim", right),
             width,
           ),
           "",
         ]
+        }
       case "forge": {
-        const tag = theme.bg("toolPendingBg", theme.bold(theme.fg("accent", " FURNACE / FORGE ")))
+        const tag = showPart(state, "statusShowAppName")
+          ? theme.bg("toolPendingBg", theme.bold(theme.fg("accent", " FURNACE / FORGE ")))
+          : ""
+        const title = showPart(state, "statusShowTitle") ? theme.fg("muted", state.title) : ""
         return [
           horizontalRule(width, "┏", "━", "┓"),
-          rightAligned(`┃ ${tag}  ${theme.fg("muted", state.title)}`, theme.fg("dim", `v${state.version} ┃`), width),
+          rightAligned(`┃ ${tag}${tag && title ? "  " : ""}${title}`, theme.fg("dim", `v${state.version} ┃`), width),
           horizontalRule(width, "┣", "━", "┫"),
         ].map((line) => theme.fg("border", line))
       }
       case "console":
         return [
-          theme.fg("accent", horizontalRule(width, "╔═[ OPERATOR CONSOLE ]", "═", "╗")),
+          theme.fg("accent", horizontalRule(width, showPart(state, "statusShowAppName") ? "╔═[ OPERATOR CONSOLE ]" : "╔═", "═", "╗")),
           rightAligned(
-            theme.fg("muted", `║ ${state.cwd}`),
-            theme.fg("accent", `${state.mode.toUpperCase()} ║`),
+            showPart(state, "statusShowCwd") ? theme.fg("muted", `║ ${state.cwd}`) : "║",
+            showPart(state, "statusShowMode") ? theme.fg("accent", `${state.mode.toUpperCase()} ║`) : "║",
             width,
           ),
         ]
       case "notebook":
         return [
           "",
-          theme.bold(theme.fg("accent", "FURNACE")),
-          rightAligned(theme.fg("muted", "FIELD NOTES / AGENT SESSION"), theme.fg("dim", `№ ${state.title}`), width),
+          showPart(state, "statusShowAppName") ? theme.bold(theme.fg("accent", "FURNACE")) : "",
+          rightAligned(theme.fg("muted", "FIELD NOTES / AGENT SESSION"), showPart(state, "statusShowTitle") ? theme.fg("dim", `№ ${state.title}`) : "", width),
           theme.fg("border", horizontalRule(width, "", "━")),
           "",
         ]
@@ -117,7 +149,9 @@ export class LayoutHeaderComponent implements Component {
         return [
           theme.fg("border", horizontalRule(width, "╭─", "─", "─╮")),
           rightAligned(
-            `│ ${theme.bold(theme.fg("accent", "FURNACE FM"))} ${theme.fg("dim", "/ LIVE AGENT TRANSMISSION")}`,
+            showPart(state, "statusShowAppName")
+              ? `│ ${theme.bold(theme.fg("accent", "FURNACE FM"))} ${theme.fg("dim", "/ LIVE AGENT TRANSMISSION")}`
+              : "│",
             theme.fg("success", `● ON AIR  │`),
             width,
           ),
@@ -154,14 +188,27 @@ export class LayoutRailComponent implements Component {
     const state = this.readState()
     const model = state.model.split("/").at(-1) || state.model
     if (state.layout === "focus") {
-      return [theme.fg("dim", rightAligned(`${state.mode} · ${contextLabel(state)}`, model, width))]
+      const left = [
+        showPart(state, "statusShowMode") ? state.mode : undefined,
+        showContext(state) ? contextLabel(state) : undefined,
+      ].filter(Boolean).join(" · ")
+      return [theme.fg("dim", rightAligned(left, showPart(state, "statusShowModel") ? model : "", width))]
     }
     if (state.layout === "signal") {
+      const left = [
+        "│ CH 01",
+        showPart(state, "statusShowMode") ? state.mode.toUpperCase() : undefined,
+        showContext(state) ? contextLabel(state) : undefined,
+      ].filter(Boolean).join(" · ")
+      const right = [
+        showPart(state, "statusShowModel") ? model : undefined,
+        showPart(state, "statusShowTheme") ? state.themeName : undefined,
+      ].filter(Boolean).join(" · ")
       return [
         theme.fg("border", horizontalRule(width, "├─", "─", "─┤")),
         rightAligned(
-          `│ CH 01 · ${state.mode.toUpperCase()} · ${contextLabel(state)}`,
-          `${model} · ${state.themeName} │`,
+          left,
+          `${right}${right ? " " : ""}│`,
           width,
         ),
       ]
@@ -186,21 +233,28 @@ export class ForgeSidecarComponent implements Component {
     const rows = [
       rightAligned(theme.bold(theme.fg("accent", "SESSION MATRIX")), theme.fg("success", "● READY"), width),
       theme.fg("border", horizontalRule(width, "", "─")),
-      rightAligned(theme.fg("dim", "MODE"), state.mode.toUpperCase(), width),
-      rightAligned(theme.fg("dim", "PROJECT"), projectLabel(state.cwd), width),
-      "",
-      theme.fg("dim", "MODEL"),
-      state.model.split("/").at(-1) || state.model,
-      "",
-      rightAligned(theme.fg("dim", "CONTEXT"), percent, width),
-      meter,
-      context ? `${compactNumber(context.tokens)} / ${compactNumber(context.window)}` : "awaiting telemetry",
-      "",
-      rightAligned(theme.fg("dim", "COST"), state.costUsd === undefined ? "—" : `$${state.costUsd.toFixed(4)}`, width),
-      rightAligned(theme.fg("dim", "THEME"), state.themeName, width),
-      theme.fg("border", horizontalRule(width, "", "─")),
-      theme.fg("dim", "/ commands  ·  ctrl+o tools"),
     ]
+    if (showPart(state, "statusShowMode")) rows.push(rightAligned(theme.fg("dim", "MODE"), state.mode.toUpperCase(), width))
+    if (showPart(state, "statusShowCwd")) rows.push(rightAligned(theme.fg("dim", "PROJECT"), projectLabel(state.cwd), width))
+    if (showPart(state, "statusShowModel")) {
+      const modelDetails = [
+        state.model.split("/").at(-1) || state.model,
+        showPart(state, "statusShowReasoning") ? state.reasoning : undefined,
+        showPart(state, "statusShowFast") && state.fast ? "FAST" : undefined,
+      ].filter(Boolean).join(" · ")
+      rows.push("", theme.fg("dim", "MODEL"), modelDetails)
+    }
+    if (showContext(state)) {
+      const mode = contextMode(state)
+      rows.push("", rightAligned(theme.fg("dim", "CONTEXT"), mode === "tokens" ? "" : percent, width), meter)
+      if (mode !== "percent") {
+        rows.push(context ? `${compactNumber(context.tokens)} / ${compactNumber(context.window)}` : "awaiting telemetry")
+      }
+    }
+    if (showPart(state, "statusShowCost")) rows.push(rightAligned(theme.fg("dim", "COST"), state.costUsd === undefined ? "$0.0000" : `$${state.costUsd.toFixed(4)}`, width))
+    if (showPart(state, "statusShowTheme")) rows.push(rightAligned(theme.fg("dim", "THEME"), state.themeName, width))
+    if (showPart(state, "statusShowForkParent") && state.forkParentTitle) rows.push(rightAligned(theme.fg("dim", "FORK"), state.forkParentTitle, width))
+    rows.push(theme.fg("border", horizontalRule(width, "", "─")), theme.fg("dim", "/ commands  ·  ctrl+o tools"))
     return rows.map((row) => truncateToWidth(row, width, "…"))
   }
 }

@@ -7,7 +7,10 @@
 Plan mode and evolve both use the normal session runtime, but add stricter control around mutations.
 
 - **Plan mode** records a mode transition, injects planning guidance, and permits writes only to the active `.furnace/plans/*.md` artifact.
-- **Evolve** is an interactive, source-checkout-only workflow that snapshots the harness, lets an agent edit source, verifies a temporary build, asks for consent, then swaps the verified build into place.
+- **Evolve** is an interactive self-modification workflow that snapshots the
+  harness, lets an agent edit source, verifies a temporary build, asks for
+  consent, then swaps the verified build into place. Published installations
+  provision managed source automatically.
 
 ## How It Works
 
@@ -21,14 +24,44 @@ Plan mode and evolve both use the normal session runtime, but add stricter contr
 
 ### Evolve
 
-1. Resolve a Furnace source root and confirm it is a git worktree.
+1. Resolve a Furnace source root. Published installs provision source for the
+   exact package version from its Git tag or npm `gitHead`.
 2. Create a recovery point containing source state and the current build.
 3. Run an agent edit turn against source only.
 4. Typecheck, build to a temporary directory, and launch-smoke the result.
 5. Show the actual change summary and verification log for consent.
 6. On approval, atomically replace `dist/cli.js` and `dist/prompts/`.
 7. On failure or rejection, restore the recovery point.
-8. Require a restart and provide `furnace --recover <id>`.
+8. Show a final popup containing `furnace --recover <id>` and offer a clean
+   automatic restart.
+
+The prompt editor remains fully locked throughout source preparation, agent
+editing, verification, consent, and final success/error prompts. Selector
+popups remain interactive. Input is restored only after the whole operation
+finishes; choosing restart leaves it locked through shutdown.
+
+### Upgrades and `/evolve-merge`
+
+1. A published CLI whose active evolve manifest belongs to an older package
+   version starts the new stock Furnace build.
+2. Furnace captures the old managed checkout's cumulative tracked and untracked
+   changes as a binary patch using an isolated temporary Git index.
+3. It provisions the new version's clean managed checkout and applies the patch
+   with Git's three-way apply.
+4. A clean replay is verified and activated, then the user receives a restart
+   popup saying the previous evolve changes were reapplied.
+5. A Git conflict or verification failure writes
+   `~/.furnace/evolve/migration.json` and preserves the old source, patch, new
+   checkout, error, and recovery point. New stock Furnace remains active.
+6. Startup keeps showing a popup offering **Reapply previous evolve changes**
+   until the migration is resolved.
+7. `/evolve-merge` runs a permission-scoped hidden agent turn in the new
+   checkout. The agent inspects the old source and saved patch, resolves and
+   stages conflicts, then Furnace asks for review, verifies, activates, and
+   offers restart.
+
+New `/evolve` requests are blocked while migration state is pending. Rejecting
+or postponing `/evolve-merge` keeps all migration artifacts for a later run.
 
 `/reset` restores the earliest evolve baseline and clears later recovery history.
 
@@ -64,6 +97,8 @@ Plan mode and evolve both use the normal session runtime, but add stricter contr
   the new managed checkout, and verifies before activation.
 - Failed automatic migrations leave the new stock package active and preserve
   migration state for `/evolve-merge`; unresolved files are never activated.
+- Prompt input is immutable for the complete evolve, migration, and
+  `/evolve-merge` lifecycle, including their final popups.
 
 ## Changing This Area
 

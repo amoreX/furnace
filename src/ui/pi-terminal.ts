@@ -1397,6 +1397,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setInputDisabled = (disabled: boolean) => {
     inputDisabled = disabled
+    editor.setInputDisabled(disabled)
+    ui.requestRender()
   }
 
   const setSlashCommandItems = (items: PromptAutocompleteItem[]) => {

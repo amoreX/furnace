@@ -10,6 +10,7 @@ import type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
  */
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
+	private inputDisabled = false;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
@@ -35,7 +36,20 @@ export class CustomEditor extends Editor {
 		this.actionHandlers.set(action, handler);
 	}
 
+	setInputDisabled(disabled: boolean): void {
+		this.inputDisabled = disabled;
+	}
+
 	handleInput(data: string): void {
+		if (this.inputDisabled) {
+			if (this.keybindings.matches(data, "app.interrupt")) {
+				(this.onEscape ?? this.actionHandlers.get("app.interrupt"))?.();
+			} else if (this.keybindings.matches(data, "app.clear")) {
+				this.actionHandlers.get("app.clear")?.();
+			}
+			return;
+		}
+
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
 			return;

@@ -606,6 +606,7 @@ export async function runInteractive(input: {
     const { isPublishedFurnaceEntry } = await import("./evolve/activation.js")
     if (!isPublishedFurnaceEntry()) return
     const { attemptEvolveMigration } = await import("./evolve/migration.js")
+    let restartRequested = false
     terminal.setBusy(true)
     terminal.setInputDisabled(true)
     try {
@@ -614,7 +615,7 @@ export async function runInteractive(input: {
         onStatus: (message) => showTransientStatus(message, 12000),
       })
       if (result.status === "migrated") {
-        await promptForEvolveRestart(
+        restartRequested = await promptForEvolveRestart(
           result.recoveryId,
           `Your previous evolve changes were reapplied to Furnace ${packageVersion} and verified.`,
         )
@@ -639,8 +640,10 @@ export async function runInteractive(input: {
         terminal.setInputDraft("/evolve-merge")
       }
     } finally {
-      terminal.setBusy(false)
-      terminal.setInputDisabled(false)
+      if (!restartRequested) {
+        terminal.setBusy(false)
+        terminal.setInputDisabled(false)
+      }
     }
   }
 
@@ -660,9 +663,16 @@ export async function runInteractive(input: {
 
     const { resolveOrPrepareFurnaceRoot } = await import("./evolve/root.js")
     terminal.setInputDisabled(true)
-    const rootResult = await resolveOrPrepareFurnaceRoot({
-      onStatus: (message) => showTransientStatus(message, 12000),
-    })
+    let rootResult: Awaited<ReturnType<typeof resolveOrPrepareFurnaceRoot>>
+    try {
+      rootResult = await resolveOrPrepareFurnaceRoot({
+        onStatus: (message) => showTransientStatus(message, 12000),
+      })
+    } catch (error) {
+      terminal.setInputDisabled(false)
+      showTransientStatus(`Evolve source preparation failed: ${formatError(error)}`, 12000)
+      return
+    }
     if (!rootResult.available) {
       terminal.setInputDisabled(false)
       showTransientStatus(rootResult.message, 12000)

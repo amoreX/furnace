@@ -145,6 +145,7 @@ Built-in slash commands include:
 | `/theme [name]` | Select a theme; browsing previews hovered themes. |
 | `/settings`, `/prefs` | Configure UI/status preferences. |
 | `/evolve <what to change>` | Modify the Furnace harness itself, with verification and recovery. |
+| `/evolve-merge` | Ask the agent to reapply preserved evolve changes after an upgrade conflict. |
 | `/reset` | Reset the Furnace harness to its default state (undo all evolve changes). |
 | `/plan [prompt]` | Switch to plan mode. |
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
@@ -223,6 +224,11 @@ An evolve run:
 5. Shows the recovery command in a final restart prompt. Choosing **Restart
    now** cleanly closes and relaunches Furnace with the approved build.
 
+The prompt editor is locked from the start of source preparation through agent
+editing, verification, approval, and the final restart/error popup. It is
+enabled again only after the flow and its popup finish; a confirmed restart
+keeps it locked while Furnace shuts down.
+
 If a restart lands on a broken harness, roll back:
 
 ```bash
@@ -236,15 +242,17 @@ in the Furnace checkout.
 Notes and current limits:
 
 - Source checkouts evolve in place. Published npm installations automatically
-  download the matching tagged source into `~/.furnace/evolve/sources/`, install
-  its build dependencies, and activate an approved evolved bundle for the next
-  normal `furnace` launch.
+  download version-matched source into `~/.furnace/evolve/sources/` using the
+  release tag or npm's recorded publish commit, install its build dependencies,
+  and activate an approved evolved bundle for the next normal `furnace` launch.
 - After a published Furnace upgrade, cumulative evolved source changes are
-  replayed onto the new version and verified automatically. If Git or
-  verification cannot reconcile them, Furnace runs the new stock version,
-  preserves the old customization and migration checkout, and prompts you to
-  run `/evolve-merge`. That command delegates conflict resolution to the agent,
-  reviews and verifies the result, then offers to restart into it.
+  reapplied three-way onto the new version and verified automatically. Tracked
+  and untracked evolve changes are both preserved. If Git or verification
+  cannot reconcile them, Furnace runs the new stock version, preserves the old
+  customization, patch, and migration checkout, and shows a popup offering
+  **Reapply previous evolve changes** via `/evolve-merge`. That command delegates
+  conflict resolution to the agent, reviews and verifies the result, then
+  offers to restart into it.
 - The evolve edit turn runs with broad session permissions over the Furnace
   root; the diff-review step is your control. It can read `~/.furnace/auth.json`,
   so review the diff before approving.

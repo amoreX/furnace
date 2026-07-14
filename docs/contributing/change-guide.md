@@ -35,7 +35,7 @@ Start with the user-visible behavior, trace it to the owning layer, then identif
 | Skills | `src/skills/` | `test/skills.test.mjs` |
 | Subagents | `src/tasks/` | task coverage in `test/tools.test.mjs` and UI bridge tests |
 | Plans | `src/plan-mode.ts` | `test/plan-mode.test.mjs` |
-| Evolve | `src/evolve/` | `test/evolve/` |
+| Evolve, recovery, upgrade replay | `src/evolve/`, `src/interactive-session-controller.ts` | `test/evolve/`, input-lock coverage in `test/ui/` |
 | Repository index | `src/repo-index/` | `test/repo-index/` |
 
 ## Invariants
@@ -47,6 +47,8 @@ Start with the user-visible behavior, trace it to the owning layer, then identif
 - Secret-like files stay protected.
 - Background work cannot mutate the wrong visible session.
 - Interactive features do not become provider dependencies.
+- Evolve and upgrade-migration work keeps prompt editing locked until every
+  operation and final popup has completed.
 - User-visible behavior and documentation change together.
 
 ## Changing This Area

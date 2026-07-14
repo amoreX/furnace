@@ -121,6 +121,25 @@ test("typing indicator preferences map to the user input cursor", () => {
   assert.equal(inputCursorStyleSequence("bar", false), "\x1b[6 q")
 })
 
+test("disabled prompt input ignores edits until it is enabled again", () => {
+  initTheme("default")
+  const keybindings = KeybindingsManager.create()
+  setKeybindings(keybindings)
+  const editor = new CustomEditor(
+    new TUI(createMockTerminal(), true),
+    getEditorTheme(),
+    keybindings,
+  )
+
+  editor.setInputDisabled(true)
+  editor.handleInput("blocked")
+  assert.equal(editor.getText(), "")
+
+  editor.setInputDisabled(false)
+  editor.handleInput("allowed")
+  assert.equal(editor.getText(), "allowed")
+})
+
 test("backspace on a large paste offers expansion or whole-paste deletion", () => {
   initTheme("default")
   const keybindings = KeybindingsManager.create()

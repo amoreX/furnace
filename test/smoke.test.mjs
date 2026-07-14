@@ -25,9 +25,9 @@ test("termcn theme registry exposes all bundled themes", async () => {
   const { resolveTheme, themeChoices } = await import("../dist/ui/themes/index.js")
   const names = themeChoices.map((theme) => theme.name)
 
-  // pi-dark is the default (first entry) to match Pi's exact palette
+  // Keep the registry ordering stable while Gruvbox is the product default.
   assert.equal(names[0], "pi-dark")
-  assert.equal(resolveTheme(undefined).name, "pi-dark")
+  assert.equal(resolveTheme(undefined).name, "gruvbox")
 
   // Core hand-crafted themes must be present
   const core = ["pi-dark", "synthwave-84", "space", "flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]

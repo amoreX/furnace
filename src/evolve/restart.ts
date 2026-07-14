@@ -1,4 +1,4 @@
-import { spawnSync, type SpawnSyncOptions } from "node:child_process"
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 
 export type RestartInvocation = {
   args: string[]
@@ -22,16 +22,19 @@ export function furnaceRestartInvocation(input: {
 export function scheduleFurnaceRestart(deps: {
   invocation?: RestartInvocation
   onExit?: (listener: () => void) => void
-  spawnProcess?: (command: string, args: string[], options: SpawnSyncOptions) => unknown
+  spawnProcess?: (command: string, args: string[], options: SpawnOptions) => Pick<ChildProcess, "unref">
 } = {}): void {
   const invocation = deps.invocation ?? furnaceRestartInvocation()
   const onExit = deps.onExit ?? ((listener) => process.once("beforeExit", listener))
-  const spawnProcess = deps.spawnProcess ?? spawnSync
+  const spawnProcess = deps.spawnProcess ?? spawn
   onExit(() => {
-    spawnProcess(invocation.command, invocation.args, {
+    const child = spawnProcess(invocation.command, invocation.args, {
       cwd: process.cwd(),
       env: process.env,
       stdio: "inherit",
     })
+    // The restarted Furnace owns the inherited terminal. Do not keep this old
+    // process alive waiting for the new interactive session to finish.
+    child.unref()
   })
 }

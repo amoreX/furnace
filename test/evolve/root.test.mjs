@@ -106,6 +106,51 @@ test("resolveOrPrepareFurnaceRoot provisions a version-matched managed checkout 
   })
 })
 
+test("managed checkout falls back to npm gitHead when the release tag is missing", async () => {
+  const { prepareManagedFurnaceSource } = await import("../../dist/evolve/managed-source.js")
+  await withTemporaryHomeWorkspace("furnace-managed-githead-", async (_workspace, home) => {
+    const gitHead = "1234567890abcdef1234567890abcdef12345678"
+    const commands = []
+    const result = await prepareManagedFurnaceSource({
+      version: "9.8.7",
+      deps: {
+        prepareBaseline: async (root) => {
+          await mkdir(join(root, "dist"), { recursive: true })
+          await writeFile(join(root, "dist", "cli.js"), "// baseline\n", "utf8")
+          return { ok: true, log: "" }
+        },
+        run: async (command) => {
+          commands.push(command)
+          if (command.command.endsWith("npm") || command.command.endsWith("npm.cmd")) {
+            if (command.args[0] === "view") return { ok: true, log: gitHead }
+            return { ok: true, log: "" }
+          }
+          if (command.args.includes("--branch")) {
+            return { ok: false, log: "Remote branch v9.8.7 not found" }
+          }
+          if (command.args[0] === "clone") {
+            await mkdir(join(command.args.at(-1), ".git"), { recursive: true })
+            return { ok: true, log: "" }
+          }
+          if (command.args[0] === "checkout") {
+            await mkdir(join(command.cwd, "src", "evolve"), { recursive: true })
+            await writeFile(join(command.cwd, "src", "cli.ts"), "", "utf8")
+            await writeFile(join(command.cwd, "src", "evolve", "orchestrator.ts"), "", "utf8")
+            await writeFile(join(command.cwd, "package.json"), JSON.stringify({ name: "cook-furnace", version: "9.8.7" }), "utf8")
+            return { ok: true, log: "" }
+          }
+          return { ok: false, log: "unexpected command" }
+        },
+      },
+    })
+
+    assert.equal(result.available, true)
+    assert.equal(result.root, join(home, ".furnace", "evolve", "sources", "v9.8.7"))
+    assert.deepEqual(commands.map(({ args }) => args[0]), ["clone", "view", "clone", "checkout", "ci"])
+    assert.equal(commands[3].args.at(-1), gitHead)
+  })
+})
+
 test("isGitWorktree recognizes a gitdir worktree file", async () => {
   const { isGitWorktree } = await import("../../dist/evolve/root.js")
   const dir = await mkdtemp(join(tmpdir(), "furnace-evolve-worktree-"))

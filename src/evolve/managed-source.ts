@@ -46,13 +46,22 @@ export async function prepareManagedFurnaceSource(input: {
 
   try {
     input.onStatus?.(`Downloading Furnace ${tag} source for evolve…`)
-    const cloned = await deps.run({
+    let cloned = await deps.run({
       args: ["clone", "--branch", tag, "--depth", "1", FURNACE_REPOSITORY, staging],
       command: "git",
       cwd: dirname(root),
     })
     if (!cloned.ok) {
-      return unavailable(`Could not download Furnace ${tag}: ${lastUsefulLine(cloned.log)}`)
+      rmSync(staging, { force: true, recursive: true })
+      input.onStatus?.(`Release tag ${tag} is unavailable; resolving the published commit…`)
+      cloned = await clonePublishedCommit({
+        deps,
+        staging,
+        version: input.version,
+      })
+      if (!cloned.ok) {
+        return unavailable(`Could not download Furnace ${tag}: ${lastUsefulLine(cloned.log)}`)
+      }
     }
 
     input.onStatus?.("Installing evolve build dependencies…")
@@ -76,6 +85,44 @@ export async function prepareManagedFurnaceSource(input: {
   } finally {
     rmSync(staging, { force: true, recursive: true })
   }
+}
+
+async function clonePublishedCommit(input: {
+  deps: ManagedSourceDeps
+  staging: string
+  version: string
+}): Promise<{ ok: boolean; log: string }> {
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+  const metadata = await input.deps.run({
+    args: ["view", `cook-furnace@${input.version}`, "gitHead"],
+    command: npmCommand,
+    cwd: dirname(input.staging),
+  })
+  const gitHead = metadata.log.trim().replace(/^["']|["']$/g, "")
+  if (!metadata.ok || !/^[0-9a-f]{40}$/i.test(gitHead)) {
+    return {
+      ok: false,
+      log: metadata.ok
+        ? `npm did not report a valid gitHead for cook-furnace@${input.version}`
+        : metadata.log,
+    }
+  }
+
+  const cloned = await input.deps.run({
+    args: ["clone", "--no-checkout", "--filter=blob:none", FURNACE_REPOSITORY, input.staging],
+    command: "git",
+    cwd: dirname(input.staging),
+  })
+  if (!cloned.ok) return cloned
+
+  const checkedOut = await input.deps.run({
+    args: ["checkout", "--detach", gitHead],
+    command: "git",
+    cwd: input.staging,
+  })
+  return checkedOut.ok
+    ? { ok: true, log: [cloned.log, checkedOut.log].filter(Boolean).join("\n") }
+    : checkedOut
 }
 
 function isUsableCheckout(root: string): boolean {

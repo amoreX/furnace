@@ -235,7 +235,6 @@ export async function runInteractive(input: {
       })
     },
   })
-  terminal.setPet(input.config.pet)
   repoIndexService = createRepoIndexService({
     config: input.config,
     cwd: input.cwd,
@@ -437,12 +436,10 @@ export async function runInteractive(input: {
           notifications: updated.notifications === true,
           repoIndexPolicy: updated.repoIndexPolicy ?? input.config.repoIndexPolicy,
           statusLine: statusLinePreferencesFrom(updated),
-          pet: updated.pet ?? input.config.pet,
         })
         repoIndexService.setPolicy(input.config.repoIndexPolicy)
         terminal.setLayout(input.config.layout)
         terminal.setStatusLinePreferences(input.config.statusLine)
-        terminal.setPet(input.config.pet)
         try {
           await saveGlobalPreferences(updated)
           showTransientStatus("Settings saved globally.", 1800)

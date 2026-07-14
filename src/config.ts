@@ -32,7 +32,6 @@ export type FurnaceConfig = {
   theme: string
   typingIndicatorBlink: boolean
   typingIndicator: TypingIndicatorStyle
-  pet?: string
   titleModel: string
   titleSystemPrompt: string
 }
@@ -73,7 +72,6 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "gruvbox",
     typingIndicatorBlink: preferences.typingIndicatorBlink === true,
     typingIndicator: (preferences.typingIndicator as string) === "blink" ? "block" : preferences.typingIndicator || "block",
-    pet: preferences.pet,
     titleModel: process.env.OPENROUTER_TITLE_MODEL?.trim() || "openai/gpt-4o-mini",
     titleSystemPrompt: await readFile(titlePromptPath, "utf8"),
   }

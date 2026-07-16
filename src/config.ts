@@ -20,6 +20,7 @@ export type FurnaceConfig = {
   model: string
   modelSettings: ModelSettings
   notifications: boolean
+  pinnedChatIds: string[]
   provider: string
   apiKey: string
   providerConfig: ResolvedProvider
@@ -59,6 +60,9 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     layout: normalizeTerminalLayout(preferences.layout || process.env.FURNACE_LAYOUT?.trim()),
     model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4-6",
     notifications: preferences.notifications === true,
+    pinnedChatIds: Array.isArray(preferences.pinnedChatIds)
+      ? preferences.pinnedChatIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()).slice(0, 5)
+      : [],
     modelSettings: preferences.modelSettings || {},
     provider: effectiveProviderId,
     apiKey,

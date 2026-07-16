@@ -103,6 +103,7 @@ function asciiMark(width: number): string[] {
 
 const EARLY_ACCESS_MESSAGE = "EARLY STAGES · OPEN AN ISSUE IF SOMETHING FEELS OFF"
 const ISSUE_URL = "https://github.com/amoreX/furnace/issues"
+export const COMPACT_STARTUP_HINT = "ctrl+c interrupt/close · / commands"
 
 function earlyAccessBanner(width: number): string {
   const full = `${EARLY_ACCESS_MESSAGE} · ${ISSUE_URL}`
@@ -170,10 +171,15 @@ export class LayoutHeaderComponent implements Component {
       case "classic":
       default: {
         const mark = showPart(state, "statusShowAppName") ? asciiMark(width).map((row) => ` ${row}`) : []
-        const hints = this.expanded
-          ? ["ctrl+c interrupt / clear", "ctrl+d exit", "ctrl+o expand tools", "/ commands", "drop files to attach"]
-          : ["ctrl+c interrupt · / commands · ctrl+o more"]
-        return ["", ...mark, earlyAccessBanner(width), "", ` ${theme.fg("dim", `v${state.version}`)}`, ...hints.map((hint) => ` ${theme.fg("muted", hint)}`), ""]
+        return [
+          "",
+          ...mark,
+          earlyAccessBanner(width),
+          "",
+          ` ${theme.fg("dim", `v${state.version}`)}`,
+          ` ${theme.fg("muted", COMPACT_STARTUP_HINT)}`,
+          "",
+        ]
       }
     }
   }

@@ -5,6 +5,7 @@ import type { TranscriptMessage } from "../session/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
 import type { ResponseMode } from "../response-modes.js"
+import type { TaskStatusSnapshot } from "../tasks/types.js"
 
 export type PromptAutocompleteItem = {
   browsable?: boolean
@@ -33,7 +34,7 @@ export type FurnaceTerminal = {
   stop(): void
   setBusy(busy: boolean): void
   setContextUsage(tokens: number, window: number): void
-  setCostUsage(costUsd?: number): void
+  setCostUsage(sessionCostUsd?: number, totalCostUsd?: number): void
   setInputDraft(value: string): void
   setInputDisabled(disabled: boolean): void
   setStatusLinePreferences(preferences: StatusLinePreferences): void
@@ -42,9 +43,11 @@ export type FurnaceTerminal = {
   setResponseModes(modes: ResponseMode[]): void
   setLayout(layout: TerminalLayout): void
   setMode(mode: AgentMode, planPath?: string): void
+  setPinnedChats(chats: PinnedChatSummary[]): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setRepoIndexStatus(content?: string, tone?: StatusNoticeTone): void
+  setTaskStatus(snapshot?: TaskStatusSnapshot): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
   showModelEditor(
     choice: ModelChoice,
@@ -141,4 +144,11 @@ export type ProviderDisplayRow = {
   sourceLabel: string
   status: "configured" | "unconfigured" | "active"
   protocol: string
+}
+
+export type PinnedChatSummary = {
+  id: string
+  slot: number
+  title: string
+  working: boolean
 }

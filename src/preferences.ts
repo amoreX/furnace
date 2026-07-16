@@ -5,6 +5,7 @@ import { dirname, join } from "node:path"
 export type TypingIndicatorStyle = "block" | "underscore" | "bar"
 export type TerminalLayout = "classic" | "notebook" | "console" | "asteroid"
 export type RepoIndexPolicy = "agent-decides" | "every-git-push"
+export type CostDisplayMode = "session" | "total" | "off"
 
 const TERMINAL_LAYOUTS = new Set<TerminalLayout>(["classic", "notebook", "console", "asteroid"])
 const PROJECT_PREFERENCE_KEYS = new Set<keyof FurnacePreferences>(["model", "modelSettings", "theme"])
@@ -19,11 +20,17 @@ export function normalizeRepoIndexPolicy(value: string | undefined): RepoIndexPo
   return value === "every-git-push" ? value : "agent-decides"
 }
 
+export function normalizeCostDisplayMode(value: string | undefined, legacyShowCost?: boolean): CostDisplayMode {
+  if (value === "total" || value === "off" || value === "session") return value
+  return legacyShowCost === false ? "off" : "session"
+}
+
 export type FurnacePreferences = {
   layout?: TerminalLayout
   model?: string
   modelSettings?: ModelSettings
   notifications?: boolean
+  pinnedChatIds?: string[]
   provider?: string
   repoIndexPolicy?: RepoIndexPolicy
   skillPaths?: string[]
@@ -31,6 +38,8 @@ export type FurnacePreferences = {
   statusShowContext?: boolean
   statusShowContextPercent?: boolean
   statusContextMode?: "off" | "tokens" | "tokens-percent" | "percent"
+  statusCostMode?: CostDisplayMode
+  /** @deprecated Read for migration; new writes use statusCostMode. */
   statusShowCost?: boolean
   statusShowCwd?: boolean
   statusShowFast?: boolean
@@ -51,6 +60,7 @@ export type StatusLinePreferences = Pick<FurnacePreferences,
   | "statusShowContext"
   | "statusShowContextPercent"
   | "statusContextMode"
+  | "statusCostMode"
   | "statusShowCost"
   | "statusShowCwd"
   | "statusShowFast"
@@ -69,6 +79,7 @@ export function statusLinePreferencesFrom(preferences: FurnacePreferences): Stat
     statusShowContext: preferences.statusShowContext,
     statusShowContextPercent: preferences.statusShowContextPercent,
     statusContextMode: preferences.statusContextMode,
+    statusCostMode: normalizeCostDisplayMode(preferences.statusCostMode, preferences.statusShowCost),
     statusShowCost: preferences.statusShowCost,
     statusShowCwd: preferences.statusShowCwd,
     statusShowFast: preferences.statusShowFast,

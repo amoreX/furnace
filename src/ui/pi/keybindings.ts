@@ -29,6 +29,10 @@ export interface AppKeybindings {
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
 	"app.tools.expand": true;
+	"app.tasks.background": true;
+	"app.tasks.status": true;
+	"app.pins": true;
+	"app.pins.toggle": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
@@ -92,6 +96,10 @@ export const KEYBINDINGS = {
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.tasks.background": { defaultKeys: "ctrl+b", description: "Move subagents to background" },
+	"app.tasks.status": { defaultKeys: "ctrl+k", description: "Show active subagents" },
+	"app.pins": { defaultKeys: "ctrl+p", description: "Open pinned chats" },
+	"app.pins.toggle": { defaultKeys: "ctrl+g", description: "Show or hide pinned chats" },
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",
@@ -101,7 +109,7 @@ export const KEYBINDINGS = {
 		description: "Toggle named session filter",
 	},
 	"app.editor.external": {
-		defaultKeys: "ctrl+g",
+		defaultKeys: "alt+e",
 		description: "Open external editor",
 	},
 	"app.message.followUp": {

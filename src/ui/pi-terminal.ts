@@ -72,16 +72,19 @@ import type {
   PlanAction,
   PromptAutocompleteItem,
   PromptAutocompleteMatch,
+  PinnedChatSummary,
   ProviderDisplayRow,
   StatusNoticeTone,
 } from "./terminal-types.js"
 import type { AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
-import { defaultMaxOutputTokens, normalizeTerminalLayout, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings, type ReasoningEffort, type StatusLinePreferences, type TerminalLayout } from "../preferences.js"
+import { defaultMaxOutputTokens, normalizeCostDisplayMode, normalizeTerminalLayout, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings, type ReasoningEffort, type StatusLinePreferences, type TerminalLayout } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
 import type { ResponseMode } from "../response-modes.js"
+import type { TaskStatusSnapshot } from "../tasks/types.js"
+import { PinnedChatsPanelState } from "./pinned-chats-state.js"
 import { saveClipboardImage } from "../utils/clipboard.js"
 import { wireSlashAutocompletePreview } from "./pi/autocomplete.js"
 import { LayoutEditorFrame } from "./pi/editor-frame.js"
@@ -167,6 +170,10 @@ export type CreateFurnaceTerminalOptions = {
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
   onTaskBackground?: () => void
+  onTaskStatus?: () => void
+  onPinnedSelect?: (slot: number) => void
+  onPinnedToggleCurrent?: () => void
+  onPinnedUnpin?: (slot: number) => void
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
   statusLine?: StatusLinePreferences
@@ -210,8 +217,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
   let lofiEnabled = false
   let responseModes: ResponseMode[] = []
+  let pinnedChats: PinnedChatSummary[] = []
+  let pinnedChatIndicators: WorkingStatusIndicator[] = []
+  const pinnedPanelState = new PinnedChatsPanelState()
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
+  let totalCostUsd: number | undefined
 
   const setInputCursorStyle = (
     style = options.typingIndicator ?? "block",
@@ -247,6 +258,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         configuredContextWindow: currentModelSettings.contextLength,
         themeName: currentThemeName,
         forkParentTitle: currentForkParentTitle,
+        totalCostUsd,
       }
     },
     sessionManager: {
@@ -287,6 +299,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const chatContainer = new Container()
   const pendingMessagesContainer = new Container()
   const statusContainer = new Container()
+  const pinnedChatsContainer = new Container()
   const widgetContainerAbove = new Container()
   const editorContainer = new Container()
   const widgetContainerBelow = new Container()
@@ -296,7 +309,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     autocompleteMaxVisible: 10,
   })
   wireSlashAutocompletePreview(editor, options.onAutocompleteHover)
-  const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
+  const slashProvider = new SlashCommandAutocompleteProvider([], (match) => {
+    const handled = options.onAutocompleteTab?.(match) ?? false
+    const resumeMatch = handled ? match.value.match(/^\/resume\s+(\d+)$/) : undefined
+    if (resumeMatch) editor.reopenAutocomplete(Math.max(0, Number.parseInt(resumeMatch[1] || "1", 10) - 1))
+    return handled
+  })
   editor.setAutocompleteProvider(slashProvider)
   const editorFrame = new LayoutEditorFrame(editor, () => currentLayout)
   editorContainer.addChild(editorFrame)
@@ -323,14 +341,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const notebookBottomSpacing = new Spacer(1)
   const notebookStatusBorder = new DynamicBorder()
   headerContainer.addChild(layoutHeader)
-  widgetContainerAbove.addChild(new Spacer(2))
 
   const rebuildRootLayout = () => {
     ui.clear()
     const add = (...components: Component[]) => components.forEach((component) => ui.addChild(component))
     switch (currentLayout) {
       case "console":
-        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, editorContainer, footer)
+        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, editorContainer, pinnedChatsContainer, footer)
         break
       case "notebook":
         add(
@@ -340,6 +357,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           statusContainer,
           widgetContainerAbove,
           editorContainer,
+          pinnedChatsContainer,
           notebookBottomSpacing,
           notebookStatusBorder,
           footer,
@@ -347,10 +365,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         break
       case "classic":
       default:
-        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, widgetContainerBelow, footer)
+        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, pinnedChatsContainer, widgetContainerBelow, footer)
         break
       case "asteroid":
-        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, footer)
+        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, pinnedChatsContainer, footer)
         break
     }
   }
@@ -612,6 +630,25 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
+  const setTaskStatus = (snapshot?: TaskStatusSnapshot) => {
+    const active = snapshot?.tasks.filter((task) => task.status === "running" || task.status === "backgrounded") ?? []
+    widgetContainerAbove.clear()
+    if (active.length > 0) {
+      const foreground = active.some((task) => task.status === "running")
+      const title = theme.fg("accent", `◆ ${active.length} subagent${active.length === 1 ? "" : "s"} active`)
+        + theme.fg("dim", foreground ? " · Ctrl+B background · Ctrl+K details" : " · background · Ctrl+K details")
+      const lines = active.map((task) => {
+        const marker = task.status === "backgrounded" ? "◌" : "●"
+        const activity = task.lastToolName ? ` · ${task.lastToolName}` : ""
+        return `  ${theme.fg(task.status === "backgrounded" ? "muted" : "warning", marker)} ${task.description}${theme.fg("dim", activity)}`
+      })
+      widgetContainerAbove.addChild(new Spacer(1))
+      widgetContainerAbove.addChild(new Text([title, ...lines].join("\n"), 0, 0))
+      widgetContainerAbove.addChild(new Spacer(1))
+    }
+    ui.requestRender()
+  }
+
   // ---------------------------------------------------------------------------
   // Pending (queued) prompts — pi's updatePendingMessagesDisplay
   // ---------------------------------------------------------------------------
@@ -677,8 +714,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
-  const setCostUsage = (cost?: number) => {
-    costUsd = cost
+  const setCostUsage = (sessionCost?: number, totalCost?: number) => {
+    costUsd = sessionCost
+    totalCostUsd = totalCost
     footer.invalidate()
     ui.requestRender()
   }
@@ -753,6 +791,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const stop = () => {
     if (exitWarningTimer) clearTimeout(exitWarningTimer)
+    for (const indicator of pinnedChatIndicators) indicator.dispose()
     footerDataProvider.dispose()
     footer.dispose()
     terminal.write("\x1b[0 q")
@@ -793,6 +832,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     options.onInterrupt?.()
   }
   editor.onAction("app.tools.expand", () => setToolsExpanded(!toolOutputExpanded))
+  editor.onAction("app.tasks.background", () => options.onTaskBackground?.())
+  editor.onAction("app.tasks.status", () => options.onTaskStatus?.())
+  editor.onAction("app.pins", () => showPinnedChats())
+  editor.onAction("app.pins.toggle", () => togglePinnedChatsPanel())
   editor.onAction("app.editor.external", () => {
     if (!options.onOpenEditor) return
     void options.onOpenEditor(editor.getText()).then((updated) => {
@@ -928,6 +971,99 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       wrapper.addChild(list)
       return { component: wrapper, focus: list }
     })
+  }
+
+  const showPinnedChats = () => {
+    if (!pinnedPanelState.focus()) return
+    renderPinnedChatsPanel()
+  }
+
+  const togglePinnedChatsPanel = () => {
+    const wasFocused = pinnedPanelState.focused
+    if (!pinnedPanelState.toggle()) return
+    if (wasFocused && !pinnedPanelState.focused) ui.setFocus(editor)
+    renderPinnedChatsPanel()
+  }
+
+  const setPinnedChats = (chats: PinnedChatSummary[]) => {
+    pinnedChats = chats.slice(0, 5)
+    const wasFocused = pinnedPanelState.focused
+    pinnedPanelState.setChatCount(pinnedChats.length)
+    if (wasFocused && !pinnedPanelState.focused) ui.setFocus(editor)
+    renderPinnedChatsPanel()
+  }
+
+  const clearPinnedChatsPanel = () => {
+    for (const indicator of pinnedChatIndicators) indicator.dispose()
+    pinnedChatIndicators = []
+    pinnedChatsContainer.clear()
+    ui.requestRender()
+  }
+
+  const renderPinnedChatsPanel = () => {
+    clearPinnedChatsPanel()
+    if (!pinnedPanelState.visible || pinnedChats.length === 0) return
+    pinnedChatsContainer.addChild(new Spacer(1))
+    pinnedChatsContainer.addChild(new Text(
+      theme.fg("accent", "Pinned chats") + theme.fg("dim", " · Ctrl+P focus · Ctrl+G hide"),
+      0,
+      0,
+    ))
+    if (pinnedPanelState.focused) {
+      const items: AutocompleteItem[] = pinnedChats.map((chat) => ({
+        value: `switch:${chat.slot}`,
+        label: `#${chat.slot} ${chat.title}`,
+        description: chat.working ? "working" : "switch to chat",
+      }))
+      const list = new SelectList(items, MAX_VISIBLE_SELECT_LIST, getSelectListTheme())
+      list.setSelectedIndex(pinnedPanelState.selectedIndex)
+      list.onSelectionChange = (item) => {
+        const index = items.indexOf(item)
+        if (index >= 0) pinnedPanelState.select(index)
+      }
+      list.onSelect = (item) => {
+        pinnedPanelState.finishInteraction()
+        ui.setFocus(editor)
+        options.onPinnedSelect?.(Number.parseInt(item.value.slice("switch:".length), 10))
+        renderPinnedChatsPanel()
+      }
+      list.onCancel = () => {
+        pinnedPanelState.finishInteraction()
+        ui.setFocus(editor)
+        renderPinnedChatsPanel()
+      }
+      const handleInput = list.handleInput.bind(list)
+      list.handleInput = (data) => {
+        if (keybindings.matches(data, "app.pins.toggle")) {
+          togglePinnedChatsPanel()
+          return
+        }
+        if (keybindings.matches(data, "tui.input.tab")) {
+          const selected = list.getSelectedItem()
+          const index = selected ? items.indexOf(selected) : 0
+          if (selected) options.onPinnedUnpin?.(Number.parseInt(selected.value.slice("switch:".length), 10))
+          pinnedPanelState.select(Math.min(index, Math.max(0, pinnedChats.length - 1)))
+          setImmediate(() => renderPinnedChatsPanel())
+          return
+        }
+        handleInput(data)
+      }
+      pinnedChatsContainer.addChild(list)
+      pinnedChatsContainer.addChild(new Text(theme.fg("muted", "Press Tab to unpin selected chat"), 1, 0))
+      ui.setFocus(list)
+      ui.requestRender()
+      return
+    }
+    for (const chat of pinnedChats) {
+      if (chat.working) {
+        const indicator = new WorkingStatusIndicator(ui, `#${chat.slot} ${chat.title} · Thinking`)
+        pinnedChatIndicators.push(indicator)
+        pinnedChatsContainer.addChild(indicator)
+      } else {
+        pinnedChatsContainer.addChild(new Text(theme.fg("muted", `  #${chat.slot} ${chat.title}`), 0, 0))
+      }
+    }
+    ui.requestRender()
   }
 
   editor.onPasteMarkerBackspace = ({ deletePaste, editPaste }) => {
@@ -1288,7 +1424,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       { id: "statusShowCwd", label: "Cwd", currentValue: currentPrefs.statusShowCwd === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowTitle", label: "Title", currentValue: currentPrefs.statusShowTitle === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowContext", label: "Context", currentValue: contextValue(), values: ["on", "percent", "percent only", "off"] },
-      { id: "statusShowCost", label: "Cost", currentValue: currentPrefs.statusShowCost === false ? "off" : "on", values: ["on", "off"] },
+      {
+        id: "statusCostMode",
+        label: "Cost",
+        currentValue: normalizeCostDisplayMode(currentPrefs.statusCostMode, currentPrefs.statusShowCost) === "total"
+          ? "on (total)"
+          : normalizeCostDisplayMode(currentPrefs.statusCostMode, currentPrefs.statusShowCost) === "off"
+            ? "off"
+            : "on (per session)",
+        values: ["on (per session)", "on (total)", "off"],
+      },
       { id: "statusShowMode", label: "Mode", currentValue: currentPrefs.statusShowMode === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowWindow", label: "Window", currentValue: currentPrefs.statusShowWindow === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowTheme", label: "Theme", currentValue: currentPrefs.statusShowTheme === false ? "off" : "on", values: ["on", "off"] },
@@ -1325,6 +1470,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
               updated.statusContextMode = value === "off" ? "off" : value === "percent only" ? "percent" : value === "percent" ? "tokens-percent" : "tokens"
               updated.statusShowContext = value !== "off"
               updated.statusShowContextPercent = value === "percent"
+              break
+            case "statusCostMode":
+              updated.statusCostMode = value === "on (total)" ? "total" : value === "off" ? "off" : "session"
               break
             default:
               if (id.startsWith("statusShow")) {
@@ -1480,9 +1628,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setLofi,
     setResponseModes,
     setMode,
+    setPinnedChats,
     setModel,
     setQueuedPrompts,
     setRepoIndexStatus,
+    setTaskStatus,
     setSessionMeta,
     setSlashCommandItems,
     setStatusLinePreferences,

@@ -85,9 +85,13 @@ export function createSessionTerminalBridge(input: {
     },
     setBusy(busy) { if (visible()) terminal.setBusy(busy) },
     setContextUsage(tokens, window) { if (visible()) terminal.setContextUsage(tokens, window) },
-    setCostUsage(costUsd) { if (visible()) terminal.setCostUsage(costUsd) },
+    setCostUsage(sessionCostUsd, totalCostUsd) { if (visible()) terminal.setCostUsage(sessionCostUsd, totalCostUsd) },
     setMode(mode, planPath) { if (visible()) terminal.setMode(mode, planPath) },
+    setPinnedChats(chats) { if (visible()) terminal.setPinnedChats(chats) },
+    setRepoIndexStatus(content, tone) { if (visible()) terminal.setRepoIndexStatus(content, tone) },
+    setResponseModes(modes) { if (visible()) terminal.setResponseModes(modes) },
     setSessionMeta(meta) { if (visible()) terminal.setSessionMeta(meta) },
+    setTaskStatus(snapshot) { if (visible()) terminal.setTaskStatus(snapshot) },
     setStreamingContent(text) {
       runtimeUiFor(input.runtimeUi, targetSessionId).streamingContent = liveStreamingPreview(text)
       if (visible()) terminal.setStreamingContent(text)

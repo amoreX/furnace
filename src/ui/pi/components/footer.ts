@@ -6,7 +6,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.js";
 import { theme } from "../theme.js";
-import type { StatusLinePreferences } from "../../../preferences.js";
+import { normalizeCostDisplayMode, type StatusLinePreferences } from "../../../preferences.js";
 
 /**
  * Local structural equivalents of pi's core types (agent-session.ts / session-manager.ts).
@@ -83,6 +83,7 @@ export interface FooterSessionState {
 	configuredContextWindow?: number;
 	themeName?: string;
 	forkParentTitle?: string;
+	totalCostUsd?: number;
 }
 
 /** Structural equivalent of pi's `AgentSession` as consumed by the footer. */
@@ -290,8 +291,10 @@ export class FooterComponent implements Component {
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (showStatusPart(this.statusLine, "statusShowCost")) {
-			const costStr = `${formatCostUsd(totalCost)}${usingSubscription ? " (sub)" : ""}`;
+		const costMode = normalizeCostDisplayMode(this.statusLine.statusCostMode, this.statusLine.statusShowCost);
+		if (costMode !== "off") {
+			const displayedCost = costMode === "total" ? state.totalCostUsd ?? 0 : totalCost;
+			const costStr = `${formatCostUsd(displayedCost)}${costMode === "total" ? " total" : ""}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(costStr);
 		}
 

@@ -22,7 +22,7 @@ Markdown templates under project or user `.furnace/commands` become slash comman
 
 ### Subagents
 
-The `task` tool creates child sessions and task records. Tasks in a group run concurrently. Foreground groups block the parent turn; backgrounded groups return control immediately and inject completion back into the parent later.
+The `task` tool creates child sessions and task records. Tasks in a group run concurrently. Foreground groups block the parent turn and appear in a live status panel. Press `Ctrl+B` to move that group to the background; the parent becomes available for new prompts as soon as the tool returns. `Ctrl+K` or `/tasks` shows details. When every task in a background group finishes, Furnace injects one hidden completion request into the same parent conversation so the main agent can consume the results without polling.
 
 ## Key Paths
 
@@ -49,6 +49,9 @@ The `task` tool creates child sessions and task records. Tasks in a group run co
 - Child agents do not receive the `task` tool, preventing recursive delegation.
 - A task group's records remain associated with one parent session.
 - Background completion must not mutate another visible session.
+- Backgrounding must release the parent turn without cancelling child task signals.
+- Task status updates must include each child state and its latest tool activity.
+- A background group emits one completion request after all of its children settle.
 - Live background task groups are process-local; durable results return through session entries.
 
 ## Changing This Area

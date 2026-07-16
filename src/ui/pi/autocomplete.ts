@@ -11,8 +11,11 @@ function isPromptAutocompleteItem(item: AutocompleteItem): item is AutocompleteI
   return "relatedValue" in item
 }
 
-class RelatedAutocompleteSelectList extends SelectList {
+export const RESUME_AUTOCOMPLETE_HINT = "Tab pin/unpin · Enter open · Esc close"
+
+export class RelatedAutocompleteSelectList extends SelectList {
   constructor(
+    private readonly prefix: string,
     private readonly rawItems: AutocompleteItem[],
     private readonly maxVisibleRows: number,
   ) {
@@ -46,10 +49,15 @@ class RelatedAutocompleteSelectList extends SelectList {
       baseLines = displayList.render(width).map((line) => (line.includes("↳ ") ? theme.fg("warning", line) : line))
     }
 
-    return baseLines.map((line) => {
+    const lines = baseLines.map((line) => {
       const pad = " ".repeat(Math.max(0, width - visibleWidth(line)))
       return theme.bg("toolPendingBg", line + pad)
     })
+    if (this.prefix.startsWith("/resume")) {
+      const hint = theme.fg("muted", RESUME_AUTOCOMPLETE_HINT)
+      lines.push(theme.bg("toolPendingBg", hint + " ".repeat(Math.max(0, width - visibleWidth(hint)))))
+    }
+    return lines
   }
 }
 
@@ -60,7 +68,7 @@ export function wireSlashAutocompletePreview(editor: CustomEditor, onPreview: Au
 
   editorWithFactory.createAutocompleteList = (prefix, items) => {
     const list = prefix.startsWith("/")
-      ? new RelatedAutocompleteSelectList(items, editor.getAutocompleteMaxVisible()) as AutocompleteSelectList
+      ? new RelatedAutocompleteSelectList(prefix, items, editor.getAutocompleteMaxVisible()) as AutocompleteSelectList
       : createAutocompleteList(prefix, items) as AutocompleteSelectList
     if (prefix.startsWith("/") && onPreview) {
       list.onSelectionChange = (item) => {

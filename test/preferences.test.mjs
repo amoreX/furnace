@@ -95,3 +95,24 @@ test("repo index policy is global and normalizes invalid values", async () => {
     await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
   }
 })
+
+test("cost display mode migrates the old boolean and pinned chats persist globally", async () => {
+  const home = await mkdtemp(join(tmpdir(), "furnace-preferences-home-"))
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-preferences-project-"))
+  const previousHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    const { loadPreferences, normalizeCostDisplayMode, saveGlobalPreferences } = await import("../dist/preferences.js")
+    assert.equal(normalizeCostDisplayMode(undefined, false), "off")
+    assert.equal(normalizeCostDisplayMode(undefined, true), "session")
+    assert.equal(normalizeCostDisplayMode("total", false), "total")
+    await saveGlobalPreferences({ pinnedChatIds: ["session-a", "session-b"], statusCostMode: "total" })
+    const preferences = await loadPreferences(cwd)
+    assert.deepEqual(preferences.pinnedChatIds, ["session-a", "session-b"])
+    assert.equal(preferences.statusCostMode, "total")
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
+  }
+})

@@ -36,6 +36,21 @@ export class CustomEditor extends Editor {
 		this.actionHandlers.set(action, handler);
 	}
 
+	reopenAutocomplete(selectedIndex: number): void {
+		const editor = this as unknown as {
+			autocompleteRequestTask?: Promise<void>;
+			autocompleteList?: { setSelectedIndex(index: number): void };
+			requestAutocomplete(options: { explicitTab: boolean; force: boolean }): void;
+		};
+		setImmediate(() => {
+			editor.requestAutocomplete({ explicitTab: false, force: false });
+			void Promise.resolve(editor.autocompleteRequestTask).then(() => {
+				editor.autocompleteList?.setSelectedIndex(selectedIndex);
+				this.tui.requestRender();
+			});
+		});
+	}
+
 	setInputDisabled(disabled: boolean): void {
 		this.inputDisabled = disabled;
 	}

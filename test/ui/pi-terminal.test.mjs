@@ -8,6 +8,7 @@ const { KeybindingsManager } = await import("../../dist/ui/pi/keybindings.js")
 const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
 const { StfuToolGroup, compactToolSummary } = await import("../../dist/ui/pi/components/stfu-tool-group.js")
 const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
+const { RelatedAutocompleteSelectList, RESUME_AUTOCOMPLETE_HINT } = await import("../../dist/ui/pi/autocomplete.js")
 const { getEditorTheme, initTheme } = await import("../../dist/ui/pi/theme.js")
 const { TUI, setKeybindings } = await import("@earendil-works/pi-tui")
 
@@ -70,6 +71,8 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setThinking",
     "setQueuedPrompts",
     "setRepoIndexStatus",
+    "setTaskStatus",
+    "setPinnedChats",
     "setSlashCommandItems",
     "showModelEditor",
     "showPermissions",
@@ -160,6 +163,64 @@ test("escape interrupts a disabled prompt input", () => {
   editor.handleInput("\x1b")
 
   assert.equal(interrupted, true)
+})
+
+test("resume pinning can reopen autocomplete at the same selection", async () => {
+  initTheme("default")
+  const keybindings = KeybindingsManager.create()
+  setKeybindings(keybindings)
+  const editor = new CustomEditor(
+    new TUI(createMockTerminal(), true),
+    getEditorTheme(),
+    keybindings,
+  )
+  let selectedIndex = -1
+  editor.requestAutocomplete = () => {
+    editor.autocompleteRequestTask = Promise.resolve().then(() => {
+      editor.autocompleteList = { setSelectedIndex(index) { selectedIndex = index } }
+    })
+  }
+  editor.reopenAutocomplete(3)
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(selectedIndex, 3)
+})
+
+test("resume autocomplete shows one pin hint at the bottom", () => {
+  initTheme("default")
+  const list = new RelatedAutocompleteSelectList("/resume ", [
+    { value: "/resume 1", label: "First chat", description: "1 minute ago" },
+    { value: "/resume 2", label: "Second chat", description: "2 minutes ago" },
+  ], 10)
+  const rendered = stripAnsi(list.render(100).join("\n"))
+  assert.equal(rendered.split(RESUME_AUTOCOMPLETE_HINT).length - 1, 1)
+  assert.equal(rendered.endsWith(RESUME_AUTOCOMPLETE_HINT), false)
+  assert.match(rendered, /First chat/)
+  assert.match(rendered, /Second chat/)
+})
+
+test("pinned chats accept persistent and working rows", () => {
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onSubmit: () => {},
+    terminal: createMockTerminal(),
+    themeName: "default",
+    title: "Test",
+  })
+  assert.doesNotThrow(() => terminal.setPinnedChats([
+    { id: "one", slot: 1, title: "Idle chat", working: false },
+    { id: "two", slot: 2, title: "Working chat", working: true },
+  ]))
+  terminal.stop()
+})
+
+test("pinned chat controls use dedicated focus and visibility shortcuts", () => {
+  const keybindings = KeybindingsManager.create()
+  assert.deepEqual(keybindings.getKeys("app.pins"), ["ctrl+p"])
+  assert.deepEqual(keybindings.getKeys("app.pins.toggle"), ["ctrl+g"])
+  assert.deepEqual(keybindings.getKeys("app.editor.external"), ["alt+e"])
 })
 
 test("backspace on a large paste offers expansion or whole-paste deletion", () => {
@@ -397,6 +458,7 @@ function createFooterFixture() {
       forkParentTitle: "Parent Chat",
       mode: "plan",
       model: { id: "gpt-5.5", name: "GPT-5.5", provider: "openai", contextWindow: 272_000, reasoning: true },
+      totalCostUsd: 1.2345,
       themeName: "Default",
       thinkingLevel: "off",
     },
@@ -439,6 +501,20 @@ test("footer shows all active response modes together", () => {
 
   const rendered = footer.render(160).map(stripAnsi).join("\n")
   assert.match(rendered, /modes: stfu \+ caveman/)
+})
+
+test("footer cost mode switches between session, total key cost, and off", () => {
+  const { session, footerData } = createFooterFixture()
+  const sessionFooter = new FooterComponent(session, footerData, { statusCostMode: "session" })
+  assert.match(sessionFooter.render(160).map(stripAnsi).join("\n"), /\$0\.1234/)
+
+  const totalFooter = new FooterComponent(session, footerData, { statusCostMode: "total" })
+  const total = totalFooter.render(160).map(stripAnsi).join("\n")
+  assert.match(total, /\$1\.23 total/)
+  assert.doesNotMatch(total, /\$0\.1234/)
+
+  const hiddenFooter = new FooterComponent(session, footerData, { statusCostMode: "off" })
+  assert.doesNotMatch(hiddenFooter.render(160).map(stripAnsi).join("\n"), /\$/)
 })
 
 test("footer status toggles hide configured status parts", () => {

@@ -137,7 +137,7 @@ Built-in slash commands include:
 | Command | Purpose |
 | --- | --- |
 | `/new` | Start a fresh conversation. |
-| `/resume`, `/history` | Browse saved conversations. |
+| `/resume`, `/history` | Browse saved conversations; press `Tab` on a highlighted chat to pin or unpin it. |
 | `/fork [current\|prompt-preview]` | Fork the current conversation or a prior user prompt. |
 | `/clone` | Fork from the current conversation tip. |
 | `/image <path\|url>` | Attach an image to the next message. |
@@ -150,6 +150,8 @@ Built-in slash commands include:
 | `/plan [prompt]` | Switch to plan mode. |
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
 | `/tasks` | Show active subagents. |
+| `/pin` | Pin or unpin the current chat (up to five). |
+| `/pins [slot]` | List pinned chats or switch to a slot. `Ctrl+P` focuses the panel; `Ctrl+G` shows or hides it. |
 | `/compact [focus]` | Manually summarize old context. |
 | `/init` | Force learning the current git worktree and write `.furnace/repo-index.md`. |
 | `/skills list` | List discovered skills. |
@@ -162,6 +164,7 @@ Built-in slash commands include:
 | `/undo` | Revert the most recent file-changing tool call. |
 | `/copy` | Copy the last assistant response. |
 | `/cost` | Show token/cost usage estimates. |
+| `/usage` | Show a 12-month token-usage grid, accepted agent lines, and recorded cost for the active API key. |
 | `/editor` | Compose a message in `$EDITOR`. |
 | `/lofi` | Toggle lofi mode. |
 | `/stfu` | Toggle minimal, no-narration response mode. |
@@ -193,6 +196,7 @@ currently selected, never mode names, slash commands, or inactive guidance.
 - Input cursor blink: off/on, applied to the cursor in the prompt area.
 - Notifications on/off.
 - Status line fields:
+  - Cost can show the current session, the all-project total for the active API key, or be hidden.
   - app name
   - cwd
   - title

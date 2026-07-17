@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.7",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "The What’s New screen now remains visible during startup.",
+      "changes": [
+        { "kind": "fixed", "text": "Fixed session initialization immediately replacing the What’s New screen with the normal prompt." },
+        { "kind": "fixed", "text": "Unblocked the Evolve migration prompt that waits until What’s New is continued." }
+      ]
+    },
+    {
       "version": "0.2.6",
       "date": "2026-07-18",
       "status": "published",

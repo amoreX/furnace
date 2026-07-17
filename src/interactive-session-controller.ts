@@ -289,6 +289,9 @@ export async function runInteractive(input: {
   })
   applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   syncPersistentStatusNotice()
+  // Session refresh clears stale plan-action UI by restoring the editor, so it
+  // must finish before the startup modal is mounted.
+  refreshCurrentSession()
   const whatsNewReady = maybeShowWhatsNew()
   const initialModelSync = syncModelDisplayFromCache()
   void Promise.allSettled([initialModelSync]).then(async () => {
@@ -309,7 +312,6 @@ export async function runInteractive(input: {
     }
   })
 
-  refreshCurrentSession()
   try {
     await terminal.run()
   } finally {

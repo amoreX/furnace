@@ -12,7 +12,7 @@ const { packageVersion } = await import("../dist/version.js")
 test("release manifest is complete, unique, and newest-first", () => {
   const releases = furnaceReleases()
   assert.deepEqual(validateReleaseManifest(), [])
-  assert.equal(releases.length, 30)
+  assert.equal(releases[0]?.version, packageVersion)
   assert.equal(releases.at(-1)?.version, "0.1.0")
   assert.equal(releases.some((release) => release.version === "0.1.23" && release.status === "tagged"), true)
 })
@@ -20,13 +20,13 @@ test("release manifest is complete, unique, and newest-first", () => {
 test("current package version always has local release notes", () => {
   const release = furnaceRelease(packageVersion)
   assert.ok(release)
-  assert.equal(release.version, "0.2.6")
+  assert.equal(release.version, packageVersion)
   assert.ok(release.summary.length > 0)
   assert.ok(release.changes.length > 0)
 })
 
 test("What’s New is selected only for an unacknowledged installed version", () => {
-  assert.equal(unacknowledgedFurnaceRelease("0.2.6", [])?.version, "0.2.6")
-  assert.equal(unacknowledgedFurnaceRelease("0.2.6", ["0.2.6"]), undefined)
+  assert.equal(unacknowledgedFurnaceRelease(packageVersion, [])?.version, packageVersion)
+  assert.equal(unacknowledgedFurnaceRelease(packageVersion, [packageVersion]), undefined)
   assert.equal(unacknowledgedFurnaceRelease("9.9.9", []), undefined)
 })

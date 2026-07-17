@@ -698,7 +698,7 @@ export async function runInteractive(input: {
         ],
       })
       if (!response.rejected && response.answers.some((answer) => answer.optionId === "prepare")) {
-        terminal.setInputDraft("/evolve-merge")
+        await handleEvolveMergeCommand()
       } else if (!response.rejected && response.answers.some((answer) => answer.optionId === "later")) {
         await dismissEvolveMigrationForVersion(result.state.toVersion)
       }

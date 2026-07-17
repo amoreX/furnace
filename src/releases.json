@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.6",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "Release startup now reliably explains and reapplies an update.",
+      "changes": [
+        { "kind": "fixed", "text": "Fixed the missing What’s New popup after updating from 0.2.3 to 0.2.5." },
+        { "kind": "fixed", "text": "Selecting Reapply previous evolve changes now starts `/evolve-merge` immediately instead of only drafting the command." },
+        { "kind": "changed", "text": "What’s New remains the first startup step, before any Evolve migration begins." }
+      ]
+    },
+    {
       "version": "0.2.5",
       "date": "2026-07-18",
       "status": "published",

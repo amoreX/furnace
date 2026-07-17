@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "releases": [
+    {
+      "version": "0.2.4",
+      "date": "2026-07-17",
+      "status": "upcoming",
+      "commit": null,
+      "summary": "Release notes are now visible wherever you use Furnace.",
+      "changes": [
+        { "kind": "added", "text": "Added a first-launch What’s New panel for each installed version." },
+        { "kind": "added", "text": "Added a complete, Git-derived changelog to the Furnace website." },
+        { "kind": "changed", "text": "Release notes now come from one structured manifest instead of the legacy changelog file." }
+      ]
+    },
+    {
+      "version": "0.2.3",
+      "date": "2026-07-17",
+      "status": "published",
+      "commit": "802bf36d0ccd0e4ec9c8487573894f8864c9be64",
+      "summary": "Furnace can now update itself.",
+      "changes": [
+        { "kind": "added", "text": "Added `furnace update` and `furnace --update` for npm-global installations." },
+        { "kind": "added", "text": "Added updater completions and safe guidance for source checkouts." },
+        { "kind": "changed", "text": "Made Agent and Plan modes easier to distinguish in the footer." }
+      ]
+    },
+    {
+      "version": "0.2.2",
+      "date": "2026-07-17",
+      "status": "published",
+      "commit": "575c00e404950970f443b7bd8678ccff82c3a726",
+      "summary": "Conversation search is fuzzy again.",
+      "changes": [
+        { "kind": "added", "text": "Restored fuzzy conversation search in `/resume` and `/history`." },
+        { "kind": "changed", "text": "Search now covers titles, messages, tool activity, and compaction summaries." },
+        { "kind": "fixed", "text": "Preserved pin and unpin behavior in both history command aliases." }
+      ]
+    },
+    {
+      "version": "0.2.1",
+      "date": "2026-07-16",
+      "status": "published",
+      "commit": "f020c42d66a90d448783cb2e76360f3a23727fb4",
+      "summary": "Evolve migration prompts respect a user’s decision.",
+      "changes": [
+        { "kind": "fixed", "text": "Choosing Later now dismisses an Evolve migration for the current Furnace version." },
+        { "kind": "fixed", "text": "Prevented denied migrations from prompting repeatedly at startup." }
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-07-16",
+      "status": "published",
+      "commit": "6bd7f3fd95ef48f8218ea3dc40230eff4d9e38b0",
+      "summary": "A version milestone carrying the 0.1.23 feature set.",
+      "changes": [
+        { "kind": "changed", "text": "Promoted the usage, pinned-chat, response-mode, and multitasking release line to 0.2." }
+      ]
+    },
+    {
+      "version": "0.1.23",
+      "date": "2026-07-16",
+      "status": "tagged",
+      "commit": "587a3d05b014c56738f84b2176efc54e38896a2f",
+      "summary": "Usage visibility and multitasking arrived together.",
+      "changes": [
+        { "kind": "added", "text": "Added `/usage` with twelve-month token history, accepted agent lines, and recorded cost." },
+        { "kind": "added", "text": "Added up to five pinned chats with `/pin`, `/pins`, Ctrl+P, and Ctrl+G." },
+        { "kind": "added", "text": "Added `/stfu` minimal-response mode and `/caveman` prose mode." },
+        { "kind": "changed", "text": "Condensed repeated tool activity while STFU mode is active." },
+        { "kind": "fixed", "text": "Fixed globally installed CLI executability and improved interrupt/tool details." }
+      ]
+    },
+    {
+      "version": "0.1.22",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "4409a5cbc7f89f34236c3491e9a713a114adf584",
+      "summary": "Evolve migrations became recoverable and cumulative.",
+      "changes": [
+        { "kind": "fixed", "text": "Hardened migration failure and retry state." },
+        { "kind": "fixed", "text": "Preserved cumulative tracked and untracked customizations." },
+        { "kind": "fixed", "text": "Recreated missing migration checkouts and improved `/evolve-merge` recovery guidance." }
+      ]
+    },
+    {
+      "version": "0.1.21",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "4844142fd274fddbdc4b2710cf17307c8682acde",
+      "summary": "Evolve restarts no longer hang on active input.",
+      "changes": [
+        { "kind": "fixed", "text": "Moved restart handoff to the next event-loop turn and cleanly terminated the old process." }
+      ]
+    },
+    {
+      "version": "0.1.20",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "fea4dcd0b4b530f47c55eadbf4c39cdaa69336be",
+      "summary": "Replacement processes restart safely.",
+      "changes": [
+        { "kind": "fixed", "text": "Spawned and detached replacement Furnace processes instead of synchronously waiting for them." }
+      ]
+    },
+    {
+      "version": "0.1.19",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "081370be9816eaec949a14282f4bcfdcf50ced49",
+      "summary": "Evolve keeps editor interaction under control.",
+      "changes": [
+        { "kind": "fixed", "text": "Kept input locked through preparation, editing, verification, approval, and restart/error prompts." },
+        { "kind": "changed", "text": "Documented preservation of tracked and untracked customizations." }
+      ]
+    },
+    {
+      "version": "0.1.18",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "8505faf558f8b7e3c465d92ea6def23ddde2855b",
+      "summary": "Migration language now explains what Evolve is doing.",
+      "changes": [
+        { "kind": "changed", "text": "Clarified Evolve migration UI as reapplying previous changes." }
+      ]
+    },
+    {
+      "version": "0.1.17",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "a59b8f51b585fab9233092a0071e065fdffdfe9a",
+      "summary": "Evolved customizations survive upgrades.",
+      "changes": [
+        { "kind": "added", "text": "Added safe migration of Evolve customizations across Furnace upgrades." },
+        { "kind": "added", "text": "Added `/evolve-merge` for agent-assisted conflict resolution." },
+        { "kind": "fixed", "text": "Preserved old customizations and ran stock Furnace if automatic migration failed." }
+      ]
+    },
+    {
+      "version": "0.1.16",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "42db796368a61a58cd1ce841da940b5233731c9d",
+      "summary": "Restart now actually launches the replacement.",
+      "changes": [
+        { "kind": "fixed", "text": "Fixed Evolve restart execution during shutdown." }
+      ]
+    },
+    {
+      "version": "0.1.15",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "fbedda9feb8006023820aeeb19815c2aaab21477",
+      "summary": "Approved Evolve changes end with an explicit restart choice.",
+      "changes": [
+        { "kind": "added", "text": "Added Restart now and Restart later actions after an approved Evolve change." },
+        { "kind": "changed", "text": "Kept the recovery command visible in the restart prompt." }
+      ]
+    },
+    {
+      "version": "0.1.14",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "4c1ae62a9cb403acf6d62fd04c15dbce9bdd2b79",
+      "summary": "Published installs can recover source without a matching tag.",
+      "changes": [
+        { "kind": "fixed", "text": "Fell back to npm’s recorded Git commit when an Evolve release tag was unavailable." }
+      ]
+    },
+    {
+      "version": "0.1.13",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "5c96cc9a7e0bf4587aaf26e7c9bd947fe95bea68",
+      "summary": "Evolve now works from published npm installations.",
+      "changes": [
+        { "kind": "added", "text": "Downloaded version-matched source and build dependencies for npm-installed Furnace." },
+        { "kind": "added", "text": "Activated approved evolved bundles on the next launch." },
+        { "kind": "fixed", "text": "Improved source-checkout detection and portable verification." }
+      ]
+    },
+    {
+      "version": "0.1.12",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "42ec87ac00522ca1cfbbc3bedb7593aa6bfb04b2",
+      "summary": "A new Asteroid layout joined a cleaner public package.",
+      "changes": [
+        { "kind": "added", "text": "Added the Asteroid terminal layout and matching space theme." },
+        { "kind": "added", "text": "Added an early-access feedback link." },
+        { "kind": "changed", "text": "Backspace on collapsed pasted text now offers edit, delete, or cancel." }
+      ]
+    },
+    {
+      "version": "0.1.11",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "7d0c0f2c19126b790ffcf1212706d4d201161c29",
+      "summary": "Repository initialization became worktree-aware.",
+      "changes": [
+        { "kind": "fixed", "text": "Made `/init` index the current Git worktree." },
+        { "kind": "added", "text": "Remembered index-onboarding choices and optionally reindexed after upstream changes." },
+        { "kind": "added", "text": "Added dedicated rendering for agent questions." }
+      ]
+    },
+    {
+      "version": "0.1.10",
+      "date": "2026-07-14",
+      "status": "published",
+      "commit": "be3f333968d5d096a228d5575c813ba3e6fe76da",
+      "summary": "Furnace gained distinct terminal layouts and more durable UI state.",
+      "changes": [
+        { "kind": "added", "text": "Added Classic, Notebook, and Console terminal layouts." },
+        { "kind": "added", "text": "Added bordered input, styled slash menus, and clipboard image paste." },
+        { "kind": "changed", "text": "Made upgrade and onboarding notices persist until acted upon." },
+        { "kind": "fixed", "text": "Fixed status settings, session isolation, credentials, recovery, compression, and terminal interactions." },
+        { "kind": "compatibility", "text": "Restored the Node.js version ceiling below Node 23." }
+      ]
+    },
+    {
+      "version": "0.1.9",
+      "date": "2026-07-11",
+      "status": "published",
+      "commit": "56eb4ba32d78b9f55c72febf41c7f63d7804c33e",
+      "summary": "Node.js 23 became temporarily supported.",
+      "changes": [
+        { "kind": "compatibility", "text": "Expanded the engine range from Node 22-only to Node 22.19 and newer." }
+      ]
+    },
+    {
+      "version": "0.1.8",
+      "date": "2026-07-11",
+      "status": "published",
+      "commit": "8cf7294e6a6669d8aaf8df9c633df60c7d9e338a",
+      "summary": "A new rendering engine and self-modification workflow reshaped Furnace.",
+      "changes": [
+        { "kind": "changed", "text": "Replaced the Ink interface with the differential-rendered Pi TUI." },
+        { "kind": "added", "text": "Added Pi-style editing, autocomplete, model settings, permission dialogs, and tool activity." },
+        { "kind": "added", "text": "Added `/evolve`, `/reset`, and `--recover` with verification, approval, rollback, and recovery points." },
+        { "kind": "removed", "text": "Removed the old sidebar and Vim/input-mode surfaces." },
+        { "kind": "fixed", "text": "Fixed duplicate status lines, transcript spacing, message rendering, and model controls." }
+      ]
+    },
+    {
+      "version": "0.1.7",
+      "date": "2026-07-10",
+      "status": "published",
+      "commit": "a9fe2550d27b8905b62b871c9964f4c42dbfd562",
+      "summary": "Model output limits became configurable.",
+      "changes": [
+        { "kind": "added", "text": "Added maximum output-token controls to `/model` and `FURNACE_MAX_OUTPUT_TOKENS`." },
+        { "kind": "changed", "text": "Defaulted model turns to an 8,192-token output cap." }
+      ]
+    },
+    {
+      "version": "0.1.6",
+      "date": "2026-07-10",
+      "status": "published",
+      "commit": "1d53adc37933c52c4da20ef54e45f9247838e6d8",
+      "summary": "Repository indexes became smaller and more useful.",
+      "changes": [
+        { "kind": "changed", "text": "Reworked indexes into a compact path-oriented structure with metadata." },
+        { "kind": "fixed", "text": "Improved discovery, filtering, fallback generation, and index guidance." }
+      ]
+    },
+    {
+      "version": "0.1.5",
+      "date": "2026-07-09",
+      "status": "published",
+      "commit": "1c44501538fd11f1a3ebc6c70c4cdc519e54082e",
+      "summary": "Furnace learned to index a repository before working in it.",
+      "changes": [
+        { "kind": "added", "text": "Added `/init` and local `.furnace/repo-index.md` generation." },
+        { "kind": "added", "text": "Added interactive repository-index onboarding." }
+      ]
+    },
+    {
+      "version": "0.1.4",
+      "date": "2026-07-09",
+      "status": "published",
+      "commit": "e4bebd368244900a1738843b27bf7051b129d73d",
+      "summary": "Headless runs gained provider controls and cleaner measurement.",
+      "changes": [
+        { "kind": "added", "text": "Added provider, model, permission-mode, and title-generation CLI overrides." },
+        { "kind": "fixed", "text": "Improved JSON output cleanliness and model context-window accuracy." },
+        { "kind": "changed", "text": "Added request timing and prompt-cache usage reporting." }
+      ]
+    },
+    {
+      "version": "0.1.3",
+      "date": "2026-07-08",
+      "status": "published",
+      "commit": "4e712b51cb6b850e344a2dc87e4d0e31aa3afbc",
+      "summary": "Usage accounting became persistent and context became leaner.",
+      "changes": [
+        { "kind": "added", "text": "Added persisted token, cache, and estimated-cost accounting." },
+        { "kind": "changed", "text": "Replaced quiet historical full-file reads with retrievable previews." },
+        { "kind": "removed", "text": "Removed the beta split-chat mode." },
+        { "kind": "changed", "text": "Documented npm install and update commands." }
+      ]
+    },
+    {
+      "version": "0.1.2",
+      "date": "2026-07-07",
+      "status": "published",
+      "commit": "cd13ab8823af55a062dc6d01c913a82b423985b1",
+      "summary": "A package-only maintenance release.",
+      "changes": [
+        { "kind": "changed", "text": "Updated package and lockfile versions without runtime changes." }
+      ]
+    },
+    {
+      "version": "0.1.1",
+      "date": "2026-07-07",
+      "status": "published",
+      "commit": "d8b5ccc8d5388fd0ca6b0cffde327279a7b6f608",
+      "summary": "Local Furnace state stopped cluttering Git status.",
+      "changes": [
+        { "kind": "fixed", "text": "Added `.furnace/` to the worktree-local Git exclusion file." },
+        { "kind": "added", "text": "Displayed the installed version on the welcome screen." }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-07-07",
+      "status": "published",
+      "commit": "264ed7a6ebc04116cf094cfa670601b899489749",
+      "summary": "The first public Furnace release.",
+      "changes": [
+        { "kind": "added", "text": "Shipped the streamed coding agent with file, shell, web, and permission tools." },
+        { "kind": "added", "text": "Added local sessions, resume and fork, plans, skills, subagents, compaction, and images." },
+        { "kind": "added", "text": "Added provider login, BYOK, OpenAI-compatible, OpenRouter, Anthropic, and custom providers." },
+        { "kind": "added", "text": "Added themes, terminal workflows, npm-global installation, and Node.js guardrails." }
+      ]
+    }
+  ]
+}

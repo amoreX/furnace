@@ -81,6 +81,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "showApiKeySetup",
     "showProviderSelector",
     "showResumeSearch",
+    "showWhatsNew",
     "setModel",
     "setTheme",
     "setTitle",
@@ -96,6 +97,29 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
   for (const method of required) {
     assert.equal(typeof terminal[method], "function", `missing method: ${method}`)
   }
+})
+
+test("What’s New panel accepts structured release notes", () => {
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onSubmit: () => {},
+    terminal: createMockTerminal(),
+    themeName: "default",
+    title: "Test",
+  })
+
+  assert.doesNotThrow(() => {
+    terminal.showWhatsNew({
+      version: "0.2.4",
+      date: "2026-07-17",
+      status: "upcoming",
+      commit: null,
+      summary: "Release notes are now visible.",
+      changes: [{ kind: "added", text: "Added a What’s New panel." }],
+    }, () => {})
+  })
 })
 
 test("setTranscript and setStreamingContent do not throw", () => {

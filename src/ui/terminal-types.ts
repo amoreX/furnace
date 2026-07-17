@@ -6,6 +6,7 @@ import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
 import type { ResponseMode } from "../response-modes.js"
 import type { TaskStatusSnapshot } from "../tasks/types.js"
+import type { FurnaceRelease } from "../release-notes.js"
 
 export type PromptAutocompleteItem = {
   browsable?: boolean
@@ -79,6 +80,7 @@ export type FurnaceTerminal = {
     onDelete?: (providerId: string) => void,
   ): void
   showResumeSearch(): void
+  showWhatsNew(release: FurnaceRelease, onContinue: () => void): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void

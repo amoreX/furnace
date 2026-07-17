@@ -9,6 +9,7 @@ import {
   Container,
   Input,
   Key,
+  Markdown,
   matchesKey,
   ProcessTerminal,
   SelectList,
@@ -78,6 +79,7 @@ import type {
 } from "./terminal-types.js"
 import type { AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
+import type { FurnaceRelease } from "../release-notes.js"
 import { defaultMaxOutputTokens, normalizeCostDisplayMode, normalizeTerminalLayout, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings, type ReasoningEffort, type StatusLinePreferences, type TerminalLayout } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { AgentMode } from "../plan-mode.js"
@@ -973,6 +975,23 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     })
   }
 
+  const showWhatsNew = (release: FurnaceRelease, onContinue: () => void) => {
+    const body = [
+      release.summary,
+      "",
+      ...release.changes.map((change) => `- **${change.kind[0]?.toUpperCase()}${change.kind.slice(1)}:** ${change.text}`),
+      "",
+      "_Press Enter to continue._",
+    ].join("\n")
+    selectListPanel(
+      `What’s new in Furnace ${release.version}`,
+      [{ label: "Continue", value: "continue", description: "Start using Furnace" }],
+      onContinue,
+      null,
+      [new Markdown(body, 1, 0, getMarkdownTheme())],
+    )
+  }
+
   const showPinnedChats = () => {
     if (!pinnedPanelState.focus()) return
     renderPinnedChatsPanel()
@@ -1660,6 +1679,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showResumeSearch,
     showSelectList,
     showSettings,
+    showWhatsNew,
     stop,
     suspendForEditor,
   }

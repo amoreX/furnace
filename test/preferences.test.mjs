@@ -116,3 +116,38 @@ test("cost display mode migrates the old boolean and pinned chats persist global
     await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
   }
 })
+
+test("release acknowledgements normalize, deduplicate, and remain global", async () => {
+  const home = await mkdtemp(join(tmpdir(), "furnace-preferences-home-"))
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-preferences-project-"))
+  const previousHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    const {
+      acknowledgeReleaseVersion,
+      loadPreferences,
+      normalizeAcknowledgedReleaseVersions,
+      saveModelPreferences,
+    } = await import("../dist/preferences.js")
+
+    assert.deepEqual(normalizeAcknowledgedReleaseVersions(["0.2.4", "bad", "0.2.4", 1]), ["0.2.4"])
+    await Promise.all([
+      acknowledgeReleaseVersion("0.2.3"),
+      acknowledgeReleaseVersion("0.2.4"),
+      acknowledgeReleaseVersion("0.2.4"),
+    ])
+    await saveModelPreferences(cwd, {
+      acknowledgedReleaseVersions: ["9.9.9"],
+      model: "project-model",
+    })
+
+    const preferences = await loadPreferences(cwd)
+    assert.deepEqual(preferences.acknowledgedReleaseVersions, ["0.2.3", "0.2.4"])
+    const projectFile = JSON.parse(await readFile(join(cwd, ".furnace", "preferences.json"), "utf8"))
+    assert.deepEqual(projectFile, { model: "project-model" })
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
+  }
+})

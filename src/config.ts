@@ -15,6 +15,7 @@ const subagentPromptPath = join(promptsDir, "subagent-system.md")
 const titlePromptPath = join(promptsDir, "title-system.md")
 
 export type FurnaceConfig = {
+  acknowledgedReleaseVersions: string[]
   appName: string
   layout: TerminalLayout
   model: string
@@ -56,6 +57,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
   const providerConfig: ResolvedProvider = createResolvedProvider(effectiveDef, apiKey, { appName, siteUrl })
 
   return {
+    acknowledgedReleaseVersions: preferences.acknowledgedReleaseVersions ?? [],
     appName,
     layout: normalizeTerminalLayout(preferences.layout || process.env.FURNACE_LAYOUT?.trim()),
     model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4-6",

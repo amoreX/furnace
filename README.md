@@ -23,6 +23,8 @@ The project is still early, but it is no longer just a plan: the current codebas
 - Can create a compact local repository index for faster project orientation.
 - Provides four structural UI layouts plus configurable themes, status line fields, model settings, and typing indicators.
 - Shows an early-access feedback banner linking directly to the Furnace issue tracker.
+- Shows local What’s New notes once per installed version; the full history lives at
+  [furnace.unordinary.software/changelog](https://furnace.unordinary.software/changelog).
 
 ## Requirements
 

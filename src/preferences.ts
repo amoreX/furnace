@@ -25,7 +25,15 @@ export function normalizeCostDisplayMode(value: string | undefined, legacyShowCo
   return legacyShowCost === false ? "off" : "session"
 }
 
+export function normalizeAcknowledgedReleaseVersions(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter((version): version is string => (
+    typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version)
+  )))]
+}
+
 export type FurnacePreferences = {
+  acknowledgedReleaseVersions?: string[]
   layout?: TerminalLayout
   model?: string
   modelSettings?: ModelSettings
@@ -116,12 +124,26 @@ async function readPreferencesFile(filePath: string): Promise<FurnacePreferences
 export async function loadPreferences(cwd = process.cwd()): Promise<FurnacePreferences> {
   const globalPrefs = await readPreferencesFile(globalPreferencesPath())
   const projectPrefs = projectPreferenceOverrides(await readPreferencesFile(preferencesPath(cwd)))
-  return Object.assign({}, globalPrefs, projectPrefs)
+  const preferences = Object.assign({}, globalPrefs, projectPrefs)
+  preferences.acknowledgedReleaseVersions = normalizeAcknowledgedReleaseVersions(preferences.acknowledgedReleaseVersions)
+  return preferences
 }
 
 export async function saveGlobalPreferences(update: FurnacePreferences): Promise<void> {
   const path = globalPreferencesPath()
   await updatePreferencesFile(path, (preferences) => Object.assign(preferences, update))
+}
+
+export async function acknowledgeReleaseVersion(version: string): Promise<void> {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Invalid Furnace release version: ${version}`)
+  const path = globalPreferencesPath()
+  await updatePreferencesFile(path, (preferences) => ({
+    ...preferences,
+    acknowledgedReleaseVersions: normalizeAcknowledgedReleaseVersions([
+      ...normalizeAcknowledgedReleaseVersions(preferences.acknowledgedReleaseVersions),
+      version,
+    ]),
+  }))
 }
 
 function globalPreferencesPath(): string {

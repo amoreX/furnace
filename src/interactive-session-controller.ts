@@ -19,7 +19,7 @@ import type { CustomProvider, ProviderDefinition } from "./providers/types.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import { appendPlanModeGuidance, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, transitionPlanMode, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
-import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings } from "./preferences.js"
+import { acknowledgeReleaseVersion, saveGlobalPreferences, saveModelPreferences, saveThemePreference, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { resolveForkEntryId } from "./session/navigation.js"
@@ -57,6 +57,7 @@ import {
   renderDone,
 } from "./ui/plain-output.js"
 import { packageName, packageVersion } from "./version.js"
+import { unacknowledgedFurnaceRelease } from "./release-notes.js"
 
 export async function runInteractive(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
@@ -288,8 +289,10 @@ export async function runInteractive(input: {
   })
   applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   syncPersistentStatusNotice()
+  const whatsNewReady = maybeShowWhatsNew()
   const initialModelSync = syncModelDisplayFromCache()
-  void initialModelSync.finally(() => {
+  void Promise.allSettled([initialModelSync]).then(async () => {
+    await whatsNewReady
     void (async () => {
       await maybeRunEvolveMigration()
       await maybeRunRepoIndexOnboarding()
@@ -984,6 +987,26 @@ export async function runInteractive(input: {
       return
     }
     terminal.setStatusNotice(undefined)
+  }
+
+  function maybeShowWhatsNew(): Promise<void> {
+    const release = unacknowledgedFurnaceRelease(packageVersion, input.config.acknowledgedReleaseVersions)
+    if (!release) return Promise.resolve()
+
+    return new Promise((resolve) => {
+      terminal.showWhatsNew(release, () => {
+        void acknowledgeReleaseVersion(packageVersion)
+          .then(() => {
+            input.config.acknowledgedReleaseVersions = [
+              ...new Set([...input.config.acknowledgedReleaseVersions, packageVersion]),
+            ]
+          })
+          .catch((error) => {
+            showTransientStatus(`Could not save What’s New acknowledgement: ${formatError(error)}`, 6000)
+          })
+          .finally(resolve)
+      })
+    })
   }
 
   function missingApiKeyNotice(): string | undefined {

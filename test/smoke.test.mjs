@@ -30,9 +30,10 @@ test("startup mounts What’s New after terminal initialization", async () => {
 
   const refresh = startup.indexOf("refreshCurrentSession()")
   const run = startup.indexOf("terminal.run()")
-  const drainLaunchInput = startup.indexOf("setImmediate(resolve)")
+  const modelSync = startup.indexOf("syncModelDisplayFromCache()")
+  const modelSyncSettled = startup.indexOf("Promise.allSettled([initialModelSync])")
   const whatsNew = startup.indexOf("maybeShowWhatsNew()")
-  assert.ok(refresh < run && run < drainLaunchInput && drainLaunchInput < whatsNew)
+  assert.ok(refresh < run && run < modelSync && modelSync < modelSyncSettled && modelSyncSettled < whatsNew)
 })
 
 test("termcn theme registry exposes all bundled themes", async () => {

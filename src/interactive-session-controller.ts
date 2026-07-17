@@ -93,6 +93,7 @@ export async function runInteractive(input: {
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
   let persistentUpgradeNotice: string | undefined
+  let upgradeNoticeTimer: ReturnType<typeof setTimeout> | undefined
   let repoIndexOnboardingRunning = false
   const usageViewState = new UsageViewState()
   let repoIndexService!: RepoIndexService
@@ -293,13 +294,11 @@ export async function runInteractive(input: {
   // must finish before the startup modal is mounted.
   refreshCurrentSession()
   const terminalDone = terminal.run()
-  // Let input left over from launching `furnace` reach the normal editor
-  // before Enter can activate the startup modal's Continue action.
-  await new Promise<void>((resolve) => setImmediate(resolve))
-  const whatsNewReady = maybeShowWhatsNew()
   const initialModelSync = syncModelDisplayFromCache()
   void Promise.allSettled([initialModelSync]).then(async () => {
-    await whatsNewReady
+    // Model synchronization refreshes the session UI, so mount What’s New only
+    // after that final startup refresh can no longer replace the panel.
+    await maybeShowWhatsNew()
     void (async () => {
       await maybeRunEvolveMigration()
       await maybeRunRepoIndexOnboarding()
@@ -308,11 +307,17 @@ export async function runInteractive(input: {
     })
   })
 
-  // Non-blocking startup update check — shown persistently until the session ends
+  // Non-blocking startup update check — highlighted briefly, then dismissed.
   void checkForUpdate().then((notice) => {
     if (notice) {
       persistentUpgradeNotice = notice
       syncPersistentStatusNotice()
+      upgradeNoticeTimer = setTimeout(() => {
+        persistentUpgradeNotice = undefined
+        upgradeNoticeTimer = undefined
+        syncPersistentStatusNotice()
+      }, 8000)
+      upgradeNoticeTimer.unref?.()
     }
   })
 
@@ -320,6 +325,7 @@ export async function runInteractive(input: {
     await terminalDone
   } finally {
     clearTransientStatus()
+    if (upgradeNoticeTimer) clearTimeout(upgradeNoticeTimer)
     if (repoIndexStatusTimer) clearTimeout(repoIndexStatusTimer)
     repoIndexService.stop()
     lofi.stop()

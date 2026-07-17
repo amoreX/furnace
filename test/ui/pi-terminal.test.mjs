@@ -495,6 +495,14 @@ test("footer status toggles show configured status parts", () => {
   }
 })
 
+test("footer highlights the active mode value", () => {
+  const { session, footerData } = createFooterFixture()
+  const footer = new FooterComponent(session, footerData, {})
+
+  const rendered = footer.render(160).join("\n")
+  assert.match(rendered, /mode: (?:\x1b\[[0-9;]*m)+plan/)
+})
+
 test("footer shows all active response modes together", () => {
   const { session, footerData } = createFooterFixture()
   footerData.getExtensionStatuses = () => new Map([["response-modes", "modes: stfu + caveman"]])

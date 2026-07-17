@@ -980,7 +980,7 @@ export async function runInteractive(input: {
       return
     }
     if (persistentUpgradeNotice) {
-      terminal.setStatusNotice(persistentUpgradeNotice)
+      terminal.setStatusNotice(persistentUpgradeNotice, "warning")
       return
     }
     terminal.setStatusNotice(undefined)
@@ -3271,7 +3271,7 @@ async function checkForUpdate(): Promise<string | undefined> {
     const data = (await res.json()) as { version?: string }
     const latest = data.version
     if (!latest || latest === packageVersion) return undefined
-    if (semverGt(latest, packageVersion)) return `Furnace ${latest} available — run npm i -g ${packageName} to upgrade.`
+    if (semverGt(latest, packageVersion)) return `New Furnace version ${latest} available — run furnace update.`
   } catch { /* network unavailable or timeout */ }
   return undefined
 }

@@ -314,7 +314,9 @@ export class FooterComponent implements Component {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
 		if (showStatusPart(this.statusLine, "statusShowMode")) {
-			statsParts.push(`mode: ${state.mode || "agent"}`);
+			const mode = state.mode || "agent";
+			const modeColor = mode === "plan" ? "warning" : "accent";
+			statsParts.push(`mode: ${theme.bold(theme.fg(modeColor, mode))}`);
 		}
 		if (showStatusPart(this.statusLine, "statusShowWindow") && state.configuredContextWindow) {
 			statsParts.push(`window: ${formatConfiguredWindow(state.configuredContextWindow)}`);

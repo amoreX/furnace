@@ -40,8 +40,13 @@ npm install -g cook-furnace
 Update an existing global install to the latest published version:
 
 ```bash
-npm install -g cook-furnace@latest
+furnace update
+# or
+furnace --update
 ```
+
+The self-update command uses npm. Source checkouts must be updated with Git and
+rebuilt locally.
 
 Check the installed version:
 

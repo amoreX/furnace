@@ -292,6 +292,10 @@ export async function runInteractive(input: {
   // Session refresh clears stale plan-action UI by restoring the editor, so it
   // must finish before the startup modal is mounted.
   refreshCurrentSession()
+  const terminalDone = terminal.run()
+  // Let input left over from launching `furnace` reach the normal editor
+  // before Enter can activate the startup modal's Continue action.
+  await new Promise<void>((resolve) => setImmediate(resolve))
   const whatsNewReady = maybeShowWhatsNew()
   const initialModelSync = syncModelDisplayFromCache()
   void Promise.allSettled([initialModelSync]).then(async () => {
@@ -313,7 +317,7 @@ export async function runInteractive(input: {
   })
 
   try {
-    await terminal.run()
+    await terminalDone
   } finally {
     clearTransientStatus()
     if (repoIndexStatusTimer) clearTimeout(repoIndexStatusTimer)

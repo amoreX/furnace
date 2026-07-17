@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.8",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "The What’s New screen no longer consumes the key used to launch Furnace.",
+      "changes": [
+        { "kind": "fixed", "text": "Fixed the startup Enter key immediately activating Continue and dismissing What’s New." },
+        { "kind": "changed", "text": "What’s New now mounts after the terminal screen and input handler are initialized." }
+      ]
+    },
+    {
       "version": "0.2.7",
       "date": "2026-07-18",
       "status": "published",

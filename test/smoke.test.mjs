@@ -21,14 +21,18 @@ test("local secrets are ignored", async () => {
   assert.match(gitignore, /^\.furnace\/$/m)
 })
 
-test("startup refreshes the session before mounting What’s New", async () => {
+test("startup mounts What’s New after terminal initialization", async () => {
   const controller = await readFile(new URL("../src/interactive-session-controller.ts", import.meta.url), "utf8")
   const startup = controller.slice(
     controller.indexOf("applyBaseAutocompleteItems("),
     controller.indexOf("// Non-blocking startup update check"),
   )
 
-  assert.ok(startup.indexOf("refreshCurrentSession()") < startup.indexOf("maybeShowWhatsNew()"))
+  const refresh = startup.indexOf("refreshCurrentSession()")
+  const run = startup.indexOf("terminal.run()")
+  const drainLaunchInput = startup.indexOf("setImmediate(resolve)")
+  const whatsNew = startup.indexOf("maybeShowWhatsNew()")
+  assert.ok(refresh < run && run < drainLaunchInput && drainLaunchInput < whatsNew)
 })
 
 test("termcn theme registry exposes all bundled themes", async () => {

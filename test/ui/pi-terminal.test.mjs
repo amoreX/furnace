@@ -122,6 +122,44 @@ test("What’s New panel accepts structured release notes", () => {
   })
 })
 
+test("What’s New ignores Enter and closes only with Escape", async () => {
+  let handleInput = () => {}
+  const mockTerminal = {
+    ...createMockTerminal(),
+    start: (onInput) => {
+      handleInput = onInput
+    },
+  }
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onSubmit: () => {},
+    terminal: mockTerminal,
+    themeName: "default",
+    title: "Test",
+  })
+  let continued = false
+  terminal.showWhatsNew({
+    version: "0.2.9",
+    date: "2026-07-18",
+    status: "published",
+    commit: null,
+    summary: "Release notes remain visible.",
+    changes: [{ kind: "fixed", text: "Escape is required to continue." }],
+  }, () => {
+    continued = true
+  })
+
+  const running = terminal.run()
+  handleInput("\r")
+  assert.equal(continued, false)
+  handleInput("\x1b")
+  assert.equal(continued, true)
+  terminal.stop()
+  await running
+})
+
 test("setTranscript and setStreamingContent do not throw", () => {
   const terminal = createFurnaceTerminal({
     cwd: "/tmp",

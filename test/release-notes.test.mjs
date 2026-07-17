@@ -28,5 +28,6 @@ test("current package version always has local release notes", () => {
 test("What’s New is selected only for an unacknowledged installed version", () => {
   assert.equal(unacknowledgedFurnaceRelease(packageVersion, [])?.version, packageVersion)
   assert.equal(unacknowledgedFurnaceRelease(packageVersion, [packageVersion]), undefined)
+  assert.equal(unacknowledgedFurnaceRelease("0.2.7", []), undefined)
   assert.equal(unacknowledgedFurnaceRelease("9.9.9", []), undefined)
 })

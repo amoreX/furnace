@@ -980,16 +980,25 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       release.summary,
       "",
       ...release.changes.map((change) => `- **${change.kind[0]?.toUpperCase()}${change.kind.slice(1)}:** ${change.text}`),
-      "",
-      "_Press Enter to continue._",
     ].join("\n")
-    selectListPanel(
-      `What’s new in Furnace ${release.version}`,
-      [{ label: "Continue", value: "continue", description: "Start using Furnace" }],
-      onContinue,
-      null,
-      [new Markdown(body, 1, 0, getMarkdownTheme())],
-    )
+    showSelectorPanel(`What’s new in Furnace ${release.version}`, (done) => {
+      const wrapper = new Container()
+      wrapper.addChild(new Markdown(body, 1, 0, getMarkdownTheme()))
+      wrapper.addChild(new Spacer(1))
+      const escapePrompt: Component = {
+        handleInput(data: string) {
+          if (!matchesKey(data, Key.escape)) return
+          done()
+          onContinue()
+        },
+        invalidate() {},
+        render() {
+          return [theme.fg("accent", theme.bold("Press Esc to continue"))]
+        },
+      }
+      wrapper.addChild(escapePrompt)
+      return { component: wrapper, focus: escapePrompt }
+    })
   }
 
   const showPinnedChats = () => {

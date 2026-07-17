@@ -29,8 +29,10 @@ export function unacknowledgedFurnaceRelease(
   version: string,
   acknowledgedVersions: readonly string[],
 ): FurnaceRelease | undefined {
+  const latestRelease = releases[0]
+  if (!latestRelease || latestRelease.version !== version) return undefined
   if (acknowledgedVersions.includes(version)) return undefined
-  return furnaceRelease(version)
+  return latestRelease
 }
 
 export function validateReleaseManifest(): string[] {

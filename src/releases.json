@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.9",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "What’s New now remains open until you explicitly dismiss it.",
+      "changes": [
+        { "kind": "changed", "text": "The What’s New screen now closes only when Escape is pressed; Enter is ignored." },
+        { "kind": "changed", "text": "Release notes are shown only when the running version matches the newest manifest release." }
+      ]
+    },
+    {
       "version": "0.2.8",
       "date": "2026-07-18",
       "status": "published",

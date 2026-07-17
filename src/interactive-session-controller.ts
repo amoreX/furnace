@@ -1118,6 +1118,7 @@ export async function runInteractive(input: {
     terminal.showProviderSelector(
       rows,
       (providerId) => showApiKeySetupForProvider(providerId, customProviders),
+      (providerId) => { void useConfiguredProvider(providerId, customProviders) },
       () => syncPersistentStatusNotice(),
       (providerId) => { void deleteSavedKey(providerId, customProviders) },
     )
@@ -1139,6 +1140,34 @@ export async function runInteractive(input: {
     return { apiKey: state.apiKey, hasSavedKey: state.hasSavedKey, sourceLabel }
   }
 
+  async function useConfiguredProvider(providerId: string, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): Promise<void> {
+    const def = resolveProvider(providerId, customProviders)
+    if (!def) return
+    const keyState = await resolveProviderKeyState(def, customProviders)
+    if (!keyState.apiKey) {
+      showTransientStatus(`${def.displayName} does not have a usable API key.`, 6000)
+      await openLoginPanel()
+      return
+    }
+    await activateProviderSelection(providerId, def, keyState.apiKey)
+    showTransientStatus(`Provider set to ${def.displayName}. Use /model to pick a model.`, 4000)
+  }
+
+  async function activateProviderSelection(providerId: string, def: ProviderDefinition, apiKey: string): Promise<void> {
+    activateProvider(input.config, def, apiKey)
+    const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
+    if (newModel !== input.config.model) {
+      input.config.model = newModel
+      input.config.modelSettings = {}
+      terminal.setModel(newModel, {})
+      refreshModelListCache()
+      await saveGlobalPreferences({ provider: providerId, model: newModel, modelSettings: {} }).catch(() => {})
+      return
+    }
+    refreshModelListCache()
+    await saveGlobalPreferences({ provider: providerId }).catch(() => {})
+  }
+
   function showApiKeySetupForProvider(providerId: string, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): void {
     const def = resolveProvider(providerId, customProviders)
     if (!def) return
@@ -1158,18 +1187,7 @@ export async function runInteractive(input: {
           showTransientStatus(`Failed to save API key to ~/.furnace/auth.json: ${formatError(error)}`, 8000)
           return
         }
-        activateProvider(input.config, def, normalizedKey)
-        const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
-        if (newModel !== input.config.model) {
-          input.config.model = newModel
-          input.config.modelSettings = {}
-          terminal.setModel(newModel, {})
-          refreshModelListCache()
-          await saveGlobalPreferences({ provider: providerId, model: newModel, modelSettings: {} }).catch(() => {})
-        } else {
-          refreshModelListCache()
-          await saveGlobalPreferences({ provider: providerId }).catch(() => {})
-        }
+        await activateProviderSelection(providerId, def, normalizedKey)
         showTransientStatus(`Provider set to ${label}. API key saved. Use /model to pick a model.`, 4000)
       },
       () => { void openLoginPanel() },

@@ -122,6 +122,52 @@ test("What’s New panel accepts structured release notes", () => {
   })
 })
 
+test("configured providers can activate their existing API key", async () => {
+  let handleInput = () => {}
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  let usedProvider
+  let editedProvider
+  terminal.showProviderSelector(
+    [{
+      canDelete: true,
+      id: "anthropic",
+      displayName: "Anthropic",
+      sourceLabel: "saved",
+      status: "configured",
+      protocol: "anthropic",
+    }],
+    (providerId) => {
+      editedProvider = providerId
+    },
+    (providerId) => {
+      usedProvider = providerId
+    },
+    () => {},
+    () => {},
+  )
+
+  const running = terminal.run()
+  handleInput("\r")
+  handleInput("\r")
+  assert.equal(usedProvider, "anthropic")
+  assert.equal(editedProvider, undefined)
+  terminal.stop()
+  await running
+})
+
 test("What’s New ignores Enter and closes only with Escape", async () => {
   let handleInput = () => {}
   const mockTerminal = {

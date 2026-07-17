@@ -75,7 +75,8 @@ export type FurnaceTerminal = {
   showApiKeySetup(provider: string, label: string, onSave: (key: string) => void, onCancel: () => void): void
   showProviderSelector(
     rows: ProviderDisplayRow[],
-    onSelect: (providerId: string) => void,
+    onEdit: (providerId: string) => void,
+    onUse: (providerId: string) => void,
     onCancel: () => void,
     onDelete?: (providerId: string) => void,
   ): void

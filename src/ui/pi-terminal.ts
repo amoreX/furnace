@@ -1540,7 +1540,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const showProviderSelector = (
     rows: ProviderDisplayRow[],
-    onSelect: (providerId: string) => void,
+    onEdit: (providerId: string) => void,
+    onUse: (providerId: string) => void,
     onCancel: () => void,
     onDelete?: (providerId: string) => void,
   ) => {
@@ -1554,26 +1555,31 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       items,
       (item) => {
         const row = rows.find((candidate) => candidate.id === item.value)
-        if (row?.canDelete && onDelete) {
+        if (row && row.status !== "unconfigured") {
           const actionItems: AutocompleteItem[] = [
+            { value: "use", label: `Use ${row.displayName}` },
             { value: "edit", label: `Edit ${row.displayName} key` },
-            { value: "delete", label: `Delete ${row.displayName} key` },
           ]
+          if (row.canDelete && onDelete) {
+            actionItems.push({ value: "delete", label: `Delete ${row.displayName} key` })
+          }
           selectListPanel(
             row.displayName,
             actionItems,
             (actionItem) => {
               if (actionItem.value === "delete") {
-                onDelete(row.id)
+                onDelete?.(row.id)
+              } else if (actionItem.value === "use") {
+                onUse(row.id)
               } else {
-                onSelect(row.id)
+                onEdit(row.id)
               }
             },
             () => {},
           )
           return
         }
-        onSelect(item.value)
+        onEdit(item.value)
       },
       onCancel,
     )

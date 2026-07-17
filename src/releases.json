@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.11",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "Saved provider credentials can now be activated directly.",
+      "changes": [
+        { "kind": "added", "text": "Added a Use provider action for configured API keys in `/login`." },
+        { "kind": "changed", "text": "Using an existing key now persists the provider, selects its default model, and refreshes available models." }
+      ]
+    },
+    {
       "version": "0.2.10",
       "date": "2026-07-18",
       "status": "published",

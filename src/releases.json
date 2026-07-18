@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.13",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "The latest release notes can now be reopened on demand.",
+      "changes": [
+        { "kind": "added", "text": "Added `/change` to force-open What’s New for the latest bundled Furnace version." },
+        { "kind": "changed", "text": "`furnace update` now explains Evolve reapplication and links to both `/change` and the website changelog." },
+        { "kind": "changed", "text": "Strengthened STFU and Caveman guidance so smaller models consistently apply the selected style to every user-facing response." }
+      ]
+    },
+    {
       "version": "0.2.12",
       "date": "2026-07-18",
       "status": "published",

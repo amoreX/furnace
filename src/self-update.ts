@@ -57,6 +57,10 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): boolean {
     return false
   }
 
-  stdout("Furnace updated to the latest published version. Restart it to use the update.\n")
+  stdout(
+    "Furnace updated to the latest published version. Restart it to use the update.\n" +
+    "Any Evolve changes will be reapplied on the next launch; follow the prompts if you have Evolve changes.\n" +
+    "View the latest changelog with `/change` or at https://furnace.unordinary.software/changelog.\n",
+  )
   return true
 }

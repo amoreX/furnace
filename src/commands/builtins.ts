@@ -43,6 +43,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/init", description: "Learn this repo and write .furnace/repo-index.md" },
   { name: "/permissions", description: "Clear conversation approvals" },
   { name: "/status", description: "Show session status (model, mode, context, cwd)" },
+  { name: "/change", description: "Show what’s new in the latest Furnace version" },
   { name: "/export", description: "Export conversation to file", insertText: "/export ", usage: "/export [json] [path]" },
   { name: "/diff", description: "Show diff of files changed this session" },
   { name: "/undo", description: "Revert the most recent file-changing tool call" },

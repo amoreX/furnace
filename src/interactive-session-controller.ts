@@ -57,7 +57,7 @@ import {
   renderDone,
 } from "./ui/plain-output.js"
 import { packageName, packageVersion } from "./version.js"
-import { unacknowledgedFurnaceRelease } from "./release-notes.js"
+import { furnaceReleases, unacknowledgedFurnaceRelease } from "./release-notes.js"
 
 export async function runInteractive(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
@@ -561,6 +561,10 @@ export async function runInteractive(input: {
       showStatusSummary()
       return
     }
+    if (command.name === "/change") {
+      await showLatestChanges()
+      return
+    }
     if (command.name === "/export") {
       await exportConversation(command.argument)
       return
@@ -1019,6 +1023,17 @@ export async function runInteractive(input: {
           })
           .finally(resolve)
       })
+    })
+  }
+
+  function showLatestChanges(): Promise<void> {
+    const release = furnaceReleases()[0]
+    if (!release) {
+      showTransientStatus("No Furnace release notes are available.")
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      terminal.showWhatsNew(release, resolve)
     })
   }
 

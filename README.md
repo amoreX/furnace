@@ -166,6 +166,7 @@ Built-in slash commands include:
 | `/skills reload` | Reload skill discovery. |
 | `/permissions` | View/clear conversation approvals. |
 | `/status` | Show session/model/mode/context status. |
+| `/change` | Reopen What’s New for the latest Furnace version. |
 | `/export [json] [path]` | Export the conversation. |
 | `/diff` | Show files changed this session. |
 | `/undo` | Revert the most recent file-changing tool call. |

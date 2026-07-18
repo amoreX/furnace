@@ -43,6 +43,9 @@ test("self-update installs the latest published package globally", () => {
     options: { stdio: "inherit" },
   })
   assert.match(stdout, /updated to the latest published version/)
+  assert.match(stdout, /Evolve changes will be reapplied on the next launch/)
+  assert.match(stdout, /`\/change`/)
+  assert.match(stdout, /furnace\.unordinary\.software\/changelog/)
 })
 
 test("self-update uses npm.cmd on Windows and reports install failures", () => {

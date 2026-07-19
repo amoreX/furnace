@@ -608,7 +608,25 @@ test("footer highlights the active mode value", () => {
   const footer = new FooterComponent(session, footerData, {})
 
   const rendered = footer.render(160).join("\n")
-  assert.match(rendered, /mode: (?:\x1b\[[0-9;]*m)+plan/)
+  assert.match(rendered, /mode:(?:\x1b\[[0-9;]*m)?\s*(?:\x1b\[[0-9;]*m)+plan/)
+})
+
+test("footer colors app name, path, and branch on the status line", () => {
+  initTheme("space")
+  const { session, footerData } = createFooterFixture()
+  const footer = new FooterComponent(session, footerData, {})
+
+  const [pwdLine, statsLine] = footer.render(160)
+  assert.match(pwdLine, /\x1b\[[0-9;]*mFurnace/)
+  assert.match(pwdLine, /\x1b\[[0-9;]*mmain/)
+  assert.doesNotMatch(pwdLine, /^\x1b\[2m|^[^\x1b]*Furnace/)
+  assert.equal(stripAnsi(pwdLine).includes("Furnace"), true)
+  assert.equal(stripAnsi(pwdLine).includes("/tmp/furnace (main)"), true)
+
+  assert.match(statsLine, /\x1b\[[0-9;]*m\$0\.1234/)
+  assert.match(statsLine, /\x1b\[[0-9;]*m10\.6K\/272K/)
+  assert.match(statsLine, /\x1b\[[0-9;]*mGPT-5\.5/)
+  assert.match(statsLine, /mode:(?:\x1b\[[0-9;]*m)?\s*(?:\x1b\[[0-9;]*m)+plan/)
 })
 
 test("footer shows all active response modes together", () => {

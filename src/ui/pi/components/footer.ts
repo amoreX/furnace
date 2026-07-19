@@ -260,33 +260,36 @@ export class FooterComponent implements Component {
 
 		const pwdParts: string[] = [];
 		if (showStatusPart(this.statusLine, "statusShowAppName")) {
-			pwdParts.push("Furnace");
+			pwdParts.push(theme.fg("accent", "Furnace"));
 		}
 		if (showStatusPart(this.statusLine, "statusShowCwd")) {
-			let cwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
+			const cwdPath = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 			const branch = this.footerData.getGitBranch();
 			if (branch) {
-				cwd = `${cwd} (${branch})`;
+				pwdParts.push(
+					`${theme.fg("text", cwdPath)} ${theme.fg("dim", "(")}${theme.fg("success", branch)}${theme.fg("dim", ")")}`,
+				);
+			} else {
+				pwdParts.push(theme.fg("text", cwdPath));
 			}
-			pwdParts.push(cwd);
 		}
 		const sessionName = this.session.sessionManager.getSessionName();
 		if (sessionName && showStatusPart(this.statusLine, "statusShowTitle")) {
-			pwdParts.push(sessionName);
+			pwdParts.push(theme.fg("text", sessionName));
 		}
 		if (state.forkParentTitle && showStatusPart(this.statusLine, "statusShowForkParent")) {
-			pwdParts.push(`fork of: ${state.forkParentTitle}`);
+			pwdParts.push(`${theme.fg("dim", "fork of:")} ${theme.fg("text", state.forkParentTitle)}`);
 		}
-		const pwd = pwdParts.join(" • ");
+		const pwd = pwdParts.join(theme.fg("dim", " • "));
 
 		// Build stats line
 		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
+		if (totalInput) statsParts.push(theme.fg("muted", `↑${formatTokens(totalInput)}`));
+		if (totalOutput) statsParts.push(theme.fg("muted", `↓${formatTokens(totalOutput)}`));
+		if (totalCacheRead) statsParts.push(theme.fg("muted", `R${formatTokens(totalCacheRead)}`));
+		if (totalCacheWrite) statsParts.push(theme.fg("muted", `W${formatTokens(totalCacheWrite)}`));
 		if ((totalCacheRead > 0 || totalCacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+			statsParts.push(theme.fg("muted", `CH${latestCacheHitRate.toFixed(1)}%`));
 		}
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
@@ -294,8 +297,8 @@ export class FooterComponent implements Component {
 		const costMode = normalizeCostDisplayMode(this.statusLine.statusCostMode, this.statusLine.statusShowCost);
 		if (costMode !== "off") {
 			const displayedCost = costMode === "total" ? state.totalCostUsd ?? 0 : totalCost;
-			const costStr = `${formatCostUsd(displayedCost)}${costMode === "total" ? " total" : ""}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+			const costValue = `${formatCostUsd(displayedCost)}${costMode === "total" ? " total" : ""}${usingSubscription ? " (sub)" : ""}`;
+			statsParts.push(theme.fg("text", costValue));
 		}
 
 		const contextDisplay = formatContextDisplay(this.statusLine, contextTokens, contextWindow, contextPercent);
@@ -306,7 +309,7 @@ export class FooterComponent implements Component {
 			} else if (contextPercentValue > 70) {
 				contextDisplayStr = theme.fg("warning", contextDisplay);
 			} else {
-				contextDisplayStr = contextDisplay;
+				contextDisplayStr = theme.fg("text", contextDisplay);
 			}
 			statsParts.push(contextDisplayStr);
 		}
@@ -316,20 +319,22 @@ export class FooterComponent implements Component {
 		if (showStatusPart(this.statusLine, "statusShowMode")) {
 			const mode = state.mode || "agent";
 			const modeColor = mode === "plan" ? "warning" : "accent";
-			statsParts.push(`mode: ${theme.bold(theme.fg(modeColor, mode))}`);
+			statsParts.push(`${theme.fg("dim", "mode:")} ${theme.bold(theme.fg(modeColor, mode))}`);
 		}
 		if (showStatusPart(this.statusLine, "statusShowWindow") && state.configuredContextWindow) {
-			statsParts.push(`window: ${formatConfiguredWindow(state.configuredContextWindow)}`);
+			statsParts.push(
+				`${theme.fg("dim", "window:")} ${theme.fg("text", formatConfiguredWindow(state.configuredContextWindow))}`,
+			);
 		}
 		if (showStatusPart(this.statusLine, "statusShowReasoning")) {
 			const reasoning = !state.thinkingLevel || state.thinkingLevel === "off" ? "none" : state.thinkingLevel;
-			statsParts.push(`reasoning: ${reasoning}`);
+			statsParts.push(`${theme.fg("dim", "reasoning:")} ${theme.fg("text", reasoning)}`);
 		}
 		if (showStatusPart(this.statusLine, "statusShowFast") && state.fast) {
-			statsParts.push("fast");
+			statsParts.push(theme.fg("warning", "fast"));
 		}
 		if (showStatusPart(this.statusLine, "statusShowTheme") && state.themeName) {
-			statsParts.push(`theme: ${state.themeName}`);
+			statsParts.push(`${theme.fg("dim", "theme:")} ${theme.fg("text", state.themeName)}`);
 		}
 
 		let statsLeft = statsParts.join(" ");
@@ -341,19 +346,21 @@ export class FooterComponent implements Component {
 
 		// If statsLeft is too wide, truncate it
 		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
+			statsLeft = truncateToWidth(statsLeft, width, theme.fg("dim", "..."));
 			statsLeftWidth = visibleWidth(statsLeft);
 		}
 
 		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
 
-		let rightSideWithoutProvider = showStatusPart(this.statusLine, "statusShowModel") ? modelName : "";
+		let rightSideWithoutProvider = showStatusPart(this.statusLine, "statusShowModel")
+			? theme.fg("accent", modelName)
+			: "";
 
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;
 		if (rightSide && this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
+			rightSide = `${theme.fg("dim", `(${state.model!.provider})`)} ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
 				// Too wide, fall back
 				rightSide = rightSideWithoutProvider;
@@ -384,15 +391,8 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
-
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const pwdLine = truncateToWidth(pwd, width, theme.fg("dim", "..."));
+		const lines = [pwdLine, statsLine];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();
@@ -403,7 +403,7 @@ export class FooterComponent implements Component {
 				.map(([, text]) => sanitizeStatusText(text));
 			const statusLine = sortedStatuses.join(" ");
 			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			lines.push(truncateToWidth(theme.fg("text", statusLine), width, theme.fg("dim", "...")));
 		}
 
 		return lines;

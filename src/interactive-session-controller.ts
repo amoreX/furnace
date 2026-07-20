@@ -47,6 +47,7 @@ import type { ImageAttachment } from "./utils/images.js"
 import { acceptedLinesForTool, renderUsageReport } from "./usage/summary.js"
 import { readKeyUsage, recordAcceptedLines, recordTurnUsage, removeAcceptedLines } from "./usage/store.js"
 import { UsageViewState } from "./ui/usage-view-state.js"
+import { TipScheduler } from "./ui/tips.js"
 
 export const INTERRUPTED_MESSAGE = "Interrupted."
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
@@ -97,6 +98,7 @@ export async function runInteractive(input: {
   let repoIndexOnboardingRunning = false
   const usageViewState = new UsageViewState()
   let repoIndexService!: RepoIndexService
+  let tipScheduler!: TipScheduler
   let repoIndexStatusTimer: ReturnType<typeof setTimeout> | undefined
   const initialSession = input.store.getSession(sessionId)
   let terminal!: FurnaceTerminal
@@ -163,6 +165,7 @@ export async function runInteractive(input: {
     onPinnedToggleCurrent: toggleCurrentChatPin,
     onPinnedUnpin: unpinPinnedChat,
     onModeCycle: (direction) => {
+      tipScheduler?.activity()
       if (isCurrentSessionRunning()) {
         showTransientStatus("Mode switching is available after the current turn finishes.")
         return
@@ -171,6 +174,7 @@ export async function runInteractive(input: {
       void switchMode(current === "plan" ? "agent" : "plan", { reason: "user", seed: direction > 0 ? "plan" : "agent" }).catch((error) => showTransientStatus(formatError(error)))
     },
     onInputChange: (value) => {
+      tipScheduler?.activity()
       if (isCurrentSessionRunning()) return
       const scope = argumentScopeFor(value)
       if (!scope) {
@@ -268,6 +272,23 @@ export async function runInteractive(input: {
       })
     },
   })
+  tipScheduler = new TipScheduler({
+    enabled: input.config.tipsEnabled,
+    isEligible: () => {
+      const mode = currentPlanModeState(input.store.getActivePath(sessionId)).mode
+      return mode === "agent"
+        && !isCurrentSessionRunning()
+        && !repoIndexOnboardingRunning
+        && !usageViewState.visible
+        && !pendingApprovals.has(sessionId)
+        && !pendingQuestions.has(sessionId)
+        && !pendingPlanActions.has(sessionId)
+        && !hasActiveSubagentTasks(taskManager.status(sessionId).tasks)
+    },
+    setTip: (tip) => {
+      terminal.setTipNotice(tip ? `Tip: ${tip.command} — ${tip.description}` : undefined)
+    },
+  })
   repoIndexService = createRepoIndexService({
     config: input.config,
     cwd: input.cwd,
@@ -303,6 +324,8 @@ export async function runInteractive(input: {
       await maybeRunRepoIndexOnboarding()
     })().catch((error) => {
       showTransientStatus(`Startup task failed: ${formatError(error)}`, 6000)
+    }).finally(() => {
+      tipScheduler.start()
     })
   })
 
@@ -326,11 +349,13 @@ export async function runInteractive(input: {
     clearTransientStatus()
     if (upgradeNoticeTimer) clearTimeout(upgradeNoticeTimer)
     if (repoIndexStatusTimer) clearTimeout(repoIndexStatusTimer)
+    tipScheduler.stop()
     repoIndexService.stop()
     lofi.stop()
   }
 
   async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[]): Promise<void> {
+    tipScheduler.activity()
     const command = parseSlashCommand(prompt)
 
     // Bare messages (non-slash) need an API key. Slash commands always pass through.
@@ -348,6 +373,15 @@ export async function runInteractive(input: {
       const result = lofi.toggle()
       terminal.setLofi(result.enabled)
       showTransientStatus(result.message)
+      return
+    }
+    if (command.name === "/tip") {
+      input.config.tipsEnabled = !input.config.tipsEnabled
+      tipScheduler.setEnabled(input.config.tipsEnabled)
+      await saveGlobalPreferences({ tipsEnabled: input.config.tipsEnabled }).catch((error) => {
+        showTransientStatus(`Failed to save tip preference: ${formatError(error)}`, 8000)
+      })
+      showTransientStatus(`Idle tips ${input.config.tipsEnabled ? "on" : "off"}.`)
       return
     }
     if (command.name === "/stfu" || command.name === "/caveman") {
@@ -476,6 +510,7 @@ export async function runInteractive(input: {
         typingIndicatorBlink: input.config.typingIndicatorBlink,
         notifications: input.config.notifications,
         repoIndexPolicy: input.config.repoIndexPolicy,
+        tipsEnabled: input.config.tipsEnabled,
         model: input.config.model,
         theme: input.config.theme,
         modelSettings: input.config.modelSettings,
@@ -488,8 +523,10 @@ export async function runInteractive(input: {
           typingIndicatorBlink: updated.typingIndicatorBlink === true,
           notifications: updated.notifications === true,
           repoIndexPolicy: updated.repoIndexPolicy ?? input.config.repoIndexPolicy,
+          tipsEnabled: updated.tipsEnabled !== false,
           statusLine: statusLinePreferencesFrom(updated),
         })
+        tipScheduler.setEnabled(input.config.tipsEnabled)
         repoIndexService.setPolicy(input.config.repoIndexPolicy)
         terminal.setLayout(input.config.layout)
         terminal.setStatusLinePreferences(input.config.statusLine)

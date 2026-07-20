@@ -50,6 +50,7 @@ export type FurnaceTerminal = {
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setRepoIndexStatus(content?: string, tone?: StatusNoticeTone): void
   setTaskStatus(snapshot?: TaskStatusSnapshot): void
+  setTipNotice(content?: string): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
   showModelEditor(
     choice: ModelChoice,

@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.16",
+      "date": "2026-07-20",
+      "status": "published",
+      "commit": null,
+      "summary": "Idle moments now surface useful Furnace shortcuts without interrupting work.",
+      "changes": [
+        { "kind": "added", "text": "Added rotating idle tips for useful commands, settings, and shortcuts, including conversation pinning with Tab in `/resume`." },
+        { "kind": "added", "text": "Added `/tip` and an Idle tips setting; tips default on and stay hidden during streaming, work, Plan mode, questions, and popups." },
+        { "kind": "changed", "text": "Tips appear every ten seconds, remain visible for five seconds, and highlight their label and slash commands." }
+      ]
+    },
+    {
       "version": "0.2.15",
       "date": "2026-07-20",
       "status": "published",

@@ -27,6 +27,12 @@ test("/change is exposed as a built-in command", async () => {
   assert.match(slashCommandDefinitions.find((command) => command.name === "/change")?.description || "", /what.s new/i)
 })
 
+test("/tip is exposed as a built-in command", async () => {
+  const { isKnownSlashCommand, slashCommandDefinitions } = await import("../dist/commands/builtins.js")
+  assert.equal(isKnownSlashCommand("/tip"), true)
+  assert.match(slashCommandDefinitions.find((command) => command.name === "/tip")?.description || "", /idle.*tips/i)
+})
+
 test("startup mounts What’s New after terminal initialization", async () => {
   const controller = await readFile(new URL("../src/interactive-session-controller.ts", import.meta.url), "utf8")
   const startup = controller.slice(

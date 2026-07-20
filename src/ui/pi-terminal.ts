@@ -106,6 +106,36 @@ export function inputCursorStyleSequence(
   return `\x1b[${code} q`
 }
 
+export function shouldRenderTipNotice(input: {
+  editorSurfaceActive: boolean
+  hasActiveStatus: boolean
+  hasRepoIndexStatus: boolean
+  hasStatusNotice: boolean
+  inputDisabled: boolean
+  mode: AgentMode
+}): boolean {
+  return input.editorSurfaceActive
+    && input.mode === "agent"
+    && !input.inputDisabled
+    && !input.hasActiveStatus
+    && !input.hasStatusNotice
+    && !input.hasRepoIndexStatus
+}
+
+export function formatTipNotice(content: string): string {
+  return content
+    .split(/(\bTip\b|\/[a-z][a-z0-9-]*)/gi)
+    .filter(Boolean)
+    .map((part) => (
+      part.toLowerCase() === "tip"
+        ? theme.bold(theme.fg("accent", part))
+        : part.startsWith("/")
+          ? theme.bold(theme.fg("warning", part))
+          : theme.fg("dim", part)
+    ))
+    .join("")
+}
+
 function compactTokenLabel(tokens: number): string {
   if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
@@ -388,6 +418,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let statusNoticeText: Text | undefined
   let statusNotice: { content: string; tone: StatusNoticeTone } | undefined
   let repoIndexStatus: { content: string; tone: StatusNoticeTone } | undefined
+  let tipNotice: string | undefined
+  let editorSurfaceActive = true
+  let inputDisabled = false
 
   const rebuildStatusContainer = () => {
     statusContainer.clear()
@@ -411,6 +444,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
             ? "success"
             : "dim"
       statusContainer.addChild(new Text(theme.fg(color, repoIndexStatus.content), 1, 0))
+    }
+    if (tipNotice && shouldRenderTipNotice({
+      editorSurfaceActive,
+      hasActiveStatus: Boolean(activeStatusIndicator),
+      hasRepoIndexStatus: Boolean(repoIndexStatus),
+      hasStatusNotice: Boolean(statusNotice),
+      inputDisabled,
+      mode: currentMode,
+    })) {
+      statusContainer.addChild(new Text(formatTipNotice(tipNotice), 1, 0))
     }
   }
 
@@ -436,7 +479,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const pendingStfuTools = new Map<string, StfuToolGroup>()
   let stfuToolGroup: StfuToolGroup | undefined
   let imageAttachments: ImageAttachment[] = []
-  let inputDisabled = false
   let thinking = false
 
   const toolOptions = () => ({ showImages: true, imageWidthCells: 60 })
@@ -626,6 +668,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
+  const setTipNotice = (content?: string) => {
+    tipNotice = content
+    rebuildStatusContainer()
+    ui.requestRender()
+  }
+
   const setRepoIndexStatus = (content?: string, tone?: StatusNoticeTone) => {
     repoIndexStatus = content ? { content, tone: tone ?? "default" } : undefined
     rebuildStatusContainer()
@@ -708,6 +756,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const setMode = (mode: AgentMode, _planPath?: string) => {
     currentMode = mode
     updateFooterStatuses()
+    rebuildStatusContainer()
   }
 
   const setContextUsage = (tokens: number, window: number) => {
@@ -921,6 +970,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const restoreEditor = () => {
     editorContainer.clear()
     editorContainer.addChild(editorFrame)
+    editorSurfaceActive = true
+    rebuildStatusContainer()
     ui.setFocus(editor)
     ui.requestRender()
   }
@@ -937,6 +988,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     }
     panel.addChild(component)
     panel.addChild(new DynamicBorder())
+    editorSurfaceActive = false
+    rebuildStatusContainer()
     editorContainer.clear()
     editorContainer.addChild(panel)
     ui.setFocus(focus)
@@ -1366,6 +1419,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         onCancel()
       },
     )
+    editorSurfaceActive = false
+    rebuildStatusContainer()
     editorContainer.clear()
     editorContainer.addChild(selector)
     ui.setFocus(selector)
@@ -1441,6 +1496,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       { id: "typingIndicator", label: "Input cursor", currentValue: currentPrefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
       { id: "typingIndicatorBlink", label: "Input cursor blink", currentValue: currentPrefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
       { id: "notifications", label: "Notifications", currentValue: currentPrefs.notifications === true ? "on" : "off", values: ["off", "on"] },
+      { id: "tipsEnabled", label: "Idle tips", currentValue: currentPrefs.tipsEnabled === false ? "off" : "on", values: ["on", "off"] },
       {
         id: "repoIndexPolicy",
         label: "Repo reindexing",
@@ -1490,6 +1546,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
               break
             case "notifications":
               updated.notifications = value === "on"
+              break
+            case "tipsEnabled":
+              updated.tipsEnabled = value === "on"
               break
             case "repoIndexPolicy":
               updated.repoIndexPolicy = value === "every git push" ? "every-git-push" : "agent-decides"
@@ -1634,6 +1693,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const setInputDisabled = (disabled: boolean) => {
     inputDisabled = disabled
     editor.setInputDisabled(disabled)
+    rebuildStatusContainer()
     ui.requestRender()
   }
 
@@ -1673,6 +1733,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setQueuedPrompts,
     setRepoIndexStatus,
     setTaskStatus,
+    setTipNotice,
     setSessionMeta,
     setSlashCommandItems,
     setStatusLinePreferences,

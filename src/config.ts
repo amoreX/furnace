@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
-import { loadPreferences, normalizeRepoIndexPolicy, normalizeTerminalLayout, statusLinePreferencesFrom, type ModelSettings, type RepoIndexPolicy, type StatusLinePreferences, type TerminalLayout, type TypingIndicatorStyle } from "./preferences.js"
+import { loadPreferences, normalizeRepoIndexPolicy, normalizeTerminalLayout, normalizeTipsEnabled, statusLinePreferencesFrom, type ModelSettings, type RepoIndexPolicy, type StatusLinePreferences, type TerminalLayout, type TypingIndicatorStyle } from "./preferences.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { resolveProvider, BUILTIN_PROVIDERS } from "./providers/registry.js"
 import { createResolvedProvider, resolveProviderKey } from "./providers/resolution.js"
@@ -32,6 +32,7 @@ export type FurnaceConfig = {
   subagentSystemPrompt: string
   systemPrompt: string
   theme: string
+  tipsEnabled: boolean
   typingIndicatorBlink: boolean
   typingIndicator: TypingIndicatorStyle
   titleModel: string
@@ -76,6 +77,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     subagentSystemPrompt: await readFile(subagentPromptPath, "utf8"),
     systemPrompt: await readFile(promptPath, "utf8"),
     theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "gruvbox",
+    tipsEnabled: normalizeTipsEnabled(preferences.tipsEnabled),
     typingIndicatorBlink: preferences.typingIndicatorBlink === true,
     typingIndicator: (preferences.typingIndicator as string) === "blink" ? "block" : preferences.typingIndicator || "block",
     titleModel: process.env.OPENROUTER_TITLE_MODEL?.trim() || "openai/gpt-4o-mini",

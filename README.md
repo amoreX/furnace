@@ -175,6 +175,7 @@ Built-in slash commands include:
 | `/usage` | Show a 12-month token-usage grid, accepted agent lines, and recorded cost for the active API key. |
 | `/editor` | Compose a message in `$EDITOR`. |
 | `/lofi` | Toggle lofi mode. |
+| `/tip` | Toggle rotating tips on the idle Agent-mode editor. |
 | `/stfu` | Toggle minimal, no-narration response mode. |
 | `/caveman` | Toggle short caveman-style user-facing prose. |
 | `/clear` | Clear the conversation display. |
@@ -203,6 +204,7 @@ currently selected, never mode names, slash commands, or inactive guidance.
 - Input cursor: block, underscore, or bar.
 - Input cursor blink: off/on, applied to the cursor in the prompt area.
 - Notifications on/off.
+- Idle tips on/off. Tips are on by default and stay hidden during work, Plan mode, questions, and popups.
 - Status line fields:
   - Cost can show the current session, the all-project total for the active API key, or be hidden.
   - app name

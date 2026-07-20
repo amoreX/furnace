@@ -25,6 +25,10 @@ export function normalizeCostDisplayMode(value: string | undefined, legacyShowCo
   return legacyShowCost === false ? "off" : "session"
 }
 
+export function normalizeTipsEnabled(value: unknown): boolean {
+  return value !== false
+}
+
 export function normalizeAcknowledgedReleaseVersions(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return [...new Set(value.filter((version): version is string => (
@@ -59,6 +63,7 @@ export type FurnacePreferences = {
   statusShowTitle?: boolean
   statusShowWindow?: boolean
   theme?: string
+  tipsEnabled?: boolean
   typingIndicatorBlink?: boolean
   typingIndicator?: TypingIndicatorStyle
 }

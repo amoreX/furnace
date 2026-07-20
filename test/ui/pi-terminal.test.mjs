@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-const { createFurnaceTerminal, inputCursorStyleSequence } = await import("../../dist/ui/pi-terminal.js")
+const { createFurnaceTerminal, formatTipNotice, inputCursorStyleSequence, shouldRenderTipNotice } = await import("../../dist/ui/pi-terminal.js")
 const { FooterComponent, formatContextDisplay } = await import("../../dist/ui/pi/components/footer.js")
 const { CustomEditor } = await import("../../dist/ui/pi/components/custom-editor.js")
 const { KeybindingsManager } = await import("../../dist/ui/pi/keybindings.js")
@@ -72,6 +72,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setQueuedPrompts",
     "setRepoIndexStatus",
     "setTaskStatus",
+    "setTipNotice",
     "setPinnedChats",
     "setSlashCommandItems",
     "showModelEditor",
@@ -97,6 +98,33 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
   for (const method of required) {
     assert.equal(typeof terminal[method], "function", `missing method: ${method}`)
   }
+})
+
+test("tips render only on the normal idle agent editor", () => {
+  const idle = {
+    editorSurfaceActive: true,
+    hasActiveStatus: false,
+    hasRepoIndexStatus: false,
+    hasStatusNotice: false,
+    inputDisabled: false,
+    mode: "agent",
+  }
+  assert.equal(shouldRenderTipNotice(idle), true)
+  assert.equal(shouldRenderTipNotice({ ...idle, editorSurfaceActive: false }), false)
+  assert.equal(shouldRenderTipNotice({ ...idle, hasActiveStatus: true }), false)
+  assert.equal(shouldRenderTipNotice({ ...idle, hasRepoIndexStatus: true }), false)
+  assert.equal(shouldRenderTipNotice({ ...idle, hasStatusNotice: true }), false)
+  assert.equal(shouldRenderTipNotice({ ...idle, inputDisabled: true }), false)
+  assert.equal(shouldRenderTipNotice({ ...idle, mode: "plan" }), false)
+})
+
+test("tips highlight their label and slash commands", () => {
+  initTheme("default")
+  const rendered = formatTipNotice("Tip: press Tab in /resume or run /theme")
+  assert.match(rendered, /\x1b\[[0-9;]*mTip/)
+  assert.match(rendered, /\x1b\[[0-9;]*m\/resume/)
+  assert.match(rendered, /\x1b\[[0-9;]*m\/theme/)
+  assert.equal(stripAnsi(rendered), "Tip: press Tab in /resume or run /theme")
 })
 
 test("What’s New panel accepts structured release notes", () => {

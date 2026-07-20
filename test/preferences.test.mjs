@@ -96,6 +96,29 @@ test("repo index policy is global and normalizes invalid values", async () => {
   }
 })
 
+test("idle tips default on and persist as a global preference", async () => {
+  const home = await mkdtemp(join(tmpdir(), "furnace-preferences-home-"))
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-preferences-project-"))
+  const previousHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    const { loadPreferences, normalizeTipsEnabled, saveGlobalPreferences, saveModelPreferences } = await import("../dist/preferences.js")
+    assert.equal(normalizeTipsEnabled(undefined), true)
+    assert.equal(normalizeTipsEnabled(true), true)
+    assert.equal(normalizeTipsEnabled(false), false)
+
+    await saveGlobalPreferences({ tipsEnabled: false })
+    await saveModelPreferences(cwd, { model: "project-model", tipsEnabled: true })
+    const preferences = await loadPreferences(cwd)
+    assert.equal(preferences.tipsEnabled, false)
+    assert.deepEqual(JSON.parse(await readFile(join(cwd, ".furnace", "preferences.json"), "utf8")), { model: "project-model" })
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    await Promise.all([rm(home, { recursive: true, force: true }), rm(cwd, { recursive: true, force: true })])
+  }
+})
+
 test("cost display mode migrates the old boolean and pinned chats persist globally", async () => {
   const home = await mkdtemp(join(tmpdir(), "furnace-preferences-home-"))
   const cwd = await mkdtemp(join(tmpdir(), "furnace-preferences-project-"))

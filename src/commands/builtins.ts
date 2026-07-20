@@ -33,6 +33,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
+  { name: "/tip", description: "Toggle idle command tips" },
   { name: "/stfu", description: "Toggle minimal response mode" },
   { name: "/caveman", description: "Toggle caveman response style" },
   { name: "/evolve", description: "Modify the furnace harness itself", insertText: "/evolve ", usage: "/evolve <what to change>" },

@@ -12,6 +12,7 @@ function isPromptAutocompleteItem(item: AutocompleteItem): item is AutocompleteI
 }
 
 export const RESUME_AUTOCOMPLETE_HINT = "Type to search titles, messages, and tools · Tab pin/unpin · Enter open · Esc close"
+export const MODEL_AUTOCOMPLETE_HINT = "Tab edit model settings · Enter select · Esc close"
 
 export class RelatedAutocompleteSelectList extends SelectList {
   constructor(
@@ -55,6 +56,9 @@ export class RelatedAutocompleteSelectList extends SelectList {
     })
     if (this.prefix.startsWith("/resume")) {
       const hint = theme.fg("muted", RESUME_AUTOCOMPLETE_HINT)
+      lines.push(theme.bg("toolPendingBg", hint + " ".repeat(Math.max(0, width - visibleWidth(hint)))))
+    } else if (this.prefix.startsWith("/model")) {
+      const hint = theme.fg("muted", MODEL_AUTOCOMPLETE_HINT)
       lines.push(theme.bg("toolPendingBg", hint + " ".repeat(Math.max(0, width - visibleWidth(hint)))))
     }
     return lines

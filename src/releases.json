@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.19",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Image-heavy conversations now work reliably across providers and report accurate context usage.",
+      "changes": [
+        { "kind": "fixed", "text": "Prevented text-only DeepSeek models from failing when conversation history contains image attachments." },
+        { "kind": "fixed", "text": "Added an automatic text-only retry for OpenAI-compatible providers when a selected model rejects image input." },
+        { "kind": "fixed", "text": "Stopped base64 image size from inflating context usage and aligned compaction boundaries with the same provider-neutral image token budget." },
+        { "kind": "changed", "text": "Added `/model` guidance for editing settings with Tab and selecting a model with Enter." }
+      ]
+    },
+    {
       "version": "0.2.18",
       "date": "2026-07-21",
       "status": "published",

@@ -208,5 +208,87 @@ test("providers", async (t) => {
     }
   })
 
+  await t.test("DeepSeek replaces unsupported image blocks with text", async () => {
+    const { createOpenAICompatibleProvider } = await import("../dist/providers/openai-compatible.js")
+    const originalFetch = globalThis.fetch
+    let body
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 })
+    }
+    try {
+      const provider = createOpenAICompatibleProvider()
+      await provider.completeChat(
+        {
+          id: "deepseek",
+          displayName: "DeepSeek",
+          baseUrl: "https://api.deepseek.com/v1",
+          protocol: "openai-compatible",
+          apiKey: "fake-key",
+        },
+        "deepseek-chat",
+        [{
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+            { type: "text", text: "explain this error" },
+          ],
+        }],
+        {},
+      )
+      assert.deepEqual(body.messages[0].content, [
+        { type: "text", text: "[Image omitted: the current provider or model does not support image input]" },
+        { type: "text", text: "explain this error" },
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  await t.test("other compatible providers retry without images when a model rejects them", async () => {
+    const { createOpenAICompatibleProvider } = await import("../dist/providers/openai-compatible.js")
+    const originalFetch = globalThis.fetch
+    const bodies = []
+    globalThis.fetch = async (_url, init) => {
+      bodies.push(JSON.parse(init.body))
+      if (bodies.length === 1) {
+        return new Response(JSON.stringify({
+          error: { message: "unknown variant `image_url`, expected `text`" },
+        }), { status: 400 })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 })
+    }
+    try {
+      const provider = createOpenAICompatibleProvider()
+      const response = await provider.completeChat(
+        {
+          id: "custom-provider",
+          displayName: "Custom provider",
+          baseUrl: "https://example.test/v1",
+          protocol: "openai-compatible",
+          apiKey: "fake-key",
+        },
+        "text-only-model",
+        [{
+          role: "user",
+          content: [
+            { type: "text", text: "explain this" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+          ],
+        }],
+        {},
+      )
+      assert.equal(response, "ok")
+      assert.equal(bodies.length, 2)
+      assert.equal(bodies[0].messages[0].content[1].type, "image_url")
+      assert.deepEqual(bodies[1].messages[0].content, [
+        { type: "text", text: "explain this" },
+        { type: "text", text: "[Image omitted: the current provider or model does not support image input]" },
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   await rm(tmpHome, { recursive: true, force: true })
 })

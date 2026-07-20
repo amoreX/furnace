@@ -70,7 +70,18 @@ function buildRequestOptions(provider: ResolvedProvider, settings: ModelSettings
   return options
 }
 
-function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[]): ChatMessage[] {
+function hasImageBlocks(messages: ChatMessage[]): boolean {
+  return messages.some((message) => Array.isArray(message.content)
+    && message.content.some((block) => block.type === "image_url"))
+}
+
+function unsupportedImageResponse(status: number, body: string): boolean {
+  return (status === 400 || status === 422)
+    && /(image_url|image input|vision)/i.test(body)
+    && /(unknown variant|expected [`"']?text|not support|unsupported|invalid)/i.test(body)
+}
+
+function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[], omitImages = provider.id === "deepseek"): ChatMessage[] {
   const prepared = promptCacheDisabled()
     ? stripPromptCacheControl(messages)
     : provider.id === "openrouter"
@@ -78,6 +89,14 @@ function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[]): C
       : messages
   return prepared.map((message) => {
     const { cacheControl, ...rest } = message
+    if (omitImages && Array.isArray(rest.content)) {
+      return {
+        ...rest,
+        content: rest.content.map((block) => block.type === "image_url"
+          ? { type: "text" as const, text: "[Image omitted: the current provider or model does not support image input]" }
+          : block),
+      }
+    }
     if (provider.id === "openrouter" && cacheControl === "ephemeral" && typeof message.content === "string") {
       return {
         ...rest,
@@ -86,6 +105,34 @@ function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[]): C
     }
     return rest
   })
+}
+
+async function postChatCompletion(
+  provider: ResolvedProvider,
+  messages: ChatMessage[],
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const send = (omitImages = false) => fetch(`${provider.baseUrl}/chat/completions`, {
+    method: "POST",
+    signal,
+    headers: buildHeaders(provider),
+    body: JSON.stringify({
+      ...payload,
+      messages: prepareMessages(provider, messages, omitImages || provider.id === "deepseek"),
+    }),
+  })
+
+  let response = await send()
+  if (response.ok) return response
+
+  let body = await response.text().catch(() => "")
+  if (provider.id !== "deepseek" && hasImageBlocks(messages) && unsupportedImageResponse(response.status, body)) {
+    response = await send(true)
+    if (response.ok) return response
+    body = await response.text().catch(() => "")
+  }
+  throw new Error(`Request failed (${response.status}): ${body || response.statusText}`)
 }
 
 function promptCacheDisabled(): boolean {
@@ -152,21 +199,13 @@ export function createOpenAICompatibleProvider(): Provider {
       settings: ModelSettings,
       signal?: AbortSignal,
     ): AsyncGenerator<string> {
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-        method: "POST",
-        signal,
-        headers: buildHeaders(provider),
-        body: JSON.stringify({
-          model,
-          messages: prepareMessages(provider, messages),
-          ...buildRequestOptions(provider, settings),
-          stream: true,
-        }),
-      })
-
-      if (!response.ok || !response.body) {
-        const body = await response.text().catch(() => "")
-        throw new Error(`Request failed (${response.status}): ${body || response.statusText}`)
+      const response = await postChatCompletion(provider, messages, {
+        model,
+        ...buildRequestOptions(provider, settings),
+        stream: true,
+      }, signal)
+      if (!response.body) {
+        throw new Error("Request failed: provider returned an empty response body")
       }
 
       const decoder = new TextDecoder()
@@ -202,22 +241,12 @@ export function createOpenAICompatibleProvider(): Provider {
       settings: ModelSettings,
       options: { maxTokens?: number } = {},
     ): Promise<string> {
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: buildHeaders(provider),
-        body: JSON.stringify({
-          model,
-          messages: prepareMessages(provider, messages),
-          max_tokens: options.maxTokens,
-          ...buildRequestOptions(provider, settings),
-          stream: false,
-        }),
+      const response = await postChatCompletion(provider, messages, {
+        model,
+        max_tokens: options.maxTokens,
+        ...buildRequestOptions(provider, settings),
+        stream: false,
       })
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "")
-        throw new Error(`Request failed (${response.status}): ${body || response.statusText}`)
-      }
 
       const parsed = (await response.json()) as ChatCompletionResponse
       if (parsed.error?.message) throw new Error(parsed.error.message)
@@ -233,25 +262,17 @@ export function createOpenAICompatibleProvider(): Provider {
       options: { maxTokens?: number; toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
       signal?: AbortSignal,
     ): Promise<AssistantResponse> {
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-        method: "POST",
-        signal,
-        headers: buildHeaders(provider),
-        body: JSON.stringify({
-          model,
-          messages: prepareMessages(provider, messages),
-          tools,
-          tool_choice: options.toolChoice || "auto",
-          ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
-          ...buildRequestOptions(provider, settings),
-          stream: true,
-          usage: { include: true },
-        }),
-      })
-
-      if (!response.ok || !response.body) {
-        const body = await response.text().catch(() => "")
-        throw new Error(`Request failed (${response.status}): ${body || response.statusText}`)
+      const response = await postChatCompletion(provider, messages, {
+        model,
+        tools,
+        tool_choice: options.toolChoice || "auto",
+        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+        ...buildRequestOptions(provider, settings),
+        stream: true,
+        usage: { include: true },
+      }, signal)
+      if (!response.body) {
+        throw new Error("Request failed: provider returned an empty response body")
       }
 
       type PartialToolCall = { id: string; name: string; arguments: string }

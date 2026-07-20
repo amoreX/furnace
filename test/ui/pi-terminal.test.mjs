@@ -8,7 +8,7 @@ const { KeybindingsManager } = await import("../../dist/ui/pi/keybindings.js")
 const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
 const { StfuToolGroup, compactToolSummary } = await import("../../dist/ui/pi/components/stfu-tool-group.js")
 const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
-const { RelatedAutocompleteSelectList, RESUME_AUTOCOMPLETE_HINT } = await import("../../dist/ui/pi/autocomplete.js")
+const { MODEL_AUTOCOMPLETE_HINT, RelatedAutocompleteSelectList, RESUME_AUTOCOMPLETE_HINT } = await import("../../dist/ui/pi/autocomplete.js")
 const { getEditorTheme, initTheme } = await import("../../dist/ui/pi/theme.js")
 const { TUI, setKeybindings } = await import("@earendil-works/pi-tui")
 
@@ -370,6 +370,16 @@ test("resume autocomplete shows one pin hint at the bottom", () => {
   assert.equal(rendered.endsWith(RESUME_AUTOCOMPLETE_HINT), false)
   assert.match(rendered, /First chat/)
   assert.match(rendered, /Second chat/)
+})
+
+test("model autocomplete explains Tab editing and Enter selection", () => {
+  initTheme("default")
+  const list = new RelatedAutocompleteSelectList("/model ", [
+    { value: "/model deepseek-v4-pro", label: "deepseek-v4-pro" },
+  ], 10)
+  const rendered = stripAnsi(list.render(100).join("\n"))
+  assert.equal(rendered.split(MODEL_AUTOCOMPLETE_HINT).length - 1, 1)
+  assert.match(rendered, /Tab edit model settings/)
 })
 
 test("pinned chats accept persistent and working rows", () => {

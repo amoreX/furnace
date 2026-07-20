@@ -12,6 +12,7 @@ const summaryOutputTokens = 4_096
 const toolResultSummaryChars = 4_000
 const maxSerializedEntryChars = 8_000
 const ineffectiveSavingsRatio = 0.05
+const estimatedImageTokens = 1_600
 
 export type CompactionReason = CompactionEntryData["reason"]
 
@@ -61,7 +62,18 @@ export function estimateTokens(value: unknown): number {
 }
 
 export function estimateRequestTokens(messages: OpenRouterMessage[], tools: OpenRouterToolDefinition[] = []): number {
-  return estimateTokens(messages) + estimateTokens(tools)
+  const messageTokens = messages.reduce((total, message) => {
+    const { content, ...metadata } = message
+    const metadataTokens = estimateTokens(metadata)
+    if (typeof content === "string") return total + metadataTokens + estimateTokens(content)
+    if (!Array.isArray(content)) return total + metadataTokens
+    const contentTokens = content.reduce((sum, block) => {
+      if (block.type === "image_url") return sum + estimatedImageTokens
+      return sum + estimateTokens(block.text) + estimateTokens({ type: block.type, cache_control: block.cache_control })
+    }, 0)
+    return total + metadataTokens + contentTokens
+  }, 0)
+  return messageTokens + estimateTokens(tools)
 }
 
 export function shouldCompactTokenEstimate(tokens: number, settings: CompactionSettings): boolean {
@@ -342,7 +354,10 @@ function latestUserMessageIndex(entries: EntryRecord[]): number {
 }
 
 function estimateEntryTokens(entry: EntryRecord): number {
-  if (entry.type === "message") return estimateTokens((entry.data as MessageEntryData).content)
+  if (entry.type === "message") {
+    const data = entry.data as MessageEntryData
+    return estimateTokens(data.content) + (data.images?.length || 0) * estimatedImageTokens
+  }
   if (entry.type === "tool_call") return estimateTokens((entry.data as ToolCallEntryData).arguments) + 16
   if (entry.type === "tool_result") return estimateTokens((entry.data as ToolResultEntryData).content) + 16
   return estimateTokens(entry.data)

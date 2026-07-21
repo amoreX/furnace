@@ -11,6 +11,13 @@ function isPromptAutocompleteItem(item: AutocompleteItem): item is AutocompleteI
   return "relatedValue" in item
 }
 
+/** Drop SelectList's hardcoded "→ "/"  " caret so suggestions align with typed input. */
+export function stripSelectListCaret(line: string): string {
+  if (line.includes("→ ")) return line.replace("→ ", "")
+  if (line.startsWith("  ")) return line.slice(2)
+  return line
+}
+
 export const RESUME_AUTOCOMPLETE_HINT = "Type to search titles, messages, and tools · Tab pin/unpin · Enter open · Esc close"
 export const MODEL_AUTOCOMPLETE_HINT = "Tab edit model settings · Enter select · Esc close"
 
@@ -47,12 +54,16 @@ export class RelatedAutocompleteSelectList extends SelectList {
       })
       const selectedIndex = selected ? this.rawItems.indexOf(selected) : -1
       if (selectedIndex >= 0) displayList.setSelectedIndex(selectedIndex)
-      baseLines = displayList.render(width).map((line) => (line.includes("↳ ") ? theme.fg("warning", line) : line))
+      baseLines = displayList.render(width).map((line) => {
+        const flushed = stripSelectListCaret(line)
+        return flushed.includes("↳ ") ? theme.fg("warning", flushed) : flushed
+      })
     }
 
     const lines = baseLines.map((line) => {
-      const pad = " ".repeat(Math.max(0, width - visibleWidth(line)))
-      return theme.bg("toolPendingBg", line + pad)
+      const flushed = stripSelectListCaret(line)
+      const pad = " ".repeat(Math.max(0, width - visibleWidth(flushed)))
+      return theme.bg("toolPendingBg", flushed + pad)
     })
     if (this.prefix.startsWith("/resume")) {
       const hint = theme.fg("muted", RESUME_AUTOCOMPLETE_HINT)

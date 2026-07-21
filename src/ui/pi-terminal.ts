@@ -93,6 +93,7 @@ import { PinnedChatsPanelState } from "./pinned-chats-state.js"
 import { saveClipboardImage } from "../utils/clipboard.js"
 import { wireSlashAutocompletePreview } from "./pi/autocomplete.js"
 import { LayoutEditorFrame } from "./pi/editor-frame.js"
+import { LOFI_CHIBI_FPS, LofiSpriteSurface } from "./pi/lofi-sprite-surface.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
@@ -283,6 +284,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let snowTimer: ReturnType<typeof setInterval> | undefined
   let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
   let lofiEnabled = false
+  let lofiFrame = 0
+  let lofiTimer: ReturnType<typeof setInterval> | undefined
   let responseModes: ResponseMode[] = []
   let pinnedChats: PinnedChatSummary[] = []
   let pinnedChatIndicators: WorkingStatusIndicator[] = []
@@ -368,6 +371,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const statusContainer = new Container()
   const pinnedChatsContainer = new Container()
   const widgetContainerAbove = new Container()
+  const lofiSpriteSurface = new LofiSpriteSurface()
   const editorContainer = new Container()
   const widgetContainerBelow = new Container()
   const snowfallSurface = new SnowfallSurface()
@@ -430,13 +434,31 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     snowTimer.unref?.()
   }
 
+  const syncLofiAnimation = () => {
+    if (lofiTimer) {
+      clearInterval(lofiTimer)
+      lofiTimer = undefined
+    }
+    lofiFrame = 0
+    lofiSpriteSurface.setEnabled(lofiEnabled)
+    lofiSpriteSurface.setFrame(0)
+    const reducedMotion = process.env.FURNACE_REDUCED_MOTION === "1" || process.env.TERM === "dumb"
+    if (!lofiEnabled || reducedMotion) return
+    lofiTimer = setInterval(() => {
+      lofiFrame = (lofiFrame + 1) % 2
+      lofiSpriteSurface.setFrame(lofiFrame)
+      ui.requestRender()
+    }, Math.round(1000 / LOFI_CHIBI_FPS))
+    lofiTimer.unref?.()
+  }
+
   const rebuildRootLayout = () => {
     ui.clear()
     snowfallSurface.clear()
     const add = (...components: Component[]) => components.forEach((component) => snowfallSurface.addChild(component))
     switch (currentLayout) {
       case "console":
-        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, editorContainer, pinnedChatsContainer, footer)
+        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, lofiSpriteSurface, editorContainer, pinnedChatsContainer, footer)
         break
       case "notebook":
         add(
@@ -445,6 +467,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           pendingMessagesContainer,
           statusContainer,
           widgetContainerAbove,
+          lofiSpriteSurface,
           editorContainer,
           pinnedChatsContainer,
           notebookBottomSpacing,
@@ -454,10 +477,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         break
       case "classic":
       default:
-        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, pinnedChatsContainer, widgetContainerBelow, footer)
+        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, lofiSpriteSurface, editorContainer, pinnedChatsContainer, widgetContainerBelow, footer)
         break
       case "asteroid":
-        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, pinnedChatsContainer, footer)
+        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, lofiSpriteSurface, editorContainer, pinnedChatsContainer, footer)
         break
     }
     ui.addChild(snowfallSurface)
@@ -853,6 +876,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setLofi = (enabled: boolean) => {
     lofiEnabled = enabled
+    syncLofiAnimation()
     updateFooterStatuses()
   }
 
@@ -928,6 +952,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const stop = () => {
     if (exitWarningTimer) clearTimeout(exitWarningTimer)
     if (snowTimer) clearInterval(snowTimer)
+    if (lofiTimer) clearInterval(lofiTimer)
     for (const indicator of pinnedChatIndicators) indicator.dispose()
     footerDataProvider.dispose()
     footer.dispose()

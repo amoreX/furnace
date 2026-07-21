@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.23",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Lofi mode has its compact dancing terminal chibi again.",
+      "changes": [
+        { "kind": "fixed", "text": "Restored the small right-aligned ASCII dancer when `/lofi` is enabled." },
+        { "kind": "changed", "text": "Kept the animation to one row with a still pose when reduced-motion mode is active." }
+      ]
+    },
+    {
       "version": "0.2.22",
       "date": "2026-07-21",
       "status": "published",

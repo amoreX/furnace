@@ -9,6 +9,7 @@ export const IDLE_TIP_INTERVAL_MS = 10_000
 export const furnaceTips: readonly FurnaceTip[] = [
   { command: "/fork", description: "branch from the current conversation at any prompt" },
   { command: "/lofi", description: "toggle background music while you work" },
+  { command: "/snow", description: "add low, medium, or hard snowfall over any layout" },
   { command: "/caveman", description: "make user-facing replies primitive, blunt, and short" },
   { command: "/stfu", description: "minimize narration and keep replies extremely concise" },
   { command: "/pins", description: "jump between your pinned conversations" },

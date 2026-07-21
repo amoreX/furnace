@@ -175,11 +175,14 @@ Built-in slash commands include:
 | `/usage` | Show a 12-month token-usage grid, accepted agent lines, and recorded cost for the active API key. |
 | `/editor` | Compose a message in `$EDITOR`. |
 | `/lofi` | Toggle lofi mode. |
+| `/snow [low\|medium\|hard]` | Toggle animated snowfall over the current layout or set its intensity. |
 | `/tip` | Toggle rotating tips on the idle Agent-mode editor. |
 | `/stfu` | Toggle minimal, no-narration response mode. |
 | `/caveman` | Toggle short caveman-style user-facing prose. |
 | `/clear` | Clear the conversation display. |
 | `/exit`, `/quit` | Exit Furnace. |
+
+Set `FURNACE_REDUCED_MOTION=1` to keep snowfall enabled as a still overlay.
 
 Custom slash commands can live under `.furnace/commands` in the project or `~/.furnace/commands` globally.
 

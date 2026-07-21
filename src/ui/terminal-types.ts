@@ -23,6 +23,7 @@ export type PromptAutocompleteMatch = PromptAutocompleteItem & {
 }
 
 export type StatusNoticeTone = "default" | "warning" | "error" | "success"
+export type SnowIntensity = "off" | "low" | "medium" | "hard"
 
 export type FurnaceTerminal = {
   clearInteractionPrompts(): void
@@ -49,6 +50,7 @@ export type FurnaceTerminal = {
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setRepoIndexStatus(content?: string, tone?: StatusNoticeTone): void
+  setSnow(intensity: SnowIntensity): void
   setTaskStatus(snapshot?: TaskStatusSnapshot): void
   setTipNotice(content?: string): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void

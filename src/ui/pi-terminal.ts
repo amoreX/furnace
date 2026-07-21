@@ -61,6 +61,7 @@ import {
   LayoutTranscriptItem,
 } from "./pi/layouts.js"
 import { SlashCommandAutocompleteProvider } from "./pi/slash-autocomplete.js"
+import { SnowfallSurface } from "./pi/snowfall.js"
 import { resolveTheme } from "./themes/index.js"
 import { packageVersion } from "../version.js"
 import type {
@@ -75,6 +76,7 @@ import type {
   PromptAutocompleteMatch,
   PinnedChatSummary,
   ProviderDisplayRow,
+  SnowIntensity,
   StatusNoticeTone,
 } from "./terminal-types.js"
 import type { AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
@@ -246,6 +248,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentModelSettings: ModelSettings = { ...options.modelSettings }
   let currentMode: AgentMode = "agent"
   let currentLayout = normalizeTerminalLayout(options.layout)
+  let snowIntensity: SnowIntensity = "off"
+  let snowFrame = 0
+  let snowTimer: ReturnType<typeof setInterval> | undefined
   let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
   let lofiEnabled = false
   let responseModes: ResponseMode[] = []
@@ -335,6 +340,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const widgetContainerAbove = new Container()
   const editorContainer = new Container()
   const widgetContainerBelow = new Container()
+  const snowfallSurface = new SnowfallSurface()
 
   const editor = new CustomEditor(ui, getEditorTheme(), keybindings, {
     paddingX: 0,
@@ -376,9 +382,28 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const notebookStatusBorder = new DynamicBorder()
   headerContainer.addChild(layoutHeader)
 
+  const syncSnowAnimation = () => {
+    if (snowTimer) {
+      clearInterval(snowTimer)
+      snowTimer = undefined
+    }
+    snowfallSurface.setIntensity(snowIntensity)
+    snowfallSurface.setFrame(0)
+    snowFrame = 0
+    const reducedMotion = process.env.FURNACE_REDUCED_MOTION === "1" || process.env.TERM === "dumb"
+    if (snowIntensity === "off" || reducedMotion) return
+    snowTimer = setInterval(() => {
+      snowFrame = (snowFrame + 1) % 100_000
+      snowfallSurface.setFrame(snowFrame)
+      ui.requestRender()
+    }, 125)
+    snowTimer.unref?.()
+  }
+
   const rebuildRootLayout = () => {
     ui.clear()
-    const add = (...components: Component[]) => components.forEach((component) => ui.addChild(component))
+    snowfallSurface.clear()
+    const add = (...components: Component[]) => components.forEach((component) => snowfallSurface.addChild(component))
     switch (currentLayout) {
       case "console":
         add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, editorContainer, pinnedChatsContainer, footer)
@@ -405,6 +430,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, pinnedChatsContainer, footer)
         break
     }
+    ui.addChild(snowfallSurface)
   }
   rebuildRootLayout()
   ui.setFocus(editor)
@@ -810,6 +836,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender(true)
   }
 
+  const setSnow = (intensity: SnowIntensity) => {
+    snowIntensity = intensity
+    syncSnowAnimation()
+    ui.requestRender(true)
+  }
+
   onThemeChange(() => {
     ui.invalidate()
     updateEditorBorderColor()
@@ -844,6 +876,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const stop = () => {
     if (exitWarningTimer) clearTimeout(exitWarningTimer)
+    if (snowTimer) clearInterval(snowTimer)
     for (const indicator of pinnedChatIndicators) indicator.dispose()
     footerDataProvider.dispose()
     footer.dispose()
@@ -1734,6 +1767,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setModel,
     setQueuedPrompts,
     setRepoIndexStatus,
+    setSnow,
     setTaskStatus,
     setTipNotice,
     setSessionMeta,

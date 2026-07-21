@@ -40,7 +40,7 @@ import { TaskManager, makeTaskId, type TaskManagerOptions } from "./tasks/manage
 import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./ui/session-terminal-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
-import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, ToolActivity } from "./ui/terminal-types.js"
+import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, SnowIntensity, ToolActivity } from "./ui/terminal-types.js"
 import type { EvolveOutcome } from "./evolve/types.js"
 import type { EvolveMigrationState } from "./evolve/migration.js"
 import type { ImageAttachment } from "./utils/images.js"
@@ -74,6 +74,7 @@ export async function runInteractive(input: {
   const permissions = new SessionPermissionStore()
   const lofi = new LofiPlayer()
   const activeResponseModes = new Set<ResponseMode>()
+  let snowIntensity: SnowIntensity = "off"
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const promptQueues = new PromptQueueStore()
   const pendingBackgroundPrompts = new Map<string, string[]>()
@@ -373,6 +374,19 @@ export async function runInteractive(input: {
       const result = lofi.toggle()
       terminal.setLofi(result.enabled)
       showTransientStatus(result.message)
+      return
+    }
+    if (command.name === "/snow") {
+      const requested = command.argument.trim().toLowerCase()
+      if (requested && requested !== "low" && requested !== "medium" && requested !== "hard") {
+        showTransientStatus("Usage: /snow [low|medium|hard]. Run /snow without an intensity to toggle it.", 6000)
+        return
+      }
+      snowIntensity = requested
+        ? requested as SnowIntensity
+        : snowIntensity === "off" ? "medium" : "off"
+      terminal.setSnow(snowIntensity)
+      showTransientStatus(snowIntensity === "off" ? "Snowfall off." : `Snowfall ${snowIntensity}.`)
       return
     }
     if (command.name === "/tip") {
@@ -2386,7 +2400,7 @@ export async function runPiped(input: {
       process.stdout.write(`${choice.name}\n`)
       continue
     }
-    if (command.name === "/lofi" || command.name === "/stfu" || command.name === "/caveman") {
+    if (command.name === "/lofi" || command.name === "/snow" || command.name === "/stfu" || command.name === "/caveman") {
       process.stdout.write(`${command.name} mode is only available in the interactive TUI.\n`)
       continue
     }

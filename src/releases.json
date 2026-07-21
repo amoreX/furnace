@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.20",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Animated snowfall can now drift across every Furnace layout.",
+      "changes": [
+        { "kind": "added", "text": "Added `/snow` to toggle snowfall over the current layout, with `/snow low`, `/snow medium`, and `/snow hard` intensity controls." },
+        { "kind": "changed", "text": "Snowflakes animate only through open space so interface text and controls remain readable, with a still reduced-motion fallback." },
+        { "kind": "changed", "text": "Made low-intensity snowfall gentler and added `/snow` to rotating idle tips." }
+      ]
+    },
+    {
       "version": "0.2.19",
       "date": "2026-07-21",
       "status": "published",

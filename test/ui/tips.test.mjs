@@ -9,7 +9,7 @@ test("tip catalog contains the curated commands and conversation pin shortcut", 
   assert.equal(IDLE_TIP_VISIBLE_MS, 5000)
   assert.equal(IDLE_TIP_INTERVAL_MS, 10_000)
   const commands = furnaceTips.map((tip) => tip.command)
-  for (const command of ["/fork", "/lofi", "/caveman", "/stfu", "/pins", "Tab in /resume", "/init", "/theme", "Cost in /settings", "Tips in /settings", "/usage", "/change"]) {
+  for (const command of ["/fork", "/lofi", "/snow", "/caveman", "/stfu", "/pins", "Tab in /resume", "/init", "/theme", "Cost in /settings", "Tips in /settings", "/usage", "/change"]) {
     assert.equal(commands.includes(command), true, `missing tip: ${command}`)
   }
 })

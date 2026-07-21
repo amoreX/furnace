@@ -33,6 +33,13 @@ test("/tip is exposed as a built-in command", async () => {
   assert.match(slashCommandDefinitions.find((command) => command.name === "/tip")?.description || "", /idle.*tips/i)
 })
 
+test("/snow is exposed with intensity guidance", async () => {
+  const { isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } = await import("../dist/commands/builtins.js")
+  assert.equal(isKnownSlashCommand("/snow"), true)
+  assert.match(slashCommandDefinitions.find((command) => command.name === "/snow")?.usage || "", /low\|medium\|hard/)
+  assert.deepEqual(parseSlashCommand("/snow hard"), { name: "/snow", argument: "hard" })
+})
+
 test("startup mounts What’s New after terminal initialization", async () => {
   const controller = await readFile(new URL("../src/interactive-session-controller.ts", import.meta.url), "utf8")
   const startup = controller.slice(

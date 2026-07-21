@@ -71,6 +71,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setThinking",
     "setQueuedPrompts",
     "setRepoIndexStatus",
+    "setSnow",
     "setTaskStatus",
     "setTipNotice",
     "setPinnedChats",

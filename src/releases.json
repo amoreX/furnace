@@ -2,6 +2,21 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.21",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Queued follow-ups now stay ordered, editable, and isolated across concurrent chats.",
+      "changes": [
+        { "kind": "added", "text": "Added queue editing with previous/next navigation, in-place saving, deletion, cancellation, image preservation, and send-now controls." },
+        { "kind": "added", "text": "Allowed `/new`, `/resume`, and `/history` while an agent is working so conversations can continue safely in the background." },
+        { "kind": "changed", "text": "Kept queues scoped to their conversations across pinned-chat switching and restored their runtime state when revisited." },
+        { "kind": "changed", "text": "User interruption now pauses queued follow-ups until an explicit queued or new message resumes FIFO processing." },
+        { "kind": "changed", "text": "Added compact themed queue hints and Windows-safe Shift+F5–F8 shortcut fallbacks alongside the existing Alt shortcuts." },
+        { "kind": "fixed", "text": "Preserved queued image attachments and stable visual ordering while selecting, editing, cancelling, or sending follow-ups." }
+      ]
+    },
+    {
       "version": "0.2.20",
       "date": "2026-07-21",
       "status": "published",

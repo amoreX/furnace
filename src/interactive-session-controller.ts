@@ -60,6 +60,10 @@ import {
 import { packageName, packageVersion } from "./version.js"
 import { furnaceReleases, unacknowledgedFurnaceRelease } from "./release-notes.js"
 
+export function isWorkingSessionNavigationCommand(name: string): boolean {
+  return name === "/new" || isHistoryCommand(name)
+}
+
 export async function runInteractive(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   cwd: string
@@ -77,6 +81,7 @@ export async function runInteractive(input: {
   let snowIntensity: SnowIntensity = "off"
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const promptQueues = new PromptQueueStore()
+  const queuedPromptEditPositions = new Map<string, number>()
   const pendingBackgroundPrompts = new Map<string, string[]>()
   let modelListCache = createModelListCache(input.config)
   let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
@@ -142,7 +147,16 @@ export async function runInteractive(input: {
     model: input.config.model,
     modelSettings: input.config.modelSettings,
     onQueueEdit: (id) => {
-      removeQueuedPrompt(id)
+      return beginQueuedPromptEdit(id)
+    },
+    onQueueEditCancel: (prompt) => {
+      restoreEditedQueuedPrompt(prompt)
+    },
+    onQueueEditDelete: (prompt) => {
+      deleteEditedQueuedPrompt(prompt)
+    },
+    onQueueEditSave: (prompt, sendNow, resumeQueue) => {
+      saveEditedQueuedPrompt(prompt, sendNow, resumeQueue)
     },
     onQueuePromote: (id) => {
       promoteQueuedPrompt(id)
@@ -155,7 +169,7 @@ export async function runInteractive(input: {
         refreshCurrentSession()
         return
       }
-      interruptCurrentTurn()
+      interruptCurrentTurn(true)
     },
     onTaskBackground: () => {
       const promoted = taskManager.promoteActiveGroup(sessionId)
@@ -260,17 +274,10 @@ export async function runInteractive(input: {
     typingIndicator: input.config.typingIndicator,
     title: initialSession.title,
     onSubmit: (prompt, images) => {
-      const submittedSessionId = sessionId
-      void handleInteractiveSubmit(prompt, images).catch((error) => {
-        runningSessionIds.delete(submittedSessionId)
-        activeAbortControllers.delete(submittedSessionId)
-        if (activeDisplaySessionId === submittedSessionId) terminal.setBusy(false)
-        process.stdout.write("\x07")
-        if (activeDisplaySessionId === submittedSessionId) {
-          terminal.setThinking(false)
-          terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(submittedSessionId)), { role: "assistant", content: formatError(error) }])
-        }
-      })
+      dispatchInteractiveSubmit(prompt, images)
+    },
+    onSubmitNow: (prompt, images) => {
+      dispatchInteractiveSubmit(prompt, images, true)
     },
   })
   tipScheduler = new TipScheduler({
@@ -355,7 +362,21 @@ export async function runInteractive(input: {
     lofi.stop()
   }
 
-  async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[]): Promise<void> {
+  function dispatchInteractiveSubmit(prompt: string, images?: ImageAttachment[], sendNow = false): void {
+    const submittedSessionId = sessionId
+    void handleInteractiveSubmit(prompt, images, { sendNow }).catch((error) => {
+      runningSessionIds.delete(submittedSessionId)
+      activeAbortControllers.delete(submittedSessionId)
+      if (activeDisplaySessionId === submittedSessionId) terminal.setBusy(false)
+      process.stdout.write("\x07")
+      if (activeDisplaySessionId === submittedSessionId) {
+        terminal.setThinking(false)
+        terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(submittedSessionId)), { role: "assistant", content: formatError(error) }])
+      }
+    })
+  }
+
+  async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[], options: { sendNow?: boolean } = {}): Promise<void> {
     tipScheduler.activity()
     const command = parseSlashCommand(prompt)
 
@@ -445,6 +466,18 @@ export async function runInteractive(input: {
       await runSkillCommand(command.name, command.argument)
       return
     }
+    if (isWorkingSessionNavigationCommand(command.name)) {
+      if (command.name === "/new") {
+        clearTransientStatus()
+        const currentSession = input.store.getSession(sessionId)
+        const next = currentSession.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : currentSession
+        activateSession(next.id)
+        return
+      }
+      if (command.argument) resumeSessionByToken(command.argument)
+      else openResumeSearch()
+      return
+    }
     if (isCurrentSessionRunning() && prompt.startsWith("/")) {
       if (command.name === "/tasks") {
         showTaskStatus()
@@ -482,7 +515,9 @@ export async function runInteractive(input: {
       return
     }
     if (isCurrentSessionRunning()) {
-      enqueuePrompt(prompt)
+      promptQueues.resume(sessionId)
+      const queued = enqueuePrompt(prompt, { images })
+      if (options.sendNow) promoteQueuedPrompt(queued.id)
       return
     }
     if (command.name === "/plan") {
@@ -496,13 +531,6 @@ export async function runInteractive(input: {
     }
     if (command.name === "/mode") {
       await handleModeCommand(command.argument)
-      return
-    }
-    if (command.name === "/new") {
-      clearTransientStatus()
-      const session = input.store.getSession(sessionId)
-      const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
-      activateSession(next.id)
       return
     }
     if (command.name === "/permissions") {
@@ -551,14 +579,6 @@ export async function runInteractive(input: {
           showTransientStatus(`Failed to save settings: ${formatError(error)}`, 8000)
         }
       })
-      return
-    }
-    if (isHistoryCommand(command.name)) {
-      if (command.argument) {
-        resumeSessionByToken(command.argument)
-        return
-      }
-      openResumeSearch()
       return
     }
     if (command.name === "/tasks") {
@@ -686,6 +706,12 @@ export async function runInteractive(input: {
     }
 
     clearTransientStatus()
+    if (promptQueues.isPaused(sessionId)) {
+      enqueuePrompt(prompt, { images })
+      promptQueues.resume(sessionId)
+      startNextQueuedPromptIfIdle()
+      return
+    }
     await runPromptQueue(prompt, images)
   }
 
@@ -1417,6 +1443,7 @@ export async function runInteractive(input: {
   function activateSession(targetSessionId: string, options: { clearDraft?: boolean; clearScreen?: boolean } = {}): void {
     usageViewState.dismiss()
     unreadCompletedSessionIds.delete(targetSessionId)
+    terminal.cancelQueuedPromptEdit()
     sessionId = targetSessionId
     activeDisplaySessionId = targetSessionId
     if (options.clearScreen) process.stdout.write("\x1b[2J\x1b[H")
@@ -2035,9 +2062,42 @@ export async function runInteractive(input: {
     ])
   }
 
-  function enqueuePrompt(text: string, options: { hidden?: boolean; source?: string } = {}): void {
-    promptQueues.enqueue(sessionId, text, options)
+  function enqueuePrompt(text: string, options: { hidden?: boolean; images?: ImageAttachment[]; source?: string } = {}): QueuedPrompt {
+    const queued = promptQueues.enqueue(sessionId, text, options)
     syncQueuedPrompts()
+    return queued
+  }
+
+  function beginQueuedPromptEdit(id: string): QueuedPrompt | undefined {
+    const queue = promptQueue()
+    const index = queue.findIndex((prompt) => prompt.id === id)
+    if (index < 0) return undefined
+    queuedPromptEditPositions.set(id, index)
+    return removeQueuedPrompt(id)
+  }
+
+  function restoreEditedQueuedPrompt(prompt: QueuedPrompt): void {
+    const index = queuedPromptEditPositions.get(prompt.id) ?? promptQueue().length
+    queuedPromptEditPositions.delete(prompt.id)
+    promptQueues.insert(sessionId, prompt, index)
+    syncQueuedPrompts()
+  }
+
+  function deleteEditedQueuedPrompt(prompt: QueuedPrompt): void {
+    queuedPromptEditPositions.delete(prompt.id)
+    syncQueuedPrompts()
+  }
+
+  function saveEditedQueuedPrompt(prompt: QueuedPrompt, sendNow: boolean, resumeQueue = true): void {
+    const index = queuedPromptEditPositions.get(prompt.id) ?? promptQueue().length
+    queuedPromptEditPositions.delete(prompt.id)
+    promptQueues.insert(sessionId, prompt, index)
+    syncQueuedPrompts()
+    if (sendNow) {
+      promoteQueuedPrompt(prompt.id)
+      return
+    }
+    if (resumeQueue) startNextQueuedPromptIfIdle()
   }
 
   function removeQueuedPrompt(id: string): QueuedPrompt | undefined {
@@ -2049,20 +2109,45 @@ export async function runInteractive(input: {
   function promoteQueuedPrompt(id: string): void {
     const prompt = promptQueues.promote(sessionId, id)
     if (!prompt) return
+    promptQueues.resume(sessionId)
     syncQueuedPrompts()
-    interruptCurrentTurn()
+    if (isCurrentSessionRunning()) {
+      interruptCurrentTurn(false)
+      return
+    }
+    promptQueues.remove(sessionId, prompt.id)
+    syncQueuedPrompts()
+    const promotedSessionId = sessionId
+    void runPromptQueue(prompt).catch((error) => {
+      if (activeDisplaySessionId !== promotedSessionId) return
+      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(promotedSessionId)), { role: "assistant", content: formatError(error) }])
+    })
   }
 
-  function interruptCurrentTurn(): void {
+  function startNextQueuedPromptIfIdle(): void {
+    if (isCurrentSessionRunning()) return
+    promptQueues.resume(sessionId)
+    const queue = promptQueue()
+    const next = queue.shift()
+    syncQueuedPrompts()
+    if (!next) return
+    const queuedSessionId = sessionId
+    void runPromptQueue(next).catch((error) => {
+      if (activeDisplaySessionId !== queuedSessionId) return
+      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(queuedSessionId)), { role: "assistant", content: formatError(error) }])
+    })
+  }
+
+  function interruptCurrentTurn(haltQueue: boolean): void {
+    if (haltQueue) promptQueues.pause(sessionId)
     const controller = currentAbortController()
     if (!controller || controller.signal.aborted) return
     controller.abort()
-    terminal.setThinking(false)
-    terminal.setBusy(false)
   }
 
-  function syncQueuedPrompts(): void {
-    terminal.setQueuedPrompts(promptQueue().filter((prompt) => !prompt.hidden))
+  function syncQueuedPrompts(targetSessionId = sessionId): void {
+    if (targetSessionId !== activeDisplaySessionId) return
+    terminal.setQueuedPrompts(promptQueue(targetSessionId).filter((prompt) => !prompt.hidden))
   }
 
   function refreshCurrentSession(): void {
@@ -2093,7 +2178,7 @@ export async function runInteractive(input: {
   }
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
-    if (isCurrentSessionRunning()) {
+    if (isCurrentSessionRunning() || promptQueues.isPaused(sessionId)) {
       enqueuePrompt(text, { hidden: true, source: "background_subagent_completion" })
       return
     }
@@ -2110,7 +2195,7 @@ export async function runInteractive(input: {
     pendingBackgroundPrompts.delete(sessionId)
     for (const prompt of prompts) enqueuePrompt(prompt, { hidden: true, source: "background_subagent_completion" })
     const queue = promptQueue()
-    if (!isCurrentSessionRunning() && queue.length > 0) {
+    if (!isCurrentSessionRunning() && !promptQueues.isPaused(sessionId) && queue.length > 0) {
       const next = queue.shift()
       syncQueuedPrompts()
       if (next) void runPromptQueue(next).catch((error) => {
@@ -2123,7 +2208,7 @@ export async function runInteractive(input: {
     const targetSessionId = sessionId
     const queue = promptQueue(targetSessionId)
     promptQueues.unshiftActive(targetSessionId, firstPrompt, submittedImages)
-    syncQueuedPrompts()
+    syncQueuedPrompts(targetSessionId)
     if (isSessionRunning(targetSessionId)) return
 
     runningSessionIds.add(targetSessionId)
@@ -2132,7 +2217,7 @@ export async function runInteractive(input: {
     try {
       while (queue.length > 0) {
         const next = queue.shift()
-        syncQueuedPrompts()
+        syncQueuedPrompts(targetSessionId)
         if (!next) continue
         const controller = new AbortController()
         activeAbortControllers.set(targetSessionId, controller)
@@ -2180,6 +2265,7 @@ export async function runInteractive(input: {
             updateTerminalCostUsage(terminal, input.store, turnSessionId, input.config)
           }
         }
+        if (promptQueues.isPaused(targetSessionId)) break
       }
     } finally {
       runningSessionIds.delete(targetSessionId)
@@ -2190,7 +2276,7 @@ export async function runInteractive(input: {
         terminal.setThinking(false)
       }
       if (input.config.notifications) process.stdout.write("\x07")
-      syncQueuedPrompts()
+      syncQueuedPrompts(targetSessionId)
     }
   }
 }

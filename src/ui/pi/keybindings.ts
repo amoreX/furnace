@@ -38,6 +38,8 @@ export interface AppKeybindings {
 	"app.editor.external": true;
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
+	"app.message.nextQueued": true;
+	"app.message.deleteQueued": true;
 	"app.clipboard.pasteImage": true;
 	"app.session.new": true;
 	"app.session.tree": true;
@@ -72,6 +74,30 @@ export type AppKeybinding = keyof AppKeybindings;
 declare module "@earendil-works/pi-tui" {
 	interface Keybindings extends AppKeybindings {}
 }
+
+export function queueKeybindingsForPlatform(platform: NodeJS.Platform): {
+	deleteQueued: KeyId | KeyId[];
+	nextQueued: KeyId | KeyId[];
+	previousQueued: KeyId | KeyId[];
+	sendNow: KeyId | KeyId[];
+} {
+	if (platform === "win32") {
+		return {
+			deleteQueued: ["alt+backspace", "shift+f8"],
+			nextQueued: ["alt+down", "shift+f7"],
+			previousQueued: ["alt+up", "shift+f6"],
+			sendNow: ["alt+enter", "shift+f5"],
+		};
+	}
+	return {
+		deleteQueued: "alt+backspace",
+		nextQueued: "alt+down",
+		previousQueued: "alt+up",
+		sendNow: "alt+enter",
+	};
+}
+
+const queueKeybindings = queueKeybindingsForPlatform(process.platform);
 
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
@@ -113,12 +139,20 @@ export const KEYBINDINGS = {
 		description: "Open external editor",
 	},
 	"app.message.followUp": {
-		defaultKeys: "alt+enter",
-		description: "Queue follow-up message",
+		defaultKeys: queueKeybindings.sendNow,
+		description: "Send draft or next queued message now",
 	},
 	"app.message.dequeue": {
-		defaultKeys: "alt+up",
-		description: "Restore queued messages",
+		defaultKeys: queueKeybindings.previousQueued,
+		description: "Edit next queued message",
+	},
+	"app.message.nextQueued": {
+		defaultKeys: queueKeybindings.nextQueued,
+		description: "Edit following queued message",
+	},
+	"app.message.deleteQueued": {
+		defaultKeys: queueKeybindings.deleteQueued,
+		description: "Delete queued message being edited",
 	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",

@@ -26,6 +26,7 @@ export type StatusNoticeTone = "default" | "warning" | "error" | "success"
 export type SnowIntensity = "off" | "low" | "medium" | "hard"
 
 export type FurnaceTerminal = {
+  cancelQueuedPromptEdit(): void
   clearInteractionPrompts(): void
   clearToolActivities(): void
   clearPlanActions(): void

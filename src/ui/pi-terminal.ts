@@ -44,6 +44,7 @@ import {
 } from "./pi/components/footer.js"
 import { CustomEditor } from "./pi/components/custom-editor.js"
 import { DynamicBorder } from "./pi/components/dynamic-border.js"
+import { formatKeyText, keyDisplayText } from "./pi/components/keybinding-hints.js"
 import {
   IdleStatus,
   WorkingStatusIndicator,
@@ -138,6 +139,31 @@ export function formatTipNotice(content: string): string {
     .join("")
 }
 
+export function queueDisplayRows(
+  prompts: QueuedPrompt[],
+  editingPrompt: QueuedPrompt | undefined,
+  editingIndex: number,
+): Array<{ editing: boolean; prompt?: QueuedPrompt }> {
+  const rows: Array<{ editing: boolean; prompt?: QueuedPrompt }> = prompts
+    .filter((prompt) => !prompt.hidden)
+    .map((prompt) => ({ editing: false, prompt }))
+  if (editingPrompt) {
+    rows.splice(Math.min(Math.max(0, editingIndex), rows.length), 0, { editing: true, prompt: editingPrompt })
+  }
+  return rows
+}
+
+export function compactDirectionalKeyText(previous: string, next: string): string {
+  const previousParts = previous.split("+")
+  const nextParts = next.split("+")
+  const previousModifiers = previousParts.slice(0, -1).join("+")
+  const nextModifiers = nextParts.slice(0, -1).join("+")
+  if (previousModifiers && previousModifiers === nextModifiers) {
+    return formatKeyText(`${previous}/${nextParts.at(-1)}`, { capitalize: true })
+  }
+  return `${formatKeyText(previous, { capitalize: true })}/${formatKeyText(next, { capitalize: true })}`
+}
+
 function compactTokenLabel(tokens: number): string {
   if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
@@ -200,7 +226,10 @@ export type CreateFurnaceTerminalOptions = {
   layout?: TerminalLayout
   model: string
   modelSettings: ModelSettings
-  onQueueEdit?: (id: string) => void
+  onQueueEditCancel?: (prompt: QueuedPrompt) => void
+  onQueueEditDelete?: (prompt: QueuedPrompt) => void
+  onQueueEditSave?: (prompt: QueuedPrompt, sendNow: boolean, resumeQueue?: boolean) => void
+  onQueueEdit?: (id: string) => QueuedPrompt | undefined
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
   onTaskBackground?: () => void
@@ -222,6 +251,7 @@ export type CreateFurnaceTerminalOptions = {
   typingIndicator?: "block" | "underscore" | "bar"
   title: string
   onSubmit: (text: string, images?: ImageAttachment[]) => void
+  onSubmitNow?: (text: string, images?: ImageAttachment[]) => void
   terminal?: Terminal
 }
 
@@ -732,18 +762,39 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   // ---------------------------------------------------------------------------
 
   let queuedPrompts: QueuedPrompt[] = []
+  let editingQueuedPrompt: QueuedPrompt | undefined
+  let editingQueuedPromptIndex = 0
 
   const updatePendingMessagesDisplay = () => {
     pendingMessagesContainer.clear()
     const visible = queuedPrompts.filter((prompt) => !prompt.hidden)
-    if (visible.length === 0) return
+    if (visible.length === 0 && !editingQueuedPrompt) return
     pendingMessagesContainer.addChild(new Spacer(1))
-    for (const prompt of visible) {
-      pendingMessagesContainer.addChild(new TruncatedText(theme.fg("dim", `Follow-up: ${prompt.text}`), 1, 0))
+    const rows = queueDisplayRows(visible, editingQueuedPrompt, editingQueuedPromptIndex)
+    for (const row of rows) {
+      if (row.editing) {
+        const editingText = `Editing follow-up: ${editor.getText()}`
+        pendingMessagesContainer.addChild(new TruncatedText(theme.bold(theme.fg("accent", editingText)), 1, 0))
+        const enter = theme.bold(theme.fg("accent", "Enter"))
+        const sendNow = theme.bold(theme.fg("accent", keyDisplayText("app.message.followUp")))
+        const previousKey = keybindings.getKeys("app.message.dequeue")[0] ?? "alt+up"
+        const nextKey = keybindings.getKeys("app.message.nextQueued")[0] ?? "alt+down"
+        const move = theme.bold(theme.fg("accent", compactDirectionalKeyText(previousKey, nextKey)))
+        const remove = theme.bold(theme.fg("accent", keyDisplayText("app.message.deleteQueued")))
+        const escape = theme.bold(theme.fg("accent", "Esc"))
+        pendingMessagesContainer.addChild(new TruncatedText(`${theme.fg("dim", "↳ ")}${enter}${theme.fg("dim", " save · ")}${sendNow}${theme.fg("dim", " send · ")}${move}${theme.fg("dim", " previous/next · ")}${remove}${theme.fg("dim", " delete · ")}${escape}${theme.fg("dim", " cancel")}`, 1, 0))
+        continue
+      }
+      const label = theme.bold(theme.fg("accent", "Follow-up:"))
+      pendingMessagesContainer.addChild(new TruncatedText(`${label} ${theme.fg("dim", row.prompt?.text ?? "")}`, 1, 0))
     }
     const dequeueKeys = keybindings.getKeys("app.message.dequeue")
-    if (dequeueKeys.length > 0) {
-      pendingMessagesContainer.addChild(new TruncatedText(theme.fg("dim", `↳ ${dequeueKeys[0]} to edit all queued messages`), 1, 0))
+    if (!editingQueuedPrompt && dequeueKeys.length > 0) {
+      const previousKey = dequeueKeys[0] ?? "alt+up"
+      const nextKey = keybindings.getKeys("app.message.nextQueued")[0] ?? "alt+down"
+      const navigationKey = theme.bold(theme.fg("accent", compactDirectionalKeyText(previousKey, nextKey)))
+      const sendNowKey = theme.bold(theme.fg("accent", keyDisplayText("app.message.followUp")))
+      pendingMessagesContainer.addChild(new TruncatedText(`${theme.fg("dim", "↳ ")}${navigationKey}${theme.fg("dim", " edit newest/oldest · ")}${sendNowKey}${theme.fg("dim", " send next queued")}`, 1, 0))
     }
   }
 
@@ -914,7 +965,23 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   editor.onCtrlD = () => {
     if (!editor.getText().trim()) stop()
   }
+  const cancelQueuedPromptEdit = () => {
+    if (!editingQueuedPrompt) return
+    const cancelled = editingQueuedPrompt
+    editingQueuedPrompt = undefined
+    editingQueuedPromptIndex = 0
+    options.onQueueEditCancel?.(cancelled)
+    editor.setText("")
+    imageAttachments = []
+    setStatusNotice(undefined)
+    updatePendingMessagesDisplay()
+    ui.requestRender()
+  }
   editor.onEscape = () => {
+    if (editingQueuedPrompt) {
+      cancelQueuedPromptEdit()
+      return
+    }
     options.onInterrupt?.()
   }
   editor.onAction("app.tools.expand", () => setToolsExpanded(!toolOutputExpanded))
@@ -929,15 +996,97 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       ui.requestRender()
     })
   })
-  editor.onAction("app.message.dequeue", () => {
+  const navigateQueuedPrompt = (direction: -1 | 1) => {
+    if (!options.onQueueEdit) return
+    let target: QueuedPrompt | undefined
+    let targetIndex = 0
+    if (editingQueuedPrompt) {
+      const edited = { ...editingQueuedPrompt, images: imageAttachments, text: editor.getText().trim() || editingQueuedPrompt.text }
+      editingQueuedPrompt = undefined
+      editingQueuedPromptIndex = 0
+      options.onQueueEditSave?.(edited, false, false)
+      const visible = queuedPrompts.filter((prompt) => !prompt.hidden)
+      const currentIndex = visible.findIndex((prompt) => prompt.id === edited.id)
+      targetIndex = Math.min(Math.max(0, currentIndex + direction), Math.max(0, visible.length - 1))
+      target = visible[targetIndex]
+    } else {
+      if (editor.getText().trim() || imageAttachments.length > 0) {
+        setStatusNotice("Clear the current draft before editing a queued message", "warning")
+        return
+      }
+      const visible = queuedPrompts.filter((prompt) => !prompt.hidden)
+      targetIndex = direction < 0 ? Math.max(0, visible.length - 1) : 0
+      target = visible[targetIndex]
+    }
+    if (!target) return
+    const restored = options.onQueueEdit(target.id)
+    if (!restored) return
+    editingQueuedPrompt = restored
+    editingQueuedPromptIndex = targetIndex
+    editor.setText(restored.text)
+    imageAttachments = [...(restored.images ?? [])]
+    setStatusNotice(undefined)
+    updatePendingMessagesDisplay()
+    ui.requestRender()
+  }
+  editor.onAction("app.message.dequeue", () => navigateQueuedPrompt(-1))
+  editor.onAction("app.message.nextQueued", () => navigateQueuedPrompt(1))
+  editor.onAction("app.message.deleteQueued", () => {
+    if (!editingQueuedPrompt) return
+    const removed = editingQueuedPrompt
+    editingQueuedPrompt = undefined
+    editingQueuedPromptIndex = 0
+    editor.setText("")
+    imageAttachments = []
+    options.onQueueEditDelete?.(removed)
+    updatePendingMessagesDisplay()
+    ui.requestRender()
+  })
+  editor.onAction("app.message.followUp", () => {
+    const trimmed = editor.getText().trim()
+    if (editingQueuedPrompt && !trimmed) {
+      setStatusNotice("A queued message cannot be empty", "warning")
+      return
+    }
+    if (editingQueuedPrompt && trimmed) {
+      const edited = { ...editingQueuedPrompt, images: imageAttachments, text: trimmed }
+      editingQueuedPrompt = undefined
+      editingQueuedPromptIndex = 0
+      editor.addToHistory(trimmed)
+      editor.setText("")
+      imageAttachments = []
+      options.onQueueEditSave?.(edited, true)
+      updatePendingMessagesDisplay()
+      return
+    }
+    if (trimmed) {
+      editor.addToHistory(trimmed)
+      editor.setText("")
+      const submittedImages = imageAttachments
+      imageAttachments = []
+      const submitNow = options.onSubmitNow ?? options.onSubmit
+      submitNow(trimmed, submittedImages)
+      return
+    }
     const first = queuedPrompts.find((prompt) => !prompt.hidden)
-    if (first) options.onQueueEdit?.(first.id)
+    if (first) options.onQueuePromote?.(first.id)
   })
 
   editor.onSubmit = (text: string) => {
     if (inputDisabled) return
     const trimmed = text.trim()
     if (!trimmed) return
+    if (editingQueuedPrompt) {
+      const edited = { ...editingQueuedPrompt, images: imageAttachments, text: trimmed }
+      editingQueuedPrompt = undefined
+      editingQueuedPromptIndex = 0
+      editor.addToHistory(trimmed)
+      editor.setText("")
+      imageAttachments = []
+      options.onQueueEditSave?.(edited, false)
+      updatePendingMessagesDisplay()
+      return
+    }
     editor.addToHistory(trimmed)
     editor.setText("")
     options.onSubmit(trimmed, imageAttachments)
@@ -946,6 +1095,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   editor.onChange = (value: string) => {
     options.onInputChange?.(value)
+    if (editingQueuedPrompt) updatePendingMessagesDisplay()
   }
 
   // Wire up clipboard image paste (Ctrl+V / Cmd+V / Alt+V).
@@ -1746,6 +1896,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   return {
+    cancelQueuedPromptEdit,
     clearInteractionPrompts,
     clearPlanActions,
     clearToolActivities,

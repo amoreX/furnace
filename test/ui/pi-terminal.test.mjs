@@ -1,10 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-const { createFurnaceTerminal, formatTipNotice, inputCursorStyleSequence, shouldRenderTipNotice } = await import("../../dist/ui/pi-terminal.js")
+const { compactDirectionalKeyText, createFurnaceTerminal, formatTipNotice, inputCursorStyleSequence, queueDisplayRows, shouldRenderTipNotice } = await import("../../dist/ui/pi-terminal.js")
 const { FooterComponent, formatContextDisplay } = await import("../../dist/ui/pi/components/footer.js")
 const { CustomEditor } = await import("../../dist/ui/pi/components/custom-editor.js")
-const { KeybindingsManager } = await import("../../dist/ui/pi/keybindings.js")
+const { KeybindingsManager, queueKeybindingsForPlatform } = await import("../../dist/ui/pi/keybindings.js")
 const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
 const { StfuToolGroup, compactToolSummary } = await import("../../dist/ui/pi/components/stfu-tool-group.js")
 const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
@@ -48,6 +48,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
   })
 
   const required = [
+    "cancelQueuedPromptEdit",
     "clearInteractionPrompts",
     "clearToolActivities",
     "clearPlanActions",
@@ -99,6 +100,248 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
   for (const method of required) {
     assert.equal(typeof terminal[method], "function", `missing method: ${method}`)
   }
+})
+
+test("Alt+Up restores the next queued prompt and Alt+Enter sends the edited draft now", async () => {
+  let handleInput = () => {}
+  let sent
+  const image = {
+    id: "queued-image",
+    displayName: "queued.png",
+    source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
+  }
+  const queued = {
+    createdAt: Date.now(),
+    id: "queued-1",
+    images: [image],
+    text: "queued draft",
+  }
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onQueueEdit: (id) => id === queued.id ? queued : undefined,
+    onQueueEditSave: (prompt, sendNow) => {
+      sent = { text: prompt.text, images: prompt.images, sendNow }
+    },
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  terminal.setQueuedPrompts([queued])
+
+  const running = terminal.run()
+  handleInput("\x1b[1;3A")
+  handleInput("\x1b\r")
+
+  assert.equal(sent?.text, "queued draft")
+  assert.deepEqual(sent?.images, [image])
+  assert.equal(sent?.sendNow, true)
+  terminal.stop()
+  await running
+})
+
+test("Alt+Up and Alt+Down navigate queued prompts in both directions", async () => {
+  let handleInput = () => {}
+  const editedIds = []
+  const queued = [
+    { createdAt: 1, id: "top", text: "oldest" },
+    { createdAt: 2, id: "middle", text: "middle" },
+    { createdAt: 3, id: "bottom", text: "newest" },
+  ]
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onQueueEdit: (id) => {
+      editedIds.push(id)
+      return queued.find((prompt) => prompt.id === id)
+    },
+    onQueueEditSave: () => {},
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  terminal.setQueuedPrompts(queued)
+
+  const running = terminal.run()
+  handleInput("\x1b[1;3A")
+  handleInput("\x1b[1;3A")
+  handleInput("\x1b[1;3B")
+
+  assert.deepEqual(editedIds, ["bottom", "middle", "bottom"])
+  terminal.stop()
+  await running
+})
+
+test("Alt+Backspace deletes the queued prompt being edited", async () => {
+  let handleInput = () => {}
+  let deleted
+  const queued = { createdAt: 1, id: "delete-me", text: "remove this" }
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onQueueEdit: () => queued,
+    onQueueEditDelete: (prompt) => {
+      deleted = prompt
+    },
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  terminal.setQueuedPrompts([queued])
+
+  const running = terminal.run()
+  handleInput("\x1b[1;3A")
+  handleInput("\x1b\x7f")
+
+  assert.equal(deleted, queued)
+  terminal.stop()
+  await running
+})
+
+test("editing a queued prompt preserves its visual position", () => {
+  const oldest = { createdAt: 1, id: "oldest", text: "make it five" }
+  const newest = { createdAt: 2, id: "newest", text: "six" }
+  const rows = queueDisplayRows([oldest], newest, 1)
+
+  assert.deepEqual(rows.map((row) => row.prompt?.id), ["oldest", "newest"])
+  assert.deepEqual(rows.map((row) => row.editing), [false, true])
+})
+
+test("directional queue shortcut text combines the shared modifier", () => {
+  assert.equal(
+    compactDirectionalKeyText("alt+up", "alt+down"),
+    process.platform === "darwin" ? "Option+Up/Down" : "Alt+Up/Down",
+  )
+})
+
+test("Alt+Enter sends the focused queued prompt instead of the queue head", async () => {
+  let handleInput = () => {}
+  let sent
+  const queued = [
+    { createdAt: 1, id: "next", text: "send me next" },
+    { createdAt: 2, id: "focused", text: "send selected" },
+  ]
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onQueueEdit: (id) => queued.find((prompt) => prompt.id === id),
+    onQueueEditSave: (prompt, sendNow) => {
+      sent = { id: prompt.id, sendNow }
+    },
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  terminal.setQueuedPrompts(queued)
+
+  const running = terminal.run()
+  handleInput("\x1b[1;3A")
+  handleInput("\x1b\r")
+
+  assert.deepEqual(sent, { id: "focused", sendNow: true })
+  terminal.stop()
+  await running
+})
+
+test("Escape cancels queued prompt editing before interrupting the chat", async () => {
+  let handleInput = () => {}
+  let cancelled
+  let interruptCount = 0
+  const queued = { createdAt: Date.now(), id: "queued-1", text: "keep queued" }
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onInterrupt: () => {
+      interruptCount += 1
+    },
+    onQueueEdit: () => queued,
+    onQueueEditCancel: (prompt) => {
+      cancelled = prompt
+    },
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  terminal.setQueuedPrompts([queued])
+
+  const running = terminal.run()
+  handleInput("\x1b[1;3A")
+  handleInput("\x1b")
+  assert.equal(cancelled, queued)
+  assert.equal(interruptCount, 0)
+
+  handleInput("\x1b")
+  assert.equal(interruptCount, 1)
+  terminal.stop()
+  await running
+})
+
+test("Alt+Enter promotes the next queued prompt rather than the newest when the draft is empty", async () => {
+  let handleInput = () => {}
+  let promoted
+  const terminal = createFurnaceTerminal({
+    cwd: "/tmp",
+    model: "openai/gpt-4o",
+    modelSettings: {},
+    onQueuePromote: (id) => {
+      promoted = id
+    },
+    onSubmit: () => {},
+    terminal: {
+      ...createMockTerminal(),
+      start: (onInput) => {
+        handleInput = onInput
+      },
+    },
+    themeName: "default",
+    title: "Test",
+  })
+  terminal.setQueuedPrompts([
+    { createdAt: 1, id: "next", text: "send me next" },
+    { createdAt: 2, id: "newest", text: "send me later" },
+  ])
+
+  const running = terminal.run()
+  handleInput("\x1b\r")
+
+  assert.equal(promoted, "next")
+  terminal.stop()
+  await running
 })
 
 test("tips render only on the normal idle agent editor", () => {
@@ -405,6 +648,24 @@ test("pinned chat controls use dedicated focus and visibility shortcuts", () => 
   assert.deepEqual(keybindings.getKeys("app.pins"), ["ctrl+p"])
   assert.deepEqual(keybindings.getKeys("app.pins.toggle"), ["ctrl+g"])
   assert.deepEqual(keybindings.getKeys("app.editor.external"), ["alt+e"])
+  assert.deepEqual(keybindings.getKeys("app.message.dequeue"), ["alt+up"])
+  assert.deepEqual(keybindings.getKeys("app.message.nextQueued"), ["alt+down"])
+  assert.deepEqual(keybindings.getKeys("app.message.deleteQueued"), ["alt+backspace"])
+})
+
+test("Windows queue shortcuts include terminal-safe function-key fallbacks", () => {
+  assert.deepEqual(queueKeybindingsForPlatform("darwin"), {
+    deleteQueued: "alt+backspace",
+    nextQueued: "alt+down",
+    previousQueued: "alt+up",
+    sendNow: "alt+enter",
+  })
+  assert.deepEqual(queueKeybindingsForPlatform("win32"), {
+    deleteQueued: ["alt+backspace", "shift+f8"],
+    nextQueued: ["alt+down", "shift+f7"],
+    previousQueued: ["alt+up", "shift+f6"],
+    sendNow: ["alt+enter", "shift+f5"],
+  })
 })
 
 test("backspace on a large paste offers expansion or whole-paste deletion", () => {

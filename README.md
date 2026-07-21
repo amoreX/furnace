@@ -182,6 +182,30 @@ Built-in slash commands include:
 | `/clear` | Clear the conversation display. |
 | `/exit`, `/quit` | Exit Furnace. |
 
+Messages submitted while Furnace is working are queued in order. Each
+conversation keeps its own queue while you switch among pinned chats. Press
+`Alt+Up` with an empty draft to edit the newest queued message, including its
+image attachments; keep pressing it to move toward the oldest, and use
+`Alt+Down` to move back toward the newest. Press `Alt+Enter` to interrupt at a
+safe boundary and send the current draft—or the next queued message if the
+draft is empty—next. While editing an accented queued message, press `Enter` to
+save it back in place, `Alt+Backspace` to delete it, or `Esc` to cancel the edit
+without interrupting the chat.
+
+On Windows, the same Alt shortcuts are supported. Because some terminal hosts
+reserve `Alt+Enter`, Furnace also provides `Shift+F5` to send, `Shift+F6` and
+`Shift+F7` to move through the queue, and `Shift+F8` to delete the selected
+queued prompt. The UI displays the effective shortcuts for the current OS.
+
+Interrupting an active turn with `Esc` pauses that conversation’s queue instead
+of automatically sending the next follow-up. Sending a new message, saving a
+queued edit, or explicitly sending a queued prompt resumes normal FIFO
+processing.
+
+`/new`, `/resume`, and its `/history` alias remain available while a chat is
+working. The previous chat continues in the background with its own queue and
+runtime state; returning through resume or a pinned-chat slot restores both.
+
 Set `FURNACE_REDUCED_MOTION=1` to keep snowfall enabled as a still overlay.
 
 Custom slash commands can live under `.furnace/commands` in the project or `~/.furnace/commands` globally.

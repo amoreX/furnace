@@ -13,7 +13,7 @@ test("usage view consumes only the first dismiss action", async () => {
 })
 
 test("interrupt and startup copy stay concise and accurate", async () => {
-  const [{ INTERRUPTED_MESSAGE }, { COMPACT_STARTUP_HINT }] = await Promise.all([
+  const [{ INTERRUPTED_MESSAGE, isWorkingSessionNavigationCommand }, { COMPACT_STARTUP_HINT }] = await Promise.all([
     import("../dist/interactive-session-controller.js"),
     import("../dist/ui/pi/layouts.js"),
   ])
@@ -21,4 +21,8 @@ test("interrupt and startup copy stay concise and accurate", async () => {
   assert.equal(COMPACT_STARTUP_HINT, "ctrl+c interrupt/close · / commands")
   assert.doesNotMatch(INTERRUPTED_MESSAGE, /queued prompt/i)
   assert.doesNotMatch(COMPACT_STARTUP_HINT, /ctrl\+d|ctrl\+o|drop files/i)
+  assert.equal(isWorkingSessionNavigationCommand("/new"), true)
+  assert.equal(isWorkingSessionNavigationCommand("/resume"), true)
+  assert.equal(isWorkingSessionNavigationCommand("/history"), true)
+  assert.equal(isWorkingSessionNavigationCommand("/model"), false)
 })

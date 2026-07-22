@@ -31,3 +31,12 @@ test("snow off preserves rendered layouts exactly", () => {
   assert.equal(overlaySnow(lines, 80, 10, "off"), lines)
   assert.deepEqual(snowPoints(80, 20, 10, "off"), [])
 })
+
+test("viewport-limited snow leaves offscreen history unchanged across frames", () => {
+  const lines = Array.from({ length: 40 }, (_, index) => `history-${index}`.padEnd(40))
+  const first = overlaySnow(lines, 40, 0, "hard", 10)
+  const next = overlaySnow(lines, 40, 12, "hard", 10)
+  assert.deepEqual(first.slice(0, 30), lines.slice(0, 30))
+  assert.deepEqual(next.slice(0, 30), lines.slice(0, 30))
+  assert.notDeepEqual(first.slice(30), next.slice(30))
+})

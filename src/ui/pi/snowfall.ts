@@ -78,20 +78,36 @@ function overlayLine(line: string, width: number, points: Map<number, string>): 
   return output
 }
 
-export function overlaySnow(lines: string[], width: number, frame: number, intensity: SnowIntensity): string[] {
+export function overlaySnow(
+  lines: string[],
+  width: number,
+  frame: number,
+  intensity: SnowIntensity,
+  // Limit flakes to the visible terminal viewport so offscreen history does not
+  // change every frame (that triggers pi-tui full redraws that wipe scrollback).
+  visibleRows?: number,
+): string[] {
   if (intensity === "off" || lines.length === 0) return lines
+  const start = visibleRows && visibleRows > 0
+    ? Math.max(0, lines.length - visibleRows)
+    : 0
+  const height = lines.length - start
   const byRow = new Map<number, Map<number, string>>()
-  for (const point of snowPoints(width, lines.length, frame, intensity)) {
-    const row = byRow.get(point.y) ?? new Map<number, string>()
-    row.set(point.x, point.glyph)
-    byRow.set(point.y, row)
+  for (const point of snowPoints(width, height, frame, intensity)) {
+    const row = start + point.y
+    const cells = byRow.get(row) ?? new Map<number, string>()
+    cells.set(point.x, point.glyph)
+    byRow.set(row, cells)
   }
-  return lines.map((line, row) => overlayLine(line, width, byRow.get(row) ?? new Map()))
+  return lines.map((line, row) => (
+    row < start ? line : overlayLine(line, width, byRow.get(row) ?? new Map())
+  ))
 }
 
 export class SnowfallSurface extends Container {
   private frame = 0
   private intensity: SnowIntensity = "off"
+  private visibleRows = 0
 
   setFrame(frame: number): void {
     this.frame = frame
@@ -101,11 +117,21 @@ export class SnowfallSurface extends Container {
     this.intensity = intensity
   }
 
+  setVisibleRows(rows: number): void {
+    this.visibleRows = Math.max(0, rows)
+  }
+
   getIntensity(): SnowIntensity {
     return this.intensity
   }
 
   override render(width: number): string[] {
-    return overlaySnow(super.render(width), width, this.frame, this.intensity)
+    return overlaySnow(
+      super.render(width),
+      width,
+      this.frame,
+      this.intensity,
+      this.visibleRows > 0 ? this.visibleRows : undefined,
+    )
   }
 }

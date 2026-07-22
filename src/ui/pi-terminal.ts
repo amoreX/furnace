@@ -426,12 +426,14 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     }
     snowfallSurface.setIntensity(snowIntensity)
     snowfallSurface.setFrame(0)
+    snowfallSurface.setVisibleRows(ui.terminal.rows)
     snowFrame = 0
     const reducedMotion = process.env.FURNACE_REDUCED_MOTION === "1" || process.env.TERM === "dumb"
     if (snowIntensity === "off" || reducedMotion) return
     snowTimer = setInterval(() => {
       snowFrame = (snowFrame + 1) % 100_000
       snowfallSurface.setFrame(snowFrame)
+      snowfallSurface.setVisibleRows(ui.terminal.rows)
       ui.requestRender()
     }, 125)
     snowTimer.unref?.()

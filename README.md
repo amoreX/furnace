@@ -21,13 +21,25 @@ Requirements:
 - Node.js 22.x
 - A provider API key configured through `/login` or environment variables
 
-Install from npm:
+Run Furnace once through npx:
 
 ```bash
-npm install -g cook-furnace
+npx cook-furnace@latest
 ```
 
-The package name is `cook-furnace`, and the installed command is `furnace`.
+The first run installs Furnace into your user account and creates the persistent `furnace` command. It does not require administrator access or a global npm install.
+
+On Windows, Furnace adds `%LOCALAPPDATA%\Furnace\bin` to your User PATH. On macOS and Linux it uses `~/.local/bin` and adds that directory to your active shell profile only when needed. Reopen the terminal if Furnace reports that PATH changed.
+
+Installation and updates do not move user data. API keys and global settings stay in `~/.furnace`; conversations, images, and project settings stay in the current repository’s `.furnace` directory.
+
+Update later with:
+
+```bash
+furnace update
+```
+
+The npm package remains `cook-furnace`; the command after setup is `furnace`.
 
 ## Quickstart
 

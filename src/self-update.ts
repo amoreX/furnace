@@ -1,20 +1,16 @@
-import { spawnSync } from "node:child_process"
 import { existsSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { installManagedFurnace, type ManagedInstallOptions, type ManagedInstallResult } from "./managed-install.js"
 
 const PACKAGE_SPEC = "cook-furnace@latest"
 
-type UpdateProcessResult = {
-  error?: Error
-  signal?: NodeJS.Signals | null
-  status: number | null
-}
-
 export type SelfUpdateOptions = {
+  env?: NodeJS.ProcessEnv
+  install?: (options: ManagedInstallOptions) => ManagedInstallResult
   packageRoot?: string
   platform?: NodeJS.Platform
-  spawn?: (command: string, args: string[], options: { stdio: "inherit" }) => UpdateProcessResult
+  spawn?: ManagedInstallOptions["spawn"]
   stderr?: (message: string) => void
   stdout?: (message: string) => void
 }
@@ -41,24 +37,29 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): boolean {
   }
 
   const platform = options.platform ?? process.platform
-  const command = platform === "win32" ? "npm.cmd" : "npm"
-  const spawn = options.spawn ?? spawnSync
+  const env = options.env ?? process.env
+  const install = options.install ?? installManagedFurnace
 
   stdout(`Updating Furnace to the latest published version...\n`)
-  const result = spawn(command, ["install", "--global", PACKAGE_SPEC], { stdio: "inherit" })
-
-  if (result.error) {
-    stderr(`Unable to run npm: ${result.error.message}\n`)
-    return false
-  }
-  if (result.status !== 0) {
-    const detail = result.signal ? ` (terminated by ${result.signal})` : ""
+  let result: ManagedInstallResult
+  try {
+    result = install({
+      env,
+      packageSpec: PACKAGE_SPEC,
+      platform,
+      root: env.FURNACE_MANAGED_ROOT,
+      spawn: options.spawn,
+      stdout,
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : ""
     stderr(`Furnace update failed${detail}.\n`)
     return false
   }
 
   stdout(
-    "Furnace updated to the latest published version. Restart it to use the update.\n" +
+    `Furnace ${result.version} is installed. Restart it to use the update.\n` +
+    (result.pathChanged ? "Reopen your terminal so the `furnace` command is available on PATH.\n" : "") +
     "Any Evolve changes will be reapplied on the next launch; follow the prompts if you have Evolve changes.\n" +
     "View the latest changelog with `/change` or at https://furnace.unordinary.software/changelog.\n",
   )

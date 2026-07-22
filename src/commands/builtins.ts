@@ -37,7 +37,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/snow low", description: "Enable gentle snowfall" },
   { name: "/snow medium", description: "Enable steady snowfall" },
   { name: "/snow hard", description: "Enable heavy snowfall" },
-  { name: "/tip", description: "Toggle idle command tips" },
+  { name: "/tip", aliases: ["/tips"], description: "Toggle idle command tips" },
   { name: "/stfu", description: "Toggle minimal response mode" },
   { name: "/caveman", description: "Toggle caveman response style" },
   { name: "/evolve", description: "Modify the furnace harness itself", insertText: "/evolve ", usage: "/evolve <what to change>" },

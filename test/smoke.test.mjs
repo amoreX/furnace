@@ -30,6 +30,7 @@ test("/change is exposed as a built-in command", async () => {
 test("/tip is exposed as a built-in command", async () => {
   const { isKnownSlashCommand, slashCommandDefinitions } = await import("../dist/commands/builtins.js")
   assert.equal(isKnownSlashCommand("/tip"), true)
+  assert.equal(isKnownSlashCommand("/tips"), true)
   assert.match(slashCommandDefinitions.find((command) => command.name === "/tip")?.description || "", /idle.*tips/i)
 })
 

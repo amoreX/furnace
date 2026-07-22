@@ -417,7 +417,7 @@ export async function runInteractive(input: {
       showTransientStatus(snowIntensity === "off" ? "Snowfall off." : `Snowfall ${snowIntensity}.`)
       return
     }
-    if (command.name === "/tip") {
+    if (command.name === "/tip" || command.name === "/tips") {
       input.config.tipsEnabled = !input.config.tipsEnabled
       tipScheduler.setEnabled(input.config.tipsEnabled)
       await saveGlobalPreferences({ tipsEnabled: input.config.tipsEnabled }).catch((error) => {

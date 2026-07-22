@@ -37,8 +37,25 @@ import { renderError } from "./ui/plain-output.js"
 import { runInteractive, runPiped, runSingleTurn } from "./interactive-session-controller.js"
 import { packageVersion } from "./version.js"
 import { relaunchActiveEvolveIfNeeded } from "./evolve/activation.js"
-import { runSelfUpdate } from "./self-update.js"
+import { furnacePackageRoot, runSelfUpdate } from "./self-update.js"
+import { bootstrapFromNpx, cleanupStaleManagedVersions, type ManagedInstallResult } from "./managed-install.js"
 
+let bootstrapResult: ManagedInstallResult | undefined
+try {
+  bootstrapResult = bootstrapFromNpx({
+    packageRoot: furnacePackageRoot(),
+    version: packageVersion,
+  })
+  if (bootstrapResult) {
+    process.stdout.write(`Furnace ${bootstrapResult.version} installed. The persistent command is now: furnace\n`)
+    process.stdout.write("Tip: Idle tips can be turned off in /settings or with /tips.\n")
+    if (bootstrapResult.pathChanged) process.stdout.write("Reopen your terminal before using `furnace` in a new session.\n")
+  }
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error)
+  process.stderr.write(`Furnace setup could not create the persistent command: ${message}\nThis npx session will continue normally.\n`)
+}
+cleanupStaleManagedVersions({ currentVersion: packageVersion })
 relaunchActiveEvolveIfNeeded()
 const program = new Command()
 
@@ -144,7 +161,7 @@ program
           return
         }
 
-        await runInteractive({ config, cwd, sessionId: session.id, store, shouldClear: options.clear })
+        await runInteractive({ config, cwd, sessionId: session.id, store, shouldClear: options.clear && !bootstrapResult })
       } finally {
         store.deleteEmptySessions(cwd)
         store.close()

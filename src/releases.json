@@ -2,6 +2,21 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.25",
+      "date": "2026-07-22",
+      "status": "published",
+      "commit": null,
+      "summary": "Furnace now installs persistently from one npx command across platforms.",
+      "changes": [
+        { "kind": "added", "text": "Added one-time setup through `npx cook-furnace@latest`, followed by the persistent `furnace` command." },
+        { "kind": "added", "text": "Added a branded first-run installer with progress, PATH restart guidance, and tips configuration help." },
+        { "kind": "changed", "text": "Moved `furnace update` to versioned user-owned installations that avoid global npm permissions and Windows file locks." },
+        { "kind": "changed", "text": "Configured User PATH automatically when needed on Windows, macOS, and Linux without administrator access." },
+        { "kind": "fixed", "text": "Kept credentials, settings, conversations, images, and project state separate from replaceable application versions." },
+        { "kind": "added", "text": "Added `/tips` as an alias for toggling idle tips." }
+      ]
+    },
+    {
       "version": "0.2.24",
       "date": "2026-07-21",
       "status": "published",

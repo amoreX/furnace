@@ -277,6 +277,7 @@ export async function runInteractive(input: {
       showTransientStatus("Copied to clipboard.")
     },
     themeName: input.config.theme,
+    tipsEnabled: input.config.tipsEnabled,
     typingIndicatorBlink: input.config.typingIndicatorBlink,
     typingIndicator: input.config.typingIndicator,
     title: initialSession.title,
@@ -420,6 +421,7 @@ export async function runInteractive(input: {
     if (command.name === "/tip" || command.name === "/tips") {
       input.config.tipsEnabled = !input.config.tipsEnabled
       tipScheduler.setEnabled(input.config.tipsEnabled)
+      terminal.setTipsEnabled(input.config.tipsEnabled)
       await saveGlobalPreferences({ tipsEnabled: input.config.tipsEnabled }).catch((error) => {
         showTransientStatus(`Failed to save tip preference: ${formatError(error)}`, 8000)
       })
@@ -576,6 +578,7 @@ export async function runInteractive(input: {
           statusLine: statusLinePreferencesFrom(updated),
         })
         tipScheduler.setEnabled(input.config.tipsEnabled)
+        terminal.setTipsEnabled(input.config.tipsEnabled)
         repoIndexService.setPolicy(input.config.repoIndexPolicy)
         terminal.setLayout(input.config.layout)
         terminal.setStatusLinePreferences(input.config.statusLine)

@@ -54,6 +54,7 @@ export type FurnaceTerminal = {
   setSnow(intensity: SnowIntensity): void
   setTaskStatus(snapshot?: TaskStatusSnapshot): void
   setTipNotice(content?: string): void
+  setTipsEnabled(enabled: boolean): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
   showModelEditor(
     choice: ModelChoice,

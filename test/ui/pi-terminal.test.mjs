@@ -75,6 +75,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setSnow",
     "setTaskStatus",
     "setTipNotice",
+    "setTipsEnabled",
     "setPinnedChats",
     "setSlashCommandItems",
     "showModelEditor",
@@ -354,6 +355,8 @@ test("tips render only on the normal idle agent editor", () => {
     mode: "agent",
   }
   assert.equal(shouldRenderTipNotice(idle), true)
+  assert.equal(shouldRenderTipNotice({ ...idle, tipsEnabled: true }), true)
+  assert.equal(shouldRenderTipNotice({ ...idle, tipsEnabled: false }), false)
   assert.equal(shouldRenderTipNotice({ ...idle, editorSurfaceActive: false }), false)
   assert.equal(shouldRenderTipNotice({ ...idle, hasActiveStatus: true }), false)
   assert.equal(shouldRenderTipNotice({ ...idle, hasRepoIndexStatus: true }), false)

@@ -117,7 +117,9 @@ export function shouldRenderTipNotice(input: {
   hasStatusNotice: boolean
   inputDisabled: boolean
   mode: AgentMode
+  tipsEnabled?: boolean
 }): boolean {
+  if (input.tipsEnabled === false) return false
   return input.editorSurfaceActive
     && input.mode === "agent"
     && !input.inputDisabled
@@ -250,6 +252,7 @@ export type CreateFurnaceTerminalOptions = {
   themeName: string
   typingIndicatorBlink?: boolean
   typingIndicator?: "block" | "underscore" | "bar"
+  tipsEnabled?: boolean
   title: string
   onSubmit: (text: string, images?: ImageAttachment[]) => void
   onSubmitNow?: (text: string, images?: ImageAttachment[]) => void
@@ -500,6 +503,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let statusNotice: { content: string; tone: StatusNoticeTone } | undefined
   let repoIndexStatus: { content: string; tone: StatusNoticeTone } | undefined
   let tipNotice: string | undefined
+  let tipsEnabled = options.tipsEnabled !== false
   let editorSurfaceActive = true
   let inputDisabled = false
 
@@ -526,17 +530,23 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
             : "dim"
       statusContainer.addChild(new Text(theme.fg(color, repoIndexStatus.content), 1, 0))
     }
-    if (tipNotice && shouldRenderTipNotice({
+    // Keep a fixed-height tip slot whenever tips are enabled and eligible, so
+    // tip show/hide/rotation never shifts the editor layout.
+    if (shouldRenderTipNotice({
       editorSurfaceActive,
       hasActiveStatus: Boolean(activeStatusIndicator),
       hasRepoIndexStatus: Boolean(repoIndexStatus),
       hasStatusNotice: Boolean(statusNotice),
       inputDisabled,
       mode: currentMode,
+      tipsEnabled,
     })) {
-      statusContainer.addChild(new Text(formatTipNotice(tipNotice), 1, 0))
+      statusContainer.addChild(tipNotice
+        ? new Text(formatTipNotice(tipNotice), 1, 0)
+        : new Spacer(1))
     }
   }
+  rebuildStatusContainer()
 
   const showStatusIndicator = (indicator: StatusIndicator) => {
     activeStatusIndicator?.dispose()
@@ -751,6 +761,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setTipNotice = (content?: string) => {
     tipNotice = content
+    rebuildStatusContainer()
+    ui.requestRender()
+  }
+
+  const setTipsEnabled = (enabled: boolean) => {
+    tipsEnabled = enabled
+    if (!enabled) tipNotice = undefined
     rebuildStatusContainer()
     ui.requestRender()
   }
@@ -1946,6 +1963,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setSnow,
     setTaskStatus,
     setTipNotice,
+    setTipsEnabled,
     setSessionMeta,
     setSlashCommandItems,
     setStatusLinePreferences,

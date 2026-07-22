@@ -8,6 +8,7 @@ import { applyHeadroomLiteRequestTransforms } from "./compression/request-transf
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand } from "./commands/builtins.js"
 import { isApiKeyMissing, loadConfig } from "./config.js"
 import { calculateUsageCostUsd, summarizeUsageCosts } from "./session/usage-cost.js"
+import { resolveModelPricing } from "./session/model-pricing.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { setStoredKey, removeStoredKey } from "./providers/keys.js"
@@ -3369,7 +3370,8 @@ function updateTerminalCostUsage(
 
 async function currentModelPricing(config: Awaited<ReturnType<typeof loadConfig>>, modelId: string): Promise<{ prompt: number; completion: number } | undefined> {
   const models = await listOpenRouterModels(config).catch(() => [])
-  return models.find((model) => model.id === modelId)?.pricing
+  const apiPricing = models.find((model) => model.id === modelId)?.pricing
+  return resolveModelPricing(modelId, apiPricing)
 }
 
 function formatCompactionSkip(reason: string | undefined): string {

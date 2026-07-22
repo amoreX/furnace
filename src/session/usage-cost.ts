@@ -28,6 +28,7 @@ export type UsageCostProviderSummary = {
 
 export function calculateUsageCostUsd(usage: Pick<TurnUsage, "completionTokens" | "promptTokens">, pricing?: TokenPricing | null): number | null {
   if (!pricing) return null
+  if (pricing.prompt <= 0 && pricing.completion <= 0) return null
   return usage.promptTokens * pricing.prompt + usage.completionTokens * pricing.completion
 }
 

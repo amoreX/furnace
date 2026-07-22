@@ -9,6 +9,7 @@ import type {
   Usage,
 } from "./types.js"
 import type { ModelSettings } from "../preferences.js"
+import { normalizeTokenPricing, parseUsageCostUsd } from "../session/model-pricing.js"
 
 type ChatCompletionChunk = {
   choices?: Array<{
@@ -302,7 +303,7 @@ export function createOpenAICompatibleProvider(): Provider {
               usageData = {
                 cacheReadTokens: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0,
                 completionTokens: parsed.usage.completion_tokens ?? 0,
-                costUsd: typeof parsed.usage.cost === "number" ? parsed.usage.cost : undefined,
+                costUsd: parseUsageCostUsd(parsed.usage.cost),
                 promptTokens: parsed.usage.prompt_tokens ?? 0,
               }
             }
@@ -364,12 +365,12 @@ export function createOpenAICompatibleProvider(): Provider {
         .flatMap((model) => {
           if (!model.id) return []
           const pricingRaw = model.pricing
-          const pricing = pricingRaw
+          const pricing = normalizeTokenPricing(pricingRaw
             ? {
                 prompt: parseFloat(pricingRaw.prompt ?? "0") || 0,
                 completion: parseFloat(pricingRaw.completion ?? "0") || 0,
               }
-            : undefined
+            : undefined)
           return [{
             id: model.id,
             name: model.name || model.id,

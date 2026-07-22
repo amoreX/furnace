@@ -12,6 +12,7 @@ test("calculateUsageCostUsd computes provider pricing from token usage", async (
     0.0014,
   )
   assert.equal(calculateUsageCostUsd({ promptTokens: 1000, completionTokens: 200 }, undefined), null)
+  assert.equal(calculateUsageCostUsd({ promptTokens: 1000, completionTokens: 200 }, { prompt: 0, completion: 0 }), null)
 })
 
 test("summarizeUsageCosts totals cost and groups by provider", async () => {

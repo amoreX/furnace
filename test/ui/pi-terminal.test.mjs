@@ -1039,6 +1039,24 @@ test("footer cost mode switches between session, total key cost, and off", () =>
   assert.doesNotMatch(hiddenFooter.render(160).map(stripAnsi).join("\n"), /\$/)
 })
 
+test("footer marks incomplete provider costs instead of presenting zero as exact", () => {
+  const { session, footerData } = createFooterFixture()
+  session.state.sessionCostIncomplete = true
+  session.sessionManager.getEntries = () => []
+
+  const footer = new FooterComponent(session, footerData, { statusCostMode: "session" })
+  assert.match(footer.render(160).map(stripAnsi).join("\n"), /cost unavailable/)
+
+  session.sessionManager.getEntries = () => [{
+    type: "message",
+    message: {
+      role: "assistant",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.1234 } },
+    },
+  }]
+  assert.match(footer.render(160).map(stripAnsi).join("\n"), /\$0\.1234\+/)
+})
+
 test("footer status toggles hide configured status parts", () => {
   const { session, footerData } = createFooterFixture()
   const footer = new FooterComponent(session, footerData, {

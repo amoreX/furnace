@@ -29,7 +29,15 @@ type ChatCompletionChunk = {
     }
     finish_reason?: string | null
   }>
-  usage?: { cost?: number; prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }
+  usage?: {
+    completion_tokens?: number
+    cost?: number | string
+    prompt_cache_hit_tokens?: number
+    prompt_cache_miss_tokens?: number
+    prompt_tokens?: number
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }
+    total_cost?: number | string
+  }
   error?: { message?: string }
 }
 
@@ -106,6 +114,33 @@ function unsupportedToolChoiceResponse(status: number, body: string): boolean {
     && /(thinking|reasoning|not support|unsupported|invalid)/i.test(body)
 }
 
+function unsupportedStreamOptionsResponse(status: number, body: string): boolean {
+  return (status === 400 || status === 422)
+    && /stream[_ ]options|include[_ ]usage/i.test(body)
+    && /(unknown|not support|unsupported|invalid|extra field|unrecognized)/i.test(body)
+}
+
+function streamedUsageOptions(provider: ResolvedProvider): Record<string, unknown> {
+  // OpenRouter includes usage and exact cost automatically. OpenAI, DeepSeek,
+  // GLM, and standards-compatible custom endpoints require this final chunk.
+  return provider.id === "openrouter" ? {} : { stream_options: { include_usage: true } }
+}
+
+function parseOpenAIUsage(usage: NonNullable<ChatCompletionChunk["usage"]>): Usage | undefined {
+  const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0
+  const cacheWriteTokens = usage.prompt_tokens_details?.cache_write_tokens ?? 0
+  const reportedPromptTokens = usage.prompt_tokens
+    ?? ((usage.prompt_cache_hit_tokens ?? 0) + (usage.prompt_cache_miss_tokens ?? 0))
+  if (reportedPromptTokens === undefined && usage.completion_tokens === undefined) return undefined
+  return {
+    cacheReadTokens,
+    cacheWriteTokens,
+    completionTokens: usage.completion_tokens ?? 0,
+    costUsd: parseUsageCostUsd(usage.cost ?? usage.total_cost),
+    promptTokens: Math.max((reportedPromptTokens ?? 0) - cacheReadTokens - cacheWriteTokens, 0),
+  }
+}
+
 function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[], omitImages = provider.id === "deepseek"): ChatMessage[] {
   const prepared = promptCacheDisabled()
     ? stripPromptCacheControl(messages)
@@ -149,17 +184,25 @@ async function postChatCompletion(
   })
 
   let activePayload = payload
-  let response = await send(activePayload)
-  if (response.ok) return response
-
-  let body = await response.text().catch(() => "")
-  if ("tool_choice" in activePayload && unsupportedToolChoiceResponse(response.status, body)) {
-    const { tool_choice: _toolChoice, ...withoutToolChoice } = activePayload
-    activePayload = withoutToolChoice
+  let response: Response | undefined
+  let body = ""
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     response = await send(activePayload)
     if (response.ok) return response
     body = await response.text().catch(() => "")
+    if ("tool_choice" in activePayload && unsupportedToolChoiceResponse(response.status, body)) {
+      const { tool_choice: _toolChoice, ...withoutToolChoice } = activePayload
+      activePayload = withoutToolChoice
+      continue
+    }
+    if ("stream_options" in activePayload && unsupportedStreamOptionsResponse(response.status, body)) {
+      const { stream_options: _streamOptions, ...withoutStreamOptions } = activePayload
+      activePayload = withoutStreamOptions
+      continue
+    }
+    break
   }
+  if (!response) throw new Error("Request failed before receiving a response")
   if (provider.id !== "deepseek" && hasImageBlocks(messages) && unsupportedImageResponse(response.status, body)) {
     response = await send(activePayload, true)
     if (response.ok) return response
@@ -300,8 +343,8 @@ export function createOpenAICompatibleProvider(): Provider {
         tools,
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
         ...buildRequestOptions(provider, model, settings, true),
+        ...streamedUsageOptions(provider),
         stream: true,
-        usage: { include: true },
       }
       // DeepSeek thinking models reject tool_choice even when thinking is
       // nominally disabled. Other providers get one compatibility retry in
@@ -337,14 +380,7 @@ export function createOpenAICompatibleProvider(): Provider {
             const parsed = parseChunk(data)
             if (parsed.error?.message) throw new Error(parsed.error.message)
             const delta = parsed.choices?.[0]?.delta
-            if (parsed.usage?.prompt_tokens !== undefined) {
-              usageData = {
-                cacheReadTokens: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0,
-                completionTokens: parsed.usage.completion_tokens ?? 0,
-                costUsd: parseUsageCostUsd(parsed.usage.cost),
-                promptTokens: parsed.usage.prompt_tokens ?? 0,
-              }
-            }
+            if (parsed.usage) usageData = parseOpenAIUsage(parsed.usage) ?? usageData
             if (delta?.content) {
               textContent += delta.content
               options.onTextDelta?.(delta.content)
@@ -383,6 +419,7 @@ export function createOpenAICompatibleProvider(): Provider {
           id: m.id,
           name: m.displayName || m.id,
           contextLength: m.contextLength ?? null,
+          pricing: m.pricing,
           supportedParameters: [],
         }))
       }

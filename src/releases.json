@@ -2,6 +2,20 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.29",
+      "date": "2026-07-23",
+      "status": "published",
+      "commit": null,
+      "summary": "Cost tracking is now provider-aware, cache-aware, and reliable across conversations.",
+      "changes": [
+        { "kind": "fixed", "text": "Requested final streamed usage correctly from DeepSeek, OpenAI, GLM, and compatible custom providers while using OpenRouter’s automatic exact cost." },
+        { "kind": "fixed", "text": "Accumulated prompt and completion usage across every model round in tool-driven turns." },
+        { "kind": "changed", "text": "Calculated fresh input, cache reads, cache writes, and output with their distinct model rates for supported direct providers." },
+        { "kind": "fixed", "text": "Kept footer costs scoped to each conversation and marked incomplete provider pricing instead of presenting zero as exact." },
+        { "kind": "compatibility", "text": "Retried compatible endpoints without `stream_options` when they explicitly reject the standard usage option." }
+      ]
+    },
+    {
       "version": "0.2.28",
       "date": "2026-07-23",
       "status": "published",

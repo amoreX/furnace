@@ -295,7 +295,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const pinnedPanelState = new PinnedChatsPanelState()
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
+  let costIncomplete = false
   let totalCostUsd: number | undefined
+  let totalCostIncomplete = false
 
   const setInputCursorStyle = (
     style = options.typingIndicator ?? "block",
@@ -331,7 +333,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         configuredContextWindow: currentModelSettings.contextLength,
         themeName: currentThemeName,
         forkParentTitle: currentForkParentTitle,
+        sessionCostIncomplete: costIncomplete,
         totalCostUsd,
+        totalCostIncomplete,
       }
     },
     sessionManager: {
@@ -886,9 +890,15 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
-  const setCostUsage = (sessionCost?: number, totalCost?: number) => {
+  const setCostUsage = (
+    sessionCost?: number,
+    totalCost?: number,
+    completeness: { sessionIncomplete?: boolean; totalIncomplete?: boolean } = {},
+  ) => {
     costUsd = sessionCost
+    costIncomplete = completeness.sessionIncomplete === true
     totalCostUsd = totalCost
+    totalCostIncomplete = completeness.totalIncomplete === true
     footer.invalidate()
     ui.requestRender()
   }

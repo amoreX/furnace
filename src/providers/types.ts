@@ -1,4 +1,5 @@
 import type { ModelSettings } from "../preferences.js"
+import type { TokenPricing } from "../session/usage-cost.js"
 
 export type Protocol = "openai-compatible" | "anthropic"
 
@@ -42,7 +43,7 @@ export type ModelInfo = {
   name: string
   contextLength: number | null
   supportedParameters: string[]
-  pricing?: { prompt: number; completion: number }
+  pricing?: TokenPricing
 }
 
 export type Usage = {
@@ -63,6 +64,7 @@ export type StaticModelDef = {
   id: string
   displayName?: string
   contextLength?: number
+  pricing?: TokenPricing
 }
 
 export type ProviderDefinition = {

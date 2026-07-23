@@ -440,6 +440,7 @@ export function createAnthropicProvider(): Provider {
           id: m.id,
           name: m.displayName || m.id,
           contextLength: m.contextLength ?? null,
+          pricing: m.pricing,
           supportedParameters: [],
         }))
       }

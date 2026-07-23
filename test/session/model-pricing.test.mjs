@@ -14,6 +14,15 @@ test("deepseek catalog pricing estimates non-zero session cost", () => {
   assert.ok(pricing)
   const cost = calculateUsageCostUsd({ promptTokens: 1_000_000, completionTokens: 500_000 }, pricing)
   assert.equal(cost, 0.14 + 0.14)
+  assert.equal(
+    calculateUsageCostUsd({ promptTokens: 0, cacheReadTokens: 1_000_000, completionTokens: 0 }, pricing),
+    0.0028,
+  )
+})
+
+test("catalog pricing covers direct OpenAI and Anthropic model variants", () => {
+  assert.equal(catalogPricingForModel("gpt-4o-mini-2024-07-18").completion, 0.6 / 1_000_000)
+  assert.equal(catalogPricingForModel("anthropic/claude-sonnet-4.6").cacheWrite, 3.75 / 1_000_000)
 })
 
 test("resolveModelPricing prefers API pricing and falls back to catalog", () => {

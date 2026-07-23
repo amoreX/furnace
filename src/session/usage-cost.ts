@@ -1,6 +1,8 @@
 import type { EntryRecord, MessageEntryData, TurnUsage } from "./types.js"
 
 export type TokenPricing = {
+  cacheRead?: number
+  cacheWrite?: number
   completion: number
   prompt: number
 }
@@ -26,10 +28,18 @@ export type UsageCostProviderSummary = {
   unknownCostTurns: number
 }
 
-export function calculateUsageCostUsd(usage: Pick<TurnUsage, "completionTokens" | "promptTokens">, pricing?: TokenPricing | null): number | null {
+export function calculateUsageCostUsd(
+  usage: Pick<TurnUsage, "cacheReadTokens" | "cacheWriteTokens" | "completionTokens" | "promptTokens">,
+  pricing?: TokenPricing | null,
+): number | null {
   if (!pricing) return null
   if (pricing.prompt <= 0 && pricing.completion <= 0) return null
-  return usage.promptTokens * pricing.prompt + usage.completionTokens * pricing.completion
+  const cacheReadTokens = usage.cacheReadTokens ?? 0
+  const cacheWriteTokens = usage.cacheWriteTokens ?? 0
+  return usage.promptTokens * pricing.prompt
+    + cacheReadTokens * (pricing.cacheRead ?? pricing.prompt)
+    + cacheWriteTokens * (pricing.cacheWrite ?? pricing.prompt)
+    + usage.completionTokens * pricing.completion
 }
 
 export function summarizeUsageCosts(entries: EntryRecord[]): UsageCostSummary {

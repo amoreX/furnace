@@ -38,7 +38,11 @@ export type FurnaceTerminal = {
   stop(): void
   setBusy(busy: boolean): void
   setContextUsage(tokens: number, window: number): void
-  setCostUsage(sessionCostUsd?: number, totalCostUsd?: number): void
+  setCostUsage(
+    sessionCostUsd?: number,
+    totalCostUsd?: number,
+    completeness?: { sessionIncomplete?: boolean; totalIncomplete?: boolean },
+  ): void
   setInputDraft(value: string): void
   setInputDisabled(disabled: boolean): void
   setStatusLinePreferences(preferences: StatusLinePreferences): void

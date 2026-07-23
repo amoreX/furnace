@@ -112,4 +112,51 @@ test("anthropic adapter", async (t) => {
       globalThis.fetch = originalFetch
     }
   })
+
+  await t.test("streaming usage keeps fresh, cache-read, and cache-write input separate", async () => {
+    const provider = createAnthropicProvider()
+    const originalFetch = globalThis.fetch
+    const events = [
+      {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 10,
+            output_tokens: 1,
+            cache_read_input_tokens: 20,
+            cache_creation_input_tokens: 30,
+          },
+        },
+      },
+      { type: "message_delta", usage: { output_tokens: 5 } },
+    ]
+    globalThis.fetch = async () => new Response(
+      events.map((event) => `data: ${JSON.stringify(event)}\n`).join(""),
+      { status: 200 },
+    )
+    try {
+      const result = await provider.completeToolChat(
+        {
+          id: "anthropic",
+          displayName: "Anthropic",
+          baseUrl: "https://api.anthropic.com",
+          protocol: "anthropic",
+          apiKey: "fake-key",
+        },
+        "claude-sonnet-4-6",
+        [{ role: "user", content: "hello" }],
+        [],
+        {},
+      )
+
+      assert.deepEqual(result.usage, {
+        cacheReadTokens: 20,
+        cacheWriteTokens: 30,
+        promptTokens: 10,
+        completionTokens: 5,
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })

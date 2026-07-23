@@ -41,9 +41,10 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   let accumulatedCacheReadTokens = 0
   let accumulatedCacheWriteTokens = 0
   let accumulatedCostUsd = 0
-  let hasActualCostUsd = false
+  let hasCompleteActualCostUsd = true
+  let hasProviderUsage = false
   let accumulatedPromptTokens = 0
-  let lastCompletionTokens = 0
+  let accumulatedCompletionTokens = 0
   const maxTokens = configuredMaxOutputTokens(input.config.modelSettings.maxOutputTokens)
 
   while (true) {
@@ -72,23 +73,25 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     }
 
     if (response.usage) {
+      hasProviderUsage = true
       accumulatedCacheReadTokens += response.usage.cacheReadTokens ?? 0
       accumulatedCacheWriteTokens += response.usage.cacheWriteTokens ?? 0
       if (typeof response.usage.costUsd === "number") {
         accumulatedCostUsd += response.usage.costUsd
-        hasActualCostUsd = true
+      } else {
+        hasCompleteActualCostUsd = false
       }
       accumulatedPromptTokens += response.usage.promptTokens
-      lastCompletionTokens = response.usage.completionTokens
+      accumulatedCompletionTokens += response.usage.completionTokens
     }
     if (response.toolCalls.length === 0) {
-      const usage = hasUsage(accumulatedPromptTokens, lastCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
+      const usage = hasUsage(accumulatedPromptTokens, accumulatedCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
         ? {
           cacheReadTokens: accumulatedCacheReadTokens,
           cacheWriteTokens: accumulatedCacheWriteTokens,
-          costUsd: hasActualCostUsd ? accumulatedCostUsd : undefined,
+          costUsd: hasProviderUsage && hasCompleteActualCostUsd ? accumulatedCostUsd : undefined,
           promptTokens: accumulatedPromptTokens,
-          completionTokens: lastCompletionTokens,
+          completionTokens: accumulatedCompletionTokens,
         }
         : undefined
       return { content: response.content, usage }
@@ -140,13 +143,13 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       )
       input.onToolResult?.(call, result.content, result)
       if (result.control?.backgrounded) {
-        const usage = hasUsage(accumulatedPromptTokens, lastCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
+        const usage = hasUsage(accumulatedPromptTokens, accumulatedCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
           ? {
             cacheReadTokens: accumulatedCacheReadTokens,
             cacheWriteTokens: accumulatedCacheWriteTokens,
-            costUsd: hasActualCostUsd ? accumulatedCostUsd : undefined,
+            costUsd: hasProviderUsage && hasCompleteActualCostUsd ? accumulatedCostUsd : undefined,
             promptTokens: accumulatedPromptTokens,
-            completionTokens: lastCompletionTokens,
+            completionTokens: accumulatedCompletionTokens,
           }
           : undefined
         return { backgrounded: true, content: "Subagents are running in the background. I'll continue when they finish.", usage }

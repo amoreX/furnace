@@ -15,6 +15,18 @@ test("calculateUsageCostUsd computes provider pricing from token usage", async (
   assert.equal(calculateUsageCostUsd({ promptTokens: 1000, completionTokens: 200 }, { prompt: 0, completion: 0 }), null)
 })
 
+test("calculateUsageCostUsd prices fresh, cached, and cache-write input separately", async () => {
+  const { calculateUsageCostUsd } = await import("../../dist/session/usage-cost.js")
+
+  assert.equal(
+    calculateUsageCostUsd(
+      { promptTokens: 100, cacheReadTokens: 200, cacheWriteTokens: 300, completionTokens: 50 },
+      { prompt: 0.01, cacheRead: 0.001, cacheWrite: 0.0125, completion: 0.02 },
+    ),
+    5.95,
+  )
+})
+
 test("summarizeUsageCosts totals cost and groups by provider", async () => {
   const { summarizeUsageCosts } = await import("../../dist/session/usage-cost.js")
 
@@ -64,4 +76,23 @@ test("summarizeUsageCosts totals cost and groups by provider", async () => {
   assert.equal(summary.cacheReadTokens, 50)
   assert.deepEqual(summary.byProvider.map((provider) => provider.provider), ["openrouter", "anthropic"])
   assert.equal(summary.byProvider.find((provider) => provider.provider === "anthropic").unknownCostTurns, 1)
+})
+
+test("session cost summaries stay isolated to the supplied conversation path", async () => {
+  const { summarizeUsageCosts } = await import("../../dist/session/usage-cost.js")
+  const entry = (id, costUsd) => ({
+    id,
+    sessionId: id,
+    parentEntryId: null,
+    type: "message",
+    role: "assistant",
+    createdAt: 1,
+    data: {
+      content: id,
+      usage: { completionTokens: 1, costUsd, promptTokens: 1, provider: "test" },
+    },
+  })
+
+  assert.equal(summarizeUsageCosts([entry("session-a", 0.01)]).costUsd, 0.01)
+  assert.equal(summarizeUsageCosts([entry("session-b", 0.02)]).costUsd, 0.02)
 })

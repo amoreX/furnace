@@ -2814,12 +2814,7 @@ export async function runSingleTurn(input: {
     const cacheReadTokens = agentResult.usage?.cacheReadTokens ?? null
     const cacheWriteTokens = agentResult.usage?.cacheWriteTokens ?? null
     const completionTokens = agentResult.usage?.completionTokens ?? null
-    const promptTokensIncludeCache = input.config.provider === "openrouter"
-    const freshInputTokens = promptTokens === null
-      ? null
-      : promptTokensIncludeCache
-        ? Math.max(promptTokens - (cacheReadTokens ?? 0), 0)
-        : promptTokens
+    const freshInputTokens = promptTokens
     const output = {
       content: agentResult.content,
       model: input.config.model,
@@ -3383,12 +3378,15 @@ function updateTerminalCostUsage(
   config: Awaited<ReturnType<typeof loadConfig>>,
 ): void {
   if (!terminal) return
-  const sessionCost = summarizeUsageCosts(store.getActivePath(sessionId)).costUsd
-  const totalCost = readKeyUsage(config.provider, config.apiKey).costUsd
-  terminal.setCostUsage(sessionCost, totalCost)
+  const sessionUsage = summarizeUsageCosts(store.getActivePath(sessionId))
+  const totalUsage = readKeyUsage(config.provider, config.apiKey)
+  terminal.setCostUsage(sessionUsage.costUsd, totalUsage.costUsd, {
+    sessionIncomplete: sessionUsage.unknownCostTurns > 0,
+    totalIncomplete: totalUsage.unknownCostTurns > 0,
+  })
 }
 
-async function currentModelPricing(config: Awaited<ReturnType<typeof loadConfig>>, modelId: string): Promise<{ prompt: number; completion: number } | undefined> {
+async function currentModelPricing(config: Awaited<ReturnType<typeof loadConfig>>, modelId: string) {
   const models = await listOpenRouterModels(config).catch(() => [])
   const apiPricing = models.find((model) => model.id === modelId)?.pricing
   return resolveModelPricing(modelId, apiPricing)

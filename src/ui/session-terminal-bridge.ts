@@ -85,7 +85,9 @@ export function createSessionTerminalBridge(input: {
     },
     setBusy(busy) { if (visible()) terminal.setBusy(busy) },
     setContextUsage(tokens, window) { if (visible()) terminal.setContextUsage(tokens, window) },
-    setCostUsage(sessionCostUsd, totalCostUsd) { if (visible()) terminal.setCostUsage(sessionCostUsd, totalCostUsd) },
+    setCostUsage(sessionCostUsd, totalCostUsd, completeness) {
+      if (visible()) terminal.setCostUsage(sessionCostUsd, totalCostUsd, completeness)
+    },
     setMode(mode, planPath) { if (visible()) terminal.setMode(mode, planPath) },
     setPinnedChats(chats) { if (visible()) terminal.setPinnedChats(chats) },
     setRepoIndexStatus(content, tone) { if (visible()) terminal.setRepoIndexStatus(content, tone) },

@@ -168,6 +168,8 @@ test("agent turn sends default max output tokens", async () => {
 
     assert.equal(result.content, "done")
     assert.equal(body.max_tokens, 8192)
+    assert.equal("stream_options" in body, false)
+    assert.equal("usage" in body, false)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -230,6 +232,8 @@ test("agent turn disables default DeepSeek V4 thinking and still omits tool_choi
 
     assert.equal(result.content, "done")
     assert.deepEqual(body.thinking, { type: "disabled" })
+    assert.deepEqual(body.stream_options, { include_usage: true })
+    assert.equal("usage" in body, false)
     assert.equal("tool_choice" in body, false)
   } finally {
     globalThis.fetch = originalFetch
@@ -307,8 +311,132 @@ test("OpenAI-compatible providers retry without tool_choice when reasoning rejec
   }
 })
 
-function textResponse(content) {
-  const sseData = `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\ndata: [DONE]\n`
+test("OpenAI-compatible providers retry without unsupported stream_options", async () => {
+  const originalFetch = globalThis.fetch
+  const bodies = []
+
+  try {
+    globalThis.fetch = async (_url, init) => {
+      bodies.push(JSON.parse(init.body))
+      if (bodies.length === 1) {
+        return {
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          async text() {
+            return JSON.stringify({ error: { message: "Unknown field stream_options" } })
+          },
+        }
+      }
+      return textResponse("done")
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig({
+        provider: "custom-openai",
+        providerConfig: {
+          id: "custom-openai",
+          displayName: "Custom",
+          baseUrl: "https://example.test/v1",
+          protocol: "openai-compatible",
+          apiKey: "test-key",
+        },
+      }),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    assert.equal(result.content, "done")
+    assert.deepEqual(bodies[0].stream_options, { include_usage: true })
+    assert.equal("stream_options" in bodies[1], false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("DeepSeek final usage normalizes cached input for cost calculation", async () => {
+  const originalFetch = globalThis.fetch
+  let body
+
+  try {
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return textResponse("done", {
+        completion_tokens: 20,
+        prompt_cache_hit_tokens: 60,
+        prompt_cache_miss_tokens: 40,
+        prompt_tokens: 100,
+      })
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig({
+        model: "deepseek-v4-flash",
+        provider: "deepseek",
+        providerConfig: {
+          id: "deepseek",
+          displayName: "DeepSeek",
+          baseUrl: "https://api.deepseek.com/v1",
+          protocol: "openai-compatible",
+          apiKey: "test-key",
+        },
+      }),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    assert.deepEqual(body.stream_options, { include_usage: true })
+    assert.equal(result.usage.promptTokens, 40)
+    assert.equal(result.usage.cacheReadTokens, 60)
+    assert.equal(result.usage.completionTokens, 20)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("agent turns accumulate completion usage across tool rounds", async () => {
+  const originalFetch = globalThis.fetch
+  let calls = 0
+
+  try {
+    globalThis.fetch = async () => {
+      calls += 1
+      if (calls === 1) {
+        const chunks = [
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_unknown", type: "function", function: { name: "unknown_test_tool", arguments: "{}" } }] }, finish_reason: "tool_calls" }] },
+          { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2 } },
+        ]
+        return sseResponse(chunks)
+      }
+      return textResponse("done", { prompt_tokens: 12, completion_tokens: 3 })
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig(),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "use a tool" }],
+      tools: [{ type: "function", function: { name: "unknown_test_tool", description: "test", parameters: { type: "object", properties: {} } } }],
+    })
+
+    assert.equal(calls, 2)
+    assert.equal(result.usage.promptTokens, 22)
+    assert.equal(result.usage.completionTokens, 5)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+function textResponse(content, usage) {
+  return sseResponse([
+    { choices: [{ delta: { content }, finish_reason: null }] },
+    ...(usage ? [{ choices: [], usage }] : []),
+  ])
+}
+
+function sseResponse(chunks) {
+  const sseData = `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n`).join("")}data: [DONE]\n`
   let consumed = false
   return {
     ok: true,

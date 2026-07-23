@@ -83,7 +83,9 @@ export interface FooterSessionState {
 	configuredContextWindow?: number;
 	themeName?: string;
 	forkParentTitle?: string;
+	sessionCostIncomplete?: boolean;
 	totalCostUsd?: number;
+	totalCostIncomplete?: boolean;
 }
 
 /** Structural equivalent of pi's `AgentSession` as consumed by the footer. */
@@ -297,7 +299,9 @@ export class FooterComponent implements Component {
 		const costMode = normalizeCostDisplayMode(this.statusLine.statusCostMode, this.statusLine.statusShowCost);
 		if (costMode !== "off") {
 			const displayedCost = costMode === "total" ? state.totalCostUsd ?? 0 : totalCost;
-			const costValue = `${formatCostUsd(displayedCost)}${costMode === "total" ? " total" : ""}${usingSubscription ? " (sub)" : ""}`;
+			const incomplete = costMode === "total" ? state.totalCostIncomplete === true : state.sessionCostIncomplete === true;
+			const formattedCost = incomplete && displayedCost === 0 ? "cost unavailable" : `${formatCostUsd(displayedCost)}${incomplete ? "+" : ""}`;
+			const costValue = `${formattedCost}${costMode === "total" ? " total" : ""}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(theme.fg("text", costValue));
 		}
 

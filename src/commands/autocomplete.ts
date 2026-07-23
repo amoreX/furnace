@@ -3,8 +3,10 @@ import type { CustomCommand } from "./custom/types.js"
 import type { Skill } from "../skills/types.js"
 import type { PromptAutocompleteItem } from "../ui/terminal-types.js"
 
-/** Set of builtin slash command names (without leading /). */
-const builtinNames = new Set(slashCommandDefinitions.map((cmd) => cmd.name.slice(1)))
+/** Set of builtin slash command names and aliases (without leading /). */
+const builtinNames = new Set(
+  slashCommandDefinitions.flatMap((cmd) => [cmd.name, ...(cmd.aliases || [])].map((name) => name.slice(1))),
+)
 
 export function slashAutocompleteItems(skills: Skill[], customCmds: CustomCommand[] = []): PromptAutocompleteItem[] {
   return [

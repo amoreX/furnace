@@ -2,7 +2,7 @@
  * Ported from pi (https://github.com/earendil-works/pi).
  * MIT License, Copyright (c) 2025 Mario Zechner.
  */
-import { Editor, getKeybindings, type AutocompleteItem, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { Editor, type AutocompleteItem, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
 
 /**
@@ -57,6 +57,15 @@ export class CustomEditor extends Editor {
 	}
 
 	handleInput(data: string): void {
+		if (this.inputDisabled) {
+			if (this.keybindings.matches(data, "app.interrupt")) {
+				(this.onEscape ?? this.actionHandlers.get("app.interrupt"))?.();
+			} else if (this.keybindings.matches(data, "app.clear")) {
+				this.actionHandlers.get("app.clear")?.();
+			}
+			return;
+		}
+
 		// Fix: When Enter is pressed while autocomplete is showing, the base pi-tui
 		// Editor applies the completion for slash commands and then falls through
 		// to the newline/submit checks. If Enter arrives as \n, the hardcoded
@@ -67,8 +76,7 @@ export class CustomEditor extends Editor {
 		// the base Editor apply the completion, then submit immediately instead of
 		// falling through.
 		if (this.isShowingAutocomplete()) {
-			const kb = getKeybindings();
-			if (kb.matches(data, "tui.select.confirm") || kb.matches(data, "tui.input.submit")) {
+			if (this.keybindings.matches(data, "tui.select.confirm") || this.keybindings.matches(data, "tui.input.submit")) {
 				// Let base Editor apply the completion (it handles this for slash commands)
 				super.handleInput(data);
 				// If autocomplete is now gone (the completion was applied), the text
@@ -81,15 +89,6 @@ export class CustomEditor extends Editor {
 				}
 				return;
 			}
-		}
-
-		if (this.inputDisabled) {
-			if (this.keybindings.matches(data, "app.interrupt")) {
-				(this.onEscape ?? this.actionHandlers.get("app.interrupt"))?.();
-			} else if (this.keybindings.matches(data, "app.clear")) {
-				this.actionHandlers.get("app.clear")?.();
-			}
-			return;
 		}
 
 		if (this.keybindings.matches(data, "tui.input.tab")) {

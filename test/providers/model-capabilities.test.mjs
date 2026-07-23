@@ -25,11 +25,12 @@ test("tool turns disable default V4 thinking unless reasoning is opted in", () =
   assert.equal(shouldDisableThinkingForTools("gpt-4o", {}), false)
 })
 
-test("forced tool_choice is skipped while V4 thinking remains enabled", () => {
-  assert.equal(supportsForcedToolChoice("deepseek-v4-flash", {}), true)
+test("tool_choice is always omitted for DeepSeek thinking models", () => {
+  assert.equal(supportsForcedToolChoice("deepseek-v4-flash", {}), false)
   assert.equal(supportsForcedToolChoice("deepseek-v4-flash", { reasoningEffort: "high" }), false)
   assert.equal(shouldOmitToolChoice("deepseek-v4-flash", { reasoningEffort: "high" }), true)
-  assert.equal(shouldOmitToolChoice("deepseek-v4-flash", {}), false)
+  assert.equal(shouldOmitToolChoice("deepseek-v4-flash", {}), true)
+  assert.equal(shouldOmitToolChoice("deepseek-v4-pro", { reasoningEffort: "none" }), true)
   assert.equal(wantsReasoningEffort({ reasoningEffort: "medium" }), true)
   assert.equal(wantsReasoningEffort({ reasoningEffort: "none" }), false)
 })

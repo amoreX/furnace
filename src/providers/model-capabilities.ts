@@ -28,15 +28,14 @@ export function shouldDisableThinkingForTools(model: string, settings: ModelSett
 }
 
 /**
- * When thinking stays enabled on DeepSeek V4, omit tool_choice entirely
- * (vendor + Oh My Pi guidance). Forced function tool_choice always fails.
+ * DeepSeek thinking-capable models can reject tool_choice even when Furnace
+ * asks to disable thinking. Omit the field for every such model and let the
+ * system prompt guide tool use.
  */
-export function shouldOmitToolChoice(model: string, settings: ModelSettings): boolean {
-  return isDeepSeekThinkingModel(model) && wantsReasoningEffort(settings)
+export function shouldOmitToolChoice(model: string, _settings: ModelSettings): boolean {
+  return isDeepSeekThinkingModel(model)
 }
 
-export function supportsForcedToolChoice(model: string, settings: ModelSettings): boolean {
-  if (!isDeepSeekThinkingModel(model)) return true
-  // With thinking disabled for the tool loop, forced choice is allowed.
-  return shouldDisableThinkingForTools(model, settings)
+export function supportsForcedToolChoice(model: string, _settings: ModelSettings): boolean {
+  return !isDeepSeekThinkingModel(model)
 }

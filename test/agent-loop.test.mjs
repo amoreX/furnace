@@ -201,7 +201,7 @@ test("agent turn lets environment override configured max output tokens", async 
   }
 })
 
-test("agent turn disables DeepSeek V4 thinking so tool_choice can work", async () => {
+test("agent turn disables default DeepSeek V4 thinking and still omits tool_choice", async () => {
   const originalFetch = globalThis.fetch
   let body
 
@@ -230,7 +230,7 @@ test("agent turn disables DeepSeek V4 thinking so tool_choice can work", async (
 
     assert.equal(result.content, "done")
     assert.deepEqual(body.thinking, { type: "disabled" })
-    assert.deepEqual(body.tool_choice, { type: "function", function: { name: "websearch" } })
+    assert.equal("tool_choice" in body, false)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -267,6 +267,41 @@ test("agent turn omits tool_choice when DeepSeek V4 reasoning stays enabled", as
     assert.equal(result.content, "done")
     assert.equal("tool_choice" in body, false)
     assert.equal(body.thinking.type, "enabled")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("OpenAI-compatible providers retry without tool_choice when reasoning rejects it", async () => {
+  const originalFetch = globalThis.fetch
+  const bodies = []
+
+  try {
+    globalThis.fetch = async (_url, init) => {
+      bodies.push(JSON.parse(init.body))
+      if (bodies.length === 1) {
+        return {
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          async text() {
+            return JSON.stringify({ error: { message: "Thinking mode does not support this tool_choice" } })
+          },
+        }
+      }
+      return textResponse("done")
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig(),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "latest FIFA news" }],
+      tools: [{ type: "function", function: { name: "websearch", description: "search", parameters: { type: "object", properties: {} } } }],
+    })
+
+    assert.equal(result.content, "done")
+    assert.deepEqual(bodies[0].tool_choice, { type: "function", function: { name: "websearch" } })
+    assert.equal("tool_choice" in bodies[1], false)
   } finally {
     globalThis.fetch = originalFetch
   }

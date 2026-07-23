@@ -50,6 +50,7 @@ import { readKeyUsage, recordAcceptedLines, recordTurnUsage, removeAcceptedLines
 import { UsageViewState } from "./ui/usage-view-state.js"
 import { TipScheduler } from "./ui/tips.js"
 import { TaskDetailsViewState } from "./ui/task-details-view-state.js"
+import { TranscriptViewState } from "./ui/transcript-view-state.js"
 
 export const INTERRUPTED_MESSAGE = "Interrupted."
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
@@ -102,6 +103,7 @@ export async function runInteractive(input: {
   const pendingPlanActions = new Map<string, { onSelect: (action: "execute" | "refine" | "stay") => void; planPath: string }>()
   const sessionRuntimeUi = new Map<string, SessionRuntimeUi>()
   const taskDetailsView = new TaskDetailsViewState()
+  const transcriptView = new TranscriptViewState()
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
   let persistentUpgradeNotice: string | undefined
@@ -380,7 +382,7 @@ export async function runInteractive(input: {
       process.stdout.write("\x07")
       if (activeDisplaySessionId === submittedSessionId) {
         terminal.setThinking(false)
-        terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(submittedSessionId)), { role: "assistant", content: formatError(error) }])
+        terminal.setTranscript([...displayTranscript(submittedSessionId), { role: "assistant", content: formatError(error) }])
       }
     })
   }
@@ -461,6 +463,7 @@ export async function runInteractive(input: {
       return
     }
     if (command.name === "/clear") {
+      transcriptView.clear(sessionId, input.store.getActivePath(sessionId))
       terminal.clearTranscriptDisplay()
       return
     }
@@ -1342,7 +1345,7 @@ export async function runInteractive(input: {
 
   function renderTaskDetails(records: TaskRecord[]): void {
     const status = formatTaskStatusForUser(records)
-    terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
+    terminal.setTranscript([...displayTranscript(sessionId), { role: "assistant", content: status }])
   }
 
   function showTaskStatus(toggle: boolean): void {
@@ -1462,6 +1465,7 @@ export async function runInteractive(input: {
 
   function activateSession(targetSessionId: string, options: { clearDraft?: boolean; clearScreen?: boolean } = {}): void {
     usageViewState.dismiss()
+    transcriptView.reset()
     unreadCompletedSessionIds.delete(targetSessionId)
     terminal.cancelQueuedPromptEdit()
     taskDetailsView.switchTo(targetSessionId)
@@ -1829,14 +1833,14 @@ export async function runInteractive(input: {
     }
     if (subcommand === "view") {
       const name = rest.join(" ").trim()
-      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatSkillView(skillCatalog.skills, name) }])
+      terminal.setTranscript([...displayTranscript(sessionId), { role: "assistant", content: formatSkillView(skillCatalog.skills, name) }])
       return
     }
     if (subcommand !== "list") {
-      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: `Unknown /skills command: ${subcommand}\nUsage: /skills [list|view <name>|reload]` }])
+      terminal.setTranscript([...displayTranscript(sessionId), { role: "assistant", content: `Unknown /skills command: ${subcommand}\nUsage: /skills [list|view <name>|reload]` }])
       return
     }
-    terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatSkillsList(skillCatalog.skills) }])
+    terminal.setTranscript([...displayTranscript(sessionId), { role: "assistant", content: formatSkillsList(skillCatalog.skills) }])
   }
 
   async function reloadSkillCatalog(): Promise<void> {
@@ -2079,7 +2083,7 @@ export async function runInteractive(input: {
     })
     usageViewState.show()
     terminal.setTranscript([
-      ...entriesToTranscript(input.store.getActivePath(sessionId)),
+      ...displayTranscript(sessionId),
       { role: "assistant", content: report },
     ])
   }
@@ -2142,7 +2146,7 @@ export async function runInteractive(input: {
     const promotedSessionId = sessionId
     void runPromptQueue(prompt).catch((error) => {
       if (activeDisplaySessionId !== promotedSessionId) return
-      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(promotedSessionId)), { role: "assistant", content: formatError(error) }])
+      terminal.setTranscript([...displayTranscript(promotedSessionId), { role: "assistant", content: formatError(error) }])
     })
   }
 
@@ -2156,7 +2160,7 @@ export async function runInteractive(input: {
     const queuedSessionId = sessionId
     void runPromptQueue(next).catch((error) => {
       if (activeDisplaySessionId !== queuedSessionId) return
-      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(queuedSessionId)), { role: "assistant", content: formatError(error) }])
+      terminal.setTranscript([...displayTranscript(queuedSessionId), { role: "assistant", content: formatError(error) }])
     })
   }
 
@@ -2173,7 +2177,7 @@ export async function runInteractive(input: {
   }
 
   function refreshCurrentSession(): void {
-    refreshInteractive(terminal, input.store, sessionId)
+    refreshInteractive(terminal, input.store, sessionId, displayTranscript(sessionId))
     const state = currentPlanModeState(input.store.getActivePath(sessionId))
     permissions.setSessionMode(sessionId, state.mode, state.planPath)
     terminal.setMode(state.mode, state.planPath)
@@ -2183,6 +2187,11 @@ export async function runInteractive(input: {
     updateTerminalCostUsage(terminal, input.store, sessionId, input.config)
     terminal.setTaskStatus(taskManager.status(sessionId))
     syncPinnedChats()
+  }
+
+  function displayTranscript(targetSessionId: string): ReturnType<typeof entriesToTranscript> {
+    const activePath = input.store.getActivePath(targetSessionId)
+    return entriesToTranscript(transcriptView.visibleEntries(targetSessionId, activePath))
   }
 
   function estimateContextUsage(): { tokens: number; window: number } {
@@ -2221,7 +2230,7 @@ export async function runInteractive(input: {
       const next = queue.shift()
       syncQueuedPrompts()
       if (next) void runPromptQueue(next).catch((error) => {
-        terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
+        terminal.setTranscript([...displayTranscript(sessionId), { role: "assistant", content: formatError(error) }])
       })
     }
   }
@@ -2250,6 +2259,7 @@ export async function runInteractive(input: {
             config: input.config,
             contextWindow: effectiveContextWindow(input.config, modelListCache.models),
             cwd: input.cwd,
+            displayTranscript: () => displayTranscript(turnSessionId),
             hiddenUserMessage: next.hidden,
             hiddenUserMessageSource: next.hidden ? next.source || "hidden_prompt" : undefined,
             images: next.images,
@@ -2274,7 +2284,7 @@ export async function runInteractive(input: {
           input.store.appendMessage(turnSessionId, "assistant", INTERRUPTED_MESSAGE, input.config.model)
           if (activeDisplaySessionId === turnSessionId) {
             terminal.setThinking(false)
-            terminal.setTranscript(entriesToTranscript(input.store.getActivePath(turnSessionId)))
+            terminal.setTranscript(displayTranscript(turnSessionId))
           }
         } finally {
           if (completed && !next.hidden) {
@@ -2342,10 +2352,15 @@ function clearTerminalViewportAndScrollback(): void {
   process.stdout.write("\x1b[2J\x1b[3J\x1b[H")
 }
 
-function refreshInteractive(terminal: FurnaceTerminal, store: SessionStore, sessionId: string): void {
+function refreshInteractive(
+  terminal: FurnaceTerminal,
+  store: SessionStore,
+  sessionId: string,
+  visibleTranscript?: ReturnType<typeof entriesToTranscript>,
+): void {
   const session = store.getSession(sessionId)
   const activePath = store.getActivePath(sessionId)
-  const transcript = entriesToTranscript(activePath)
+  const transcript = visibleTranscript ?? entriesToTranscript(activePath)
   const forkParentTitle = session.relationType === "fork" && session.parentSessionId ? sessionTitleById(store, session.parentSessionId) : undefined
   terminal.setSessionMeta({ forkParentTitle, title: session.title })
   terminal.clearToolActivities()
@@ -2578,6 +2593,7 @@ export async function runSingleTurn(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   contextWindow?: number
   cwd: string
+  displayTranscript?: () => ReturnType<typeof entriesToTranscript>
   hiddenUserMessage?: boolean
   hiddenUserMessageSource?: string
   images?: ImageAttachment[]
@@ -2615,14 +2631,14 @@ export async function runSingleTurn(input: {
 
   if (input.terminal) {
     input.terminal.clearToolActivities()
-    input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+    input.terminal.setTranscript(input.displayTranscript?.() ?? entriesToTranscript(input.store.getActivePath(input.sessionId)))
     input.terminal.setThinking(true, "Thinking")
   }
   if (!input.hiddenUserMessage && !input.skipTitle) await maybeTitleSession(input.store, input.sessionId, input.config, input.prompt)
   input.terminal?.setTitle(input.store.getSession(input.sessionId).title)
 
   const activePath = input.store.getActivePath(input.sessionId)
-  const transcript = entriesToTranscript(activePath)
+  const transcript = input.displayTranscript?.() ?? entriesToTranscript(activePath)
   const planState = currentPlanModeState(activePath)
   permissions.setSessionMode(input.sessionId, planState.mode, planState.planPath)
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
@@ -2757,7 +2773,7 @@ export async function runSingleTurn(input: {
         if (terminal) {
           terminal.setThinking(false)
           terminal.setStreamingContent("")
-          terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+          terminal.setTranscript(input.displayTranscript?.() ?? entriesToTranscript(input.store.getActivePath(input.sessionId)))
         }
       }
     }
@@ -2789,7 +2805,7 @@ export async function runSingleTurn(input: {
   if (input.terminal) {
     input.terminal.setThinking(false)
     updateTerminalCostUsage(input.terminal, input.store, input.sessionId, input.config)
-    input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+    input.terminal.setTranscript(input.displayTranscript?.() ?? entriesToTranscript(input.store.getActivePath(input.sessionId)))
     if (planState.mode === "plan" && planState.planPath) {
       input.onPlanReady?.(planState.planPath)
     }

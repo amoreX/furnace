@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.28",
+      "date": "2026-07-23",
+      "status": "published",
+      "commit": null,
+      "summary": "Plan mode and cleared conversations now behave reliably across providers and UI refreshes.",
+      "changes": [
+        { "kind": "fixed", "text": "Omitted unsupported `tool_choice` values for DeepSeek thinking-capable models at every reasoning level." },
+        { "kind": "fixed", "text": "Retried OpenAI-compatible requests without `tool_choice` when a provider rejects it for thinking or reasoning mode." },
+        { "kind": "changed", "text": "Made Plan mode explicitly require a successful write or edit of the saved plan artifact." },
+        { "kind": "fixed", "text": "Kept `/clear` history hidden through later transcript refreshes while restoring full history after switching conversations." }
+      ]
+    },
+    {
       "version": "0.2.27",
       "date": "2026-07-22",
       "status": "published",

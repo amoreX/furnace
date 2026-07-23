@@ -100,6 +100,12 @@ function unsupportedImageResponse(status: number, body: string): boolean {
     && /(unknown variant|expected [`"']?text|not support|unsupported|invalid)/i.test(body)
 }
 
+function unsupportedToolChoiceResponse(status: number, body: string): boolean {
+  return (status === 400 || status === 422)
+    && /tool[_ ]choice/i.test(body)
+    && /(thinking|reasoning|not support|unsupported|invalid)/i.test(body)
+}
+
 function prepareMessages(provider: ResolvedProvider, messages: ChatMessage[], omitImages = provider.id === "deepseek"): ChatMessage[] {
   const prepared = promptCacheDisabled()
     ? stripPromptCacheControl(messages)
@@ -132,22 +138,30 @@ async function postChatCompletion(
   payload: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<Response> {
-  const send = (omitImages = false) => fetch(`${provider.baseUrl}/chat/completions`, {
+  const send = (requestPayload: Record<string, unknown>, omitImages = false) => fetch(`${provider.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
     headers: buildHeaders(provider),
     body: JSON.stringify({
-      ...payload,
+      ...requestPayload,
       messages: prepareMessages(provider, messages, omitImages || provider.id === "deepseek"),
     }),
   })
 
-  let response = await send()
+  let activePayload = payload
+  let response = await send(activePayload)
   if (response.ok) return response
 
   let body = await response.text().catch(() => "")
+  if ("tool_choice" in activePayload && unsupportedToolChoiceResponse(response.status, body)) {
+    const { tool_choice: _toolChoice, ...withoutToolChoice } = activePayload
+    activePayload = withoutToolChoice
+    response = await send(activePayload)
+    if (response.ok) return response
+    body = await response.text().catch(() => "")
+  }
   if (provider.id !== "deepseek" && hasImageBlocks(messages) && unsupportedImageResponse(response.status, body)) {
-    response = await send(true)
+    response = await send(activePayload, true)
     if (response.ok) return response
     body = await response.text().catch(() => "")
   }
@@ -289,7 +303,9 @@ export function createOpenAICompatibleProvider(): Provider {
         stream: true,
         usage: { include: true },
       }
-      // DeepSeek V4 thinking mode rejects tool_choice; omit it when thinking stays on.
+      // DeepSeek thinking models reject tool_choice even when thinking is
+      // nominally disabled. Other providers get one compatibility retry in
+      // postChatCompletion if they report the same limitation.
       if (!shouldOmitToolChoice(model, settings)) {
         payload.tool_choice = options.toolChoice || "auto"
       }

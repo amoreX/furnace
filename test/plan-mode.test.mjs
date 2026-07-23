@@ -45,10 +45,12 @@ test("plan guidance requires the artifact and concrete implementation details", 
     planPath: ".furnace/plans/plan.md",
   })
 
-  assert.match(guidance, /Plan mode is active/)
+  assert.match(guidance, /PLAN MODE IS ACTIVE/)
   assert.match(guidance, /only writable artifact is the plan file: \.furnace\/plans\/plan\.md/)
   assert.match(guidance, /exact file paths/)
   assert.match(guidance, /commands\/tests\/verification/)
+  assert.match(guidance, /MUST call the write tool/)
+  assert.match(guidance, /prose-only plan.*incomplete/)
 })
 
 test("execution prompt points the agent back to the durable plan file", () => {

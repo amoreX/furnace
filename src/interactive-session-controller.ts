@@ -627,7 +627,7 @@ export async function runInteractive(input: {
       openModelPicker(models, () => {})
       return
     }
-    if (command.name === "/models") {
+    if (command.name === "/providers") {
       await openModelBrowser()
       return
     }
@@ -1647,7 +1647,7 @@ export async function runInteractive(input: {
     if (applied && isGlobal) showTransientStatus(`Model set globally to ${match.name}.`)
   }
 
-  /** /models: pick a provider, then fuzzy-search its models pi-style, then tune settings. */
+  /** /providers: pick a provider, then fuzzy-search its models pi-style, then tune settings. */
   async function openModelBrowser(): Promise<void> {
     const models = await modelListCache.promise.catch(() => [] as ProviderModel[])
     const byProvider = new Map<string, ProviderModel[]>()

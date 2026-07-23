@@ -2,9 +2,8 @@
  * Ported from pi (https://github.com/earendil-works/pi).
  * MIT License, Copyright (c) 2025 Mario Zechner.
  */
-import { Editor, type AutocompleteItem, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { Editor, getKeybindings, type AutocompleteItem, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
-import { getKeybindings } from "../keybindings.js";
 
 /**
  * Custom editor that handles app-level keybindings for coding-agent.

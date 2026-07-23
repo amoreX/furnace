@@ -22,88 +22,31 @@ Furnace is a from-scratch harness for agentic coding in the terminal. It gives a
 
 The model still does the coding. Furnace provides the runtime around it: provider adapters, message projection, typed file/search/shell/web tools, permission checks, plan mode, subagents, compaction, usage tracking, and a persistent session store. Instead of treating every prompt as disposable, Furnace turns agent work into an ongoing local workflow.
 
-## Why Furnace?
-
-Coding agents become more useful when the harness around them is built for actual projects. Long sessions need history. Tool calls need guardrails. Large repositories need context management. Parallel work needs a way to come back without losing state.
-
-Furnace is built to make that loop manageable. It helps you:
-
-- Work inside a keyboard-first terminal UI instead of a raw prompt loop
-- Resume, fork, pin, and continue local sessions from `.furnace/`
-- Approve risky file, edit, shell, and skill-management actions before they run
-- Switch between supported providers and browse model catalogs from the TUI
-- Use plan mode, subagents, skills, image input, and repository indexing without leaving the CLI
-- Run one-shot headless prompts when you want automation instead of an interactive session
-
-## How it works
-
-At a high level, Furnace follows a simple loop:
-
-1. Start Furnace in a repository with `furnace`.
-2. Choose a provider and model through `/login` or environment variables.
-3. Furnace opens or creates a local workspace session under `.furnace/`.
-4. Your prompt is projected into provider messages with repository and session context.
-5. The selected provider streams model output and tool calls back to Furnace.
-6. Tool calls pass through typed handlers and permission gates before changing files or running commands.
-7. Messages, tool results, usage, compactions, forks, and task results are saved so the session can continue later.
-
-The result is a local control layer for agentic coding: the agent can explore, edit, test, delegate, and summarize while Furnace keeps the terminal UI, state, permissions, and history organized.
-
 ## Features
 
-<table>
-  <tr>
-    <td width="34%">
-      <h3>Product-grade TUI</h3>
-      <p>Use a dedicated terminal interface with layouts, status line controls, model selection, pinned chats, task status, and focused input flows.</p>
-    </td>
-    <td width="66%">
-      <img src="docs/assets/furnace-screenshot.jpeg" alt="Furnace terminal interface" />
-    </td>
-  </tr>
-  <tr>
-    <td width="34%">
-      <h3>Real tools with guardrails</h3>
-      <p>Give the agent typed file, search, edit, shell, todo, question, web, skill, and task tools while keeping mutating actions behind permission checks.</p>
-    </td>
-    <td width="66%">
-      Read/search/question/todo/task/skill/web tools are allowed by default. Write, edit, shell, and skill-management calls ask before they run.
-    </td>
-  </tr>
-  <tr>
-    <td width="34%">
-      <h3>Durable sessions</h3>
-      <p>Keep conversations, tool calls, usage, forks, compactions, and project state in local SQLite storage so agent work can continue across runs.</p>
-    </td>
-    <td width="66%">
-      Sessions are stored per repository in <code>.furnace/</code>. Global preferences, provider credentials, and usage summaries live under <code>~/.furnace</code>.
-    </td>
-  </tr>
-  <tr>
-    <td width="34%">
-      <h3>Beyond single-agent chat</h3>
-      <p>Use plan mode for scoped research, subagents for parallel child tasks, skills for reusable instructions, image input for multimodal work, and headless mode for scripts.</p>
-    </td>
-    <td width="66%">
-      Furnace supports both interactive sessions and <code>-p</code> prompts, so the same harness works for active coding, repository analysis, and automation.
-    </td>
-  </tr>
-</table>
+### Headroom for long tool-heavy sessions
 
-## Supported Providers
+Furnace includes Headroom request compression for large tool results. Big reads, searches, and command outputs are shortened before they hit the model, while the full omitted content remains locally retrievable when the agent actually needs it.
 
-Furnace supports built-in providers plus custom OpenAI-compatible endpoints:
+### Graph-based conversations and forks
 
-<p>
-  <code>openrouter</code> |
-  <code>openai</code> |
-  <code>anthropic</code> |
-  <code>deepseek</code> |
-  <code>glm</code> |
-  <code>custom providers</code>
-</p>
+Sessions are stored as a graph, not a flat transcript. You can resume old work, fork from the current point, fork from an earlier prompt, clone a conversation tip, and keep alternate attempts without losing the path that got you there.
 
-Use `/login` to save a provider key interactively, or configure keys with environment variables such as `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, and `GLM_API_KEY`.
+### Built-in workflows for real repositories
+
+Furnace ships the daily agent ergonomics people keep rebuilding in every harness: slash commands, `/stfu` for minimal responses, `/caveman` for blunt doc-less interaction, `/init` to index an existing repository, plan mode, image input, usage tracking, undo, model controls, and permission management.
+
+### Local evolve that survives updates
+
+`/evolve` lets Furnace modify its own harness locally, verify the change, and keep that evolved behavior in place. When Furnace updates, `/evolve-merge` can reapply those local changes onto the new version instead of throwing them away.
+
+### Pinned chats for multitasking
+
+Pinned chats keep multiple active threads close at hand. You can pin work, switch between sessions, watch active subagents continue thinking, and multitask inside one terminal instead of juggling separate harness windows.
+
+### The good parts without the baggage
+
+Furnace is intentionally stripped down around what actually helps coding agents work: a real TUI, local state, typed tools, permissions, context management, forks, skills, subagents, and headless mode. It keeps the useful parts of modern agent harnesses and removes the ceremony that slows them down.
 
 ## Install
 

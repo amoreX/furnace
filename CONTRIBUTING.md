@@ -18,11 +18,18 @@ npm ci
 cp .env.example .env
 ```
 
+On native Windows, install Node 22 with nvm-windows, Volta, or the Node.js installer, then run:
+
+```powershell
+npm ci
+Copy-Item .env.example .env
+```
+
 Configure a provider key through `/login` or an environment variable for local manual testing.
 
 ## Common Commands
 
-Use the pinned Node wrapper scripts so native dependencies stay aligned with Node 22:
+The same npm commands work in Bash, PowerShell, and Command Prompt:
 
 ```bash
 npm run check-node
@@ -37,8 +44,10 @@ If `better-sqlite3` reports a native module mismatch:
 
 ```bash
 nvm use
-./scripts/with-node22.sh npm rebuild better-sqlite3
+npm rebuild better-sqlite3
 ```
+
+On Windows, select Node 22 with your installed version manager before running the rebuild.
 
 ## Pull Request Guidelines
 

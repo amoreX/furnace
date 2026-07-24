@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.31",
+      "date": "2026-07-25",
+      "status": "published",
+      "commit": null,
+      "summary": "Contributors can now build and test Furnace from native Windows shells.",
+      "changes": [
+        { "kind": "compatibility", "text": "Replaced the Bash-only Node wrapper and shell build pipeline with cross-platform Node scripts." },
+        { "kind": "compatibility", "text": "Made development, build, test, typecheck, start, and publishing commands work from PowerShell, Command Prompt, Bash, and other supported shells." },
+        { "kind": "fixed", "text": "Applied executable permissions only on macOS and Linux while preserving Node 22 validation on every platform." },
+        { "kind": "changed", "text": "Documented native Windows contributor setup and added portability regression coverage." }
+      ]
+    },
+    {
       "version": "0.2.30",
       "date": "2026-07-24",
       "status": "published",

@@ -6,10 +6,11 @@ test("project exposes the expected phase 0 commands", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
 
   assert.equal(packageJson.bin.furnace, "./dist/cli.js")
-  assert.match(packageJson.scripts.build, /\btsc -p tsconfig\.json\b/)
-  assert.match(packageJson.scripts.build, /\besbuild src\/cli\.ts\b/)
-  assert.match(packageJson.scripts.build, /--outfile=dist\/cli\.js/)
-  assert.match(packageJson.scripts.typecheck, /tsc -p tsconfig\.json --noEmit/)
+  assert.equal(packageJson.scripts.build, "node scripts/build.mjs")
+  assert.equal(packageJson.scripts.typecheck, "node scripts/run-development-command.mjs typecheck")
+  const buildScript = await readFile(new URL("../scripts/build.mjs", import.meta.url), "utf8")
+  assert.match(buildScript, /entryPoints: \["src\/cli\.ts"\]/)
+  assert.match(buildScript, /outfile: "dist\/cli\.js"/)
 })
 
 test("local secrets are ignored", async () => {

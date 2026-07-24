@@ -142,9 +142,9 @@ export const registeredTools: RegisteredTool[] = [
       type: "function",
       function: {
         name: "bash",
-        description: "Escape hatch for running a shell command. The command starts in the workspace, but may inspect explicitly requested external paths such as ~/Desktop. Use only when file/search/edit primitives are insufficient.",
+        description: "Escape hatch for running a platform shell command: Bash on macOS/Linux and PowerShell on native Windows. The command starts in the workspace, but may inspect explicitly requested external paths such as ~/Desktop. Use syntax for the user's platform and only when file/search/edit primitives are insufficient.",
         parameters: objectSchema({
-          command: stringSchema("Shell command to run."),
+          command: stringSchema("Platform-appropriate shell command to run (Bash on macOS/Linux; PowerShell on native Windows)."),
           timeoutMs: numberSchema("Timeout in milliseconds. Defaults to 30000, max 120000."),
         }, ["command"]),
       },

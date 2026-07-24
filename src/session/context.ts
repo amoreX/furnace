@@ -4,6 +4,7 @@ import type { CompactionEntryData, EntryRecord, MessageEntryData, ToolCallEntryD
 export type RuntimeContextInput = {
   cwd: string
   now?: Date
+  platform?: NodeJS.Platform
 }
 
 export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[] {
@@ -263,6 +264,9 @@ function isProjectedMessage(value: EntryRecord | OpenRouterMessage): value is Op
 
 export function buildRuntimeContext(input: RuntimeContextInput): string {
   const now = input.now || new Date()
+  const platform = input.platform || process.platform
+  const operatingSystem = platform === "win32" ? "Windows" : platform === "darwin" ? "macOS" : platform === "linux" ? "Linux" : platform
+  const shell = platform === "win32" ? "PowerShell" : "Bash"
   const formatter = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
     year: "numeric",
@@ -281,6 +285,8 @@ export function buildRuntimeContext(input: RuntimeContextInput): string {
     `- Current ISO timestamp: ${now.toISOString()}`,
     `- Current year: ${now.getFullYear()}`,
     `- Current workspace: ${input.cwd}`,
+    `- Operating system: ${operatingSystem} (${platform})`,
+    `- Shell command syntax: ${shell}`,
     "- Interpret words like latest, current, recent, today, and now relative to this timestamp.",
     "</runtime_context>",
   ].join("\n")

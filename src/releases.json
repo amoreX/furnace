@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.30",
+      "date": "2026-07-24",
+      "status": "published",
+      "commit": null,
+      "summary": "Shell commands now run natively across macOS, Linux, and Windows.",
+      "changes": [
+        { "kind": "compatibility", "text": "Executed shell tool commands with PowerShell on native Windows while preserving Bash on macOS and Linux." },
+        { "kind": "compatibility", "text": "Added a `cmd.exe` fallback when PowerShell is unavailable and support for selecting PowerShell 7 with `FURNACE_WINDOWS_SHELL`." },
+        { "kind": "changed", "text": "Included the operating system and expected shell syntax in runtime context so agents do not need to probe or guess." },
+        { "kind": "fixed", "text": "Preserved command failures, exit codes, timeouts, and workspace-relative execution across platform shells." }
+      ]
+    },
+    {
       "version": "0.2.29",
       "date": "2026-07-23",
       "status": "published",

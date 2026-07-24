@@ -31,7 +31,7 @@ Current capability level:
   - `grep`: search text files.
   - `write`: create or overwrite files.
   - `edit`: apply an apply-patch-style patch. This is the only edit primitive; there is no separate `apply_patch` tool.
-  - `bash`: run shell commands when the primitives are not enough.
+  - `bash`: run platform-appropriate shell commands when the primitives are not enough (Bash on macOS/Linux, PowerShell on native Windows).
   - `ask_question`: ask the user one or more clarifying multiple-choice questions, with custom answer and refusal support.
   - `task`: delegate one or more independent multi-step prompts to child subagents. Use `tasks: [{ prompt }]` for batching and parallel fan-out. Each child gets fresh runtime context and cannot create more subagents.
   - `task_status`: inspect active and backgrounded subagent tasks for the current conversation.

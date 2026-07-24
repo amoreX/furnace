@@ -4,14 +4,17 @@ import { buildRuntimeContext, entriesToModelMessages, entriesToTranscript } from
 
 test("runtime context includes current date and workspace", () => {
   const context = buildRuntimeContext({
-    cwd: "/tmp/furnace",
+    cwd: "C:\\code\\furnace",
     now: new Date("2026-06-20T17:48:00.000Z"),
+    platform: "win32",
   })
 
   assert.match(context, /Runtime context:/)
   assert.match(context, /Current ISO timestamp: 2026-06-20T17:48:00.000Z/)
   assert.match(context, /Current year: 2026/)
-  assert.match(context, /Current workspace: \/tmp\/furnace/)
+  assert.match(context, /Current workspace: C:\\code\\furnace/)
+  assert.match(context, /Operating system: Windows \(win32\)/)
+  assert.match(context, /Shell command syntax: PowerShell/)
   assert.match(context, /latest, current, recent, today, and now/)
 })
 
